@@ -1,0 +1,11 @@
+/target/
+fm
+fm.exe
+savegame.json
+season_*.md
+season_*.txt
+out*.txt
+e1.txt
+o1.txt
+in1.txt
+.env
