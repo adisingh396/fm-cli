@@ -1,17 +1,12 @@
 # Football Manager CLI ⚽
 
-A fast, robust, end-to-end command-line football management game written in Rust,
-built on the **Football Manager 2023** data schema.
+A fast, robust, end-to-end command-line football management game written in Rust.
 
-It probes and loads two real datasets — the FM 2023 database (~8,400 players)
-from `data/fm2023.csv`
-([source](https://github.com/dannytharris/FM)) and the FC 26 ratings set
-(~18,400 men, 110 attributes) from `data/fc26.csv`
-([source](https://github.com/ismailoksuz/EAFC26-DataHub)) — 26,800+ players
-total, merged into one pool with club squads drawn from real rosters and a
-seeded free-agent market. No FC 27 bulk dump exists publicly; FC 26 is the
-latest downloadable set. Falls back to procedural generation when a CSV is
-absent. Drop a newer same-schema dump at `data/fc.csv` to upgrade ratings.
+It loads one real dataset — the 2026 players database (`data/players.csv`, an
+EA FC-style dump, men's football only, ~19,800 rows with 110 attributes) — into
+a seeded world with club squads drawn from real rosters and a free-agent market.
+Falls back to procedural generation when a CSV is absent. Drop a newer
+same-schema dump at `data/players.csv` to upgrade ratings.
 
 ## Features
 
@@ -23,7 +18,7 @@ absent. Drop a newer same-schema dump at `data/fc.csv` to upgrade ratings.
   out-of-position penalty) so the trade-off is visible, and the choice feeds
   straight into match strength. Auto-pick fills the best-fitting XI.
 - **Squad Management** — View squads, inspect details (condition/sharpness/cards/injury, best-fit roles), sell players
-- **Transfer Market** — Buy players from the FM 2023 database using real market values
+- **Transfer Market** — Buy players from the 2026 database using real market values
 - **Loans** — Loan out/in with fees, wage split, monthly countdown, recall clauses, buy options
 - **Training** — Improve player attributes (per-attribute or general sessions)
 - **Scouting** — Search the database for talent, filter by position
@@ -156,7 +151,7 @@ constant is hardcoded). The detailed FC attributes map onto the internal model a
 | position / alternate_positions | role bucket (GK/DEF/MID/FWD) |
 | league | Big-5 division (FC labels normalised to Premier League / La Liga / Serie A / Bundesliga / Ligue 1) |
 
-See `docs/FM2023_PROBE.md` for the earlier dataset probe report.
+See `docs/FM2023_PROBE.md` for the mechanics research log and world-model accounting.
 
 ## Build & Run
 
@@ -196,12 +191,12 @@ src/
   net.rs      — Savegame persistence helpers
   dev.rs      — Dev/debug utilities
 data/
-  players.csv — 2026 players database (FM 2023 + FC 26 merged pool)
+  players.csv — 2026 players database (single EA FC-style dump)
 docs/
-  FM2023_PROBE.md — Dataset schema probe report
+  FM2023_PROBE.md — Mechanics research + world-model accounting (probe log)
 ```
 
 ## Performance
 
 Release profile uses `lto`, `opt-level=3`, `codegen-units=1`, and `panic=abort`
-for a fast, small binary. The full 8,400-player database loads in well under a second.
+for a fast, small binary. The full ~19,800-row database loads in well under a second.

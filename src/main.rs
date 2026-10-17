@@ -1,23 +1,25 @@
 //! # Football Manager CLI — End-to-End CLI Football Management Game
 //!
-//! A fast, robust, Rust-driven command-line football management game built on the
-//! Football Manager 2023 data schema (~2,828 real-world players with 100+ attributes).
+//! A fast, robust, Rust-driven command-line football management game. The world
+//! (players, clubs, ratings) loads from the 2026 players database — a single
+//! EA FC-style dump at `data/players.csv`, men's football only.
 //!
 //! Features:
 //! - **New Game** — Pick a club, name your team, set difficulty
 //! - **Season Dashboard** — Overview of current season, league position, key events
 //! - **Match Centre** — View and simulate matches with full tactical controls
 //! - **Squad Management** — Select lineups, manage formations and tactics
-//! - **Transfer Market** — Buy/sell players using FM2023 data with market values
+//! - **Transfer Market** — Buy/sell players using the 2026 database with market values
 //! - **Training** — Improve player attributes through focused training
-//! - **Scouting** — Discover and evaluate new players from the FM2023 database
+//! - **Scouting** — Discover and evaluate new players from the 2026 database
 //! - **Finances** — Track wages, revenue, transfer budget
 //! - **League Table** — Full standings with promotion/relegation
 //! - **Club Info** — Stadium, reputation, youth academy
 //! - **News/Events** — Dynamic match reports, transfers, injuries
 //! - **Save/Load** — Persistent game state via JSON serialization
 //!
-//! Built on the `FM 2023.csv` dataset from Sports Interactive/Sega's Football Manager 2023.
+//! Player data: the 2026 players database (see `data/players.csv`), an EA FC-style
+//! dump mapping onto the shared 0-100 attribute scale.
 
 mod cup;
 mod data;
@@ -2229,7 +2231,7 @@ fn transfer_market(state: &mut GameState) {
     loop {
         print_header("TRANSFER MARKET");
         println!("\n  Window: {} (open weeks 1-6, 20-23)", if deals::window_open(state.week) { "OPEN" } else { "CLOSED" });
-        println!("  Available Players from FM 2023 Database ({} players)", available.len());
+        println!("  Available Players from the 2026 Database ({} players)", available.len());
         println!("  Kitty: {}   Squad: {}/25   Shortlist: {}", format_currency(state.club.transfer_budget), state.club.squad.len(), state.scouted.len());
         println!("\n  ┌─────┬────────────────────┬─────┬──────┬──────────┬──────────┐");
         println!("  │ ID  │ Name               │ Pos │ Age  │ OVR    │ Value    │");
@@ -2429,7 +2431,7 @@ fn training(state: &mut GameState) {
 fn scouting(state: &mut GameState) {
     loop {
         print_header("SCOUTING");
-        println!("\n  Scouting Network: Searching the FM 2023 Database for new talent...");
+        println!("\n  Scouting Network: Searching the 2026 Database for new talent...");
         println!("  Your Reputation: {} | Instant search: {} | Assignment: {}/week",
             state.club.reputation, format_currency(5000), format_currency(2000));
         println!("\n  Active assignments: {}   Shortlist: {}", state.assignments.len(), state.scouted.len());
@@ -3221,7 +3223,7 @@ fn get_league_position(state: &GameState) -> usize {
 fn main() {
     println!("\n  ╔══════════════════════════════════════════╗");
     println!("  ║   ⚽  FOOTBALL MANAGER CLI  🏆          ║");
-    println!("  ║   Built with Rust & FM 2023 Data        ║");
+    println!("  ║   Built with Rust & 2026 Data           ║");
     println!("  ╚══════════════════════════════════════════╝");
     
     loop {

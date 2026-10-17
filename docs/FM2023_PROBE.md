@@ -1,4 +1,11 @@
-# FM 2023 Dataset - Probe Report
+# FM 2023 Mechanics - Probe Log
+
+> **Provenance note (2026-10):** The FM 2023 CSV (`FM 2023.csv`) is **retired as a
+> data source**. The CLI now runs on a single 2026 players database
+> (`data/players.csv`, an EA FC-style dump). The dataset schema section below is
+> kept only as historical reference for that retired source; everything from
+> "FM23 Full Feature Probe" onward is live mechanics research and world-model
+> accounting that still drives the sim.
 
 ## Source: https://github.com/dannytharris/FM (FM 2023.csv)
 

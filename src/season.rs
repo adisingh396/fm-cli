@@ -1294,38 +1294,17 @@ fn super_cup_winner(field: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64
 
 // ── World build ────────────────────────────────────────────────────────
 
-/// FM2023 rows carry 2022-vintage ages into a 2026 start. FM skills are 1-20
-/// scaled ×5, so a row whose every attribute is a multiple of 5 is FM-vintage
-/// (an FC row hitting that by chance is ~1-in-250-billion); shift it +4 years.
-fn fm_vintage_age(age: u8, a: &Attributes) -> u8 {
-    let fm_vintage = [
-        a.pace, a.shooting, a.passing, a.dribbling, a.tackling,
-        a.heading, a.strength, a.stamina, a.vision,
-        a.composure, a.goalkeeping, a.first_touch,
-    ]
-    .iter()
-    .all(|v| v % 5 == 0);
-    if fm_vintage {
-        (age + 4).clamp(16, 40)
-    } else {
-        age.clamp(16, 40)
-    }
-}
-
 fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     let mut pool: Vec<WP> = Vec::new();
     let mut teams: Vec<Team> = Vec::new();
     let mut league_teams: Vec<Vec<usize>> = vec![Vec::new(); BIG5.len()];
-    // The FM 2023 and FC 26 sets both list many of the same players, often at
-    // different clubs, under subtly different names and ages ("Harry Kane", 29
-    // at Spurs in the 2023 snapshot vs "Harry Edward Kane", 33 at Bayern in the
-    // 2026 one; "Kylian Mbappe" vs "Kylian Mbappe Lottin"). Group every
-    // candidate by first name + position, then fold rows that share
-    // surname-length tokens within a few years of age into ONE man, keeping the
-    // best row (highest overall; ties prefer the older age = the newer
-    // snapshot). The survivor keeps his latest club — Kane lands at Bayern,
-    // never as a ghost copy at Spurs — while genuinely different players sharing
-    // a first name are untouched.
+    // A single 2026 dump can still list the same man twice — at two clubs,
+    // under subtly different spellings ("Kylian Mbappe" vs "Kylian Mbappe
+    // Lottin"), or as a duplicate row. Group every candidate by first name +
+    // position, then fold rows that share surname-length tokens within a few
+    // years of age into ONE man, keeping the best row (highest overall; ties
+    // prefer the older age). The survivor keeps the better club, while
+    // genuinely different players sharing a first name are untouched.
     let fold = |s: &str| -> Vec<String> {
         s.to_lowercase()
             .split_whitespace()
@@ -1440,7 +1419,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
     // Within each first-name group, keep one row per man: best overall, ties to
-    // the older age (the newer snapshot). Distinct players survive side by side.
+    // the older age. Distinct players survive side by side.
     let mut winners: std::collections::HashSet<PlayerId> = std::collections::HashSet::new();
     for cands in by_first.values() {
         let mut order: Vec<usize> = (0..cands.len()).collect();
@@ -1469,8 +1448,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         for c in clubs {
             let tid = teams.len();
             let mut pidx = Vec::new();
-            // Best 26 by overall (see pull_db_squad rationale): merged FM/FC
-            // squads must field their FC stars, not the weaker-scale rows.
+            // Best 26 by overall (see pull_db_squad rationale): a club fields
+            // its strongest 26, not whoever the dump lists first.
             let mut ranked: Vec<(u8, PlayerId)> = c
                 .squad
                 .iter()
@@ -1490,7 +1469,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     if p.name.trim().len() < 2 {
                         continue;
                     }
-                    let page = fm_vintage_age(p.age, &p.attrs);
+                    let page = p.age.clamp(16, 40);
                     pidx.push(pool.len());
                     pool.push(WP {
                         name: p.name.clone(),
@@ -5808,21 +5787,6 @@ mod tests {
         assert!(s <= 96, "wonderkid must not stroll to 99, got {}", s);
         let ovr = pool[0].attrs.overall(pool[0].pos);
         assert!(ovr <= 95, "overall must stay GOAT-plausible, got {}", ovr);
-    }
-
-    #[test]
-    fn fm_vintage_ages_shift_four_years() {
-        // All-multiples-of-5 attributes mark an FM2023 (2022-vintage) row:
-        // van Sas listed 19 must read 23. Continuous FC rows are untouched.
-        let mut fm = attrs_all(80);
-        fm.pace = 85;
-        fm.shooting = 75;
-        assert_eq!(fm_vintage_age(19, &fm), 23);
-        let mut fc = attrs_all(80);
-        fc.pace = 83; // not a multiple of 5 → FC row
-        assert_eq!(fm_vintage_age(19, &fc), 19);
-        // Clamped at the top end, never below.
-        assert_eq!(fm_vintage_age(39, &fm), 40);
     }
 
     #[test]
