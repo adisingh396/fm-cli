@@ -9,3 +9,6 @@ e1.txt
 o1.txt
 in1.txt
 .env
+
+# Temporarily untracked (re-add on request)
+data/players.csv
