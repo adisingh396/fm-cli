@@ -8,7 +8,7 @@
 //! `engine::simulate_score` (per-shot xG), so distributions look believable
 //! (champion ~85-95 pts, golden boot ~25-36) and the best actual squads win.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -168,6 +168,15 @@ struct WP {
     // fed by the possession engine so a spectator sees real match output.
     shots: u16,
     sot: u16,
+    /// Expected goals from his own shots — chance quality, not just goals, so
+    /// a striker can be judged on the chances he gets to even when he's
+    /// finishing below them (and an over-scorer is shown running hot).
+    xg: f32,
+    /// Expected assists: the xG of the chances his final ball created.
+    xa: f32,
+    /// Aerial duels won/lost at set pieces — the centre-back's ledger.
+    aerials_won: u16,
+    aerials_lost: u16,
     key_passes: u16,
     big_chances: u16,
     passes_att: u32,
@@ -196,6 +205,9 @@ struct WP {
     career_ti: u32,
     career_cs: u32,
     career_apps: u32,
+    career_xg: f32,
+    career_xa: f32,
+    career_aerials: u32,
     career_rating_sum: f32,
     career_rating_apps: u32,
     ballons: u8,
@@ -236,6 +248,30 @@ impl WP {
     /// Assists across every competition.
     fn overall_assists(&self) -> u16 {
         self.assists + self.ucl_assists + self.el_assists + self.intl_assists
+    }
+    /// Goals against the quality of chances he actually received. Positive =
+    /// finishing above the chances (a hot year), negative = leaving goals out
+    /// there — the single most useful number for judging a striker honestly.
+    fn goals_minus_xg(&self) -> f32 {
+        self.overall_goals() as f32 - self.xg
+    }
+    /// Share of contested headers actually won, 0-100 (0 when he contested none).
+    fn aerial_pct(&self) -> f32 {
+        let t = (self.aerials_won + self.aerials_lost) as f32;
+        if t < 1.0 {
+            0.0
+        } else {
+            self.aerials_won as f32 / t * 100.0
+        }
+    }
+    /// Ball-winning per appearance: tackles plus interceptions per game, the
+    /// rate form of the defensive output (the raw total is on the career board).
+    fn ti_per_game(&self) -> f32 {
+        if self.rating_apps == 0 {
+            0.0
+        } else {
+            (self.tackles + self.interceptions) as f32 / self.rating_apps as f32
+        }
     }
     /// Likelihood of being the scorer: finishing quality × position.
     fn goal_weight(&self) -> f32 {
@@ -982,6 +1018,10 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
         // Detailed lines aggregate across every competition.
         pool[i].shots += s.shots as u16;
         pool[i].sot += s.shots_on_target as u16;
+        pool[i].xg += s.xg;
+        pool[i].xa += s.xa;
+        pool[i].aerials_won += s.aerials_won as u16;
+        pool[i].aerials_lost += s.aerials_lost as u16;
         pool[i].key_passes += s.key_passes as u16;
         pool[i].big_chances += s.big_chances_created as u16;
         pool[i].passes_att += s.passes_att as u32;
@@ -1525,6 +1565,10 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         intl_apps: 0,
                         shots: 0,
                         sot: 0,
+                        xg: 0.0,
+                        xa: 0.0,
+                        aerials_won: 0,
+                        aerials_lost: 0,
                         key_passes: 0,
                         big_chances: 0,
                         passes_att: 0,
@@ -1576,6 +1620,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         career_bcc: 0,
                         career_ti: 0,
                         career_cs: 0,
+                        career_xg: 0.0,
+                        career_xa: 0.0,
+                        career_aerials: 0,
                         career_apps: 0,
                         career_rating_sum: 0.0,
                         career_rating_apps: 0,
@@ -1716,6 +1763,10 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     intl_apps: 0,
                     shots: 0,
                     sot: 0,
+                    xg: 0.0,
+                    xa: 0.0,
+                    aerials_won: 0,
+                    aerials_lost: 0,
                     key_passes: 0,
                     big_chances: 0,
                     passes_att: 0,
@@ -1744,6 +1795,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     career_bcc: 0,
                     career_ti: 0,
                     career_cs: 0,
+                    career_xg: 0.0,
+                    career_xa: 0.0,
+                    career_aerials: 0,
                     career_apps: 0,
                     career_rating_sum: 0.0,
                     career_rating_apps: 0,
@@ -1868,6 +1922,9 @@ fn reset_season(w: &mut World) {
         p.career_ti += (p.tackles + p.interceptions) as u32;
         p.career_cs += p.clean_sheets as u32;
         p.career_apps += p.apps as u32;
+        p.career_xg += p.xg;
+        p.career_xa += p.xa;
+        p.career_aerials += (p.aerials_won + p.aerials_lost) as u32;
         p.career_rating_sum += p.rating_sum;
         p.career_rating_apps += p.rating_apps as u32;
         p.apps = 0;
@@ -1886,6 +1943,10 @@ fn reset_season(w: &mut World) {
         p.intl_apps = 0;
         p.shots = 0;
         p.sot = 0;
+        p.xg = 0.0;
+        p.xa = 0.0;
+        p.aerials_won = 0;
+        p.aerials_lost = 0;
         p.key_passes = 0;
         p.big_chances = 0;
         p.passes_att = 0;
@@ -1932,6 +1993,10 @@ fn intl_kind_for(year: u16) -> IntlKind {
 
 fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome {
     reset_season(w);
+    // Every club that lifts silverware this year. The boardroom reads this
+    // before it reads the league table: what a manager WON is part of the
+    // season's verdict, not an afterthought to it.
+    let mut honours: HashSet<usize> = HashSet::new();
 
     for li in 0..BIG5.len() {
         let ids = w.league_teams[li].clone();
@@ -1950,6 +2015,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
             w.teams[champ].title_drought = 0;
             w.teams[champ].manager.title_drought = 0;
             champ_idxs.push(champ);
+            honours.insert(champ);
             let cname = w.teams[champ].name.clone();
             for &pi in &w.teams[champ].players {
                 w.pool[pi].league_won = true;
@@ -1981,6 +2047,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         if ids.len() >= 4 {
             if let Some((win, finalist)) = run_domestic_cup(&ids, &w.teams, &w.params, rng) {
                 w.teams[win].manager.trophies += 1;
+                honours.insert(win);
                 cup_winners.push((BIG5[li].to_string(), w.teams[win].name.clone()));
                 cup_result[li] = Some((win, finalist));
             }
@@ -2037,6 +2104,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         if let Some(win) = super_cup_winner(&field, &w.teams, &w.params, rng) {
             w.teams[win].super_cups += 1;
             w.teams[win].manager.trophies += 1;
+            honours.insert(win);
             super_cups.push((BIG5[li].to_string(), w.teams[win].name.clone()));
         }
     }
@@ -2066,6 +2134,9 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     }
     ucl.truncate(32);
     let ucl_winner_idx = run_cup(&ucl, Comp::Ucl, &mut w.teams, &mut w.pool, &w.params, rng);
+    if let Some(t) = ucl_winner_idx {
+        honours.insert(t);
+    }
     let ucl_winner = ucl_winner_idx
         .map(|t| {
             w.teams[t].ucl_titles += 1;
@@ -2100,17 +2171,21 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         }
         d2 += 1;
     }
-    let europa_winner = if europa.len() >= 8 {
-        run_cup(&europa, Comp::Europa, &mut w.teams, &mut w.pool, &w.params, rng)
-            .map(|t| {
-                w.teams[t].el_titles += 1;
-                w.teams[t].manager.trophies += 1;
-                w.teams[t].name.clone()
-            })
-            .unwrap_or_else(|| "-".to_string())
+    let europa_winner_idx = if europa.len() >= 8 {
+        run_cup(&europa, Comp::Europa, &mut w.teams, &mut w.pool, &w.params, rng).map(|t| {
+            w.teams[t].el_titles += 1;
+            w.teams[t].manager.trophies += 1;
+            t
+        })
     } else {
-        "-".to_string()
+        None
     };
+    if let Some(t) = europa_winner_idx {
+        honours.insert(t);
+    }
+    let europa_winner = europa_winner_idx
+        .map(|t| w.teams[t].name.clone())
+        .unwrap_or_else(|| "-".to_string());
 
     // International tournament (calendar-driven). Squads get a summer break
     // first — nobody plays a World Cup at 100 fatigue after league + Europe.
@@ -2213,7 +2288,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     // End-of-season club evolution: reputation drifts on success/failure (with
     // mean-reversion) and managers move (a great coach at a small club gets the
     // big job), so the hierarchy is never frozen — clubs and eras rise and fall.
-    let manager_moves = post_season_evolution(w, &tables, rng);
+    let manager_moves = post_season_evolution(w, &tables, &honours, rng);
     // Money loop closes the season: prizes and Europe flow into cash/revenue,
     // wealth compounds — the transfer window that follows spends the proceeds.
     settle_finances(w, &tables, rng);
@@ -2414,6 +2489,7 @@ fn ballon_score(w: &WP, club_rep: u8, year: u16) -> f32 {
 fn post_season_evolution(
     w: &mut World,
     tables: &[Vec<usize>],
+    honours: &HashSet<usize>,
     rng: &mut Pcg64Mcg,
 ) -> Vec<String> {
     // 1. Reputation drift by league finish, with mean-reversion toward 65.
@@ -2468,6 +2544,11 @@ fn post_season_evolution(
     fallers.sort_by(|&a, &b| w.teams[b].rep.cmp(&w.teams[a].rep)); // biggest club first
     for (i, &riser) in risers.iter().enumerate() {
         if let Some(&faller) = fallers.get(i) {
+            // A club that just lifted something doesn't hand its dugout to a
+            // newcomer the same summer — the seat only opens when it's empty.
+            if honours.contains(&faller) {
+                continue;
+            }
             if w.teams[faller].rep > w.teams[riser].rep && w.teams[riser].manager.wants_bigger_job() {
                 let rq = w.teams[riser].manager.quality;
                 let fq = w.teams[faller].manager.quality;
@@ -2504,17 +2585,30 @@ fn post_season_evolution(
     // club finishing outside the top 2 faces the sack even from 3rd — this is
     // what stops a good squad (e.g. Barcelona) rotting for a decade under one
     // mediocre appointment while a rival dominates.
+    //
+    // Two things keep this honest. First, honours: a board fires nobody for
+    // "missing the title race" in the summer he won the league, the Champions
+    // League or a domestic cup — the shield is tied to THAT season's silverware,
+    // so it never compounds into a permanent tenure. Second, severity: each
+    // place below the board's line multiplies the pressure, so a runner-up has
+    // a bad year while a side that dropped out of Europe has a crisis, instead
+    // of every second-placed manager at a big club rolling the same dice.
     for table in tables {
         for (finish_pos, &t) in table.iter().enumerate() {
             let elite_rep = w.params.elite_rep.round() as u8;
             let elite_pos = w.params.elite_pos.round().max(1.0) as usize;
-            if w.teams[t].rep >= elite_rep && finish_pos + 1 > elite_pos && rng.gen_bool(w.params.sack_elite_p.clamp(0.0, 1.0) as f64) {
-                let old = w.teams[t].manager.name.clone();
-                w.teams[t].manager = Manager::fresh_hire(rng, &w.params);
-                moves.push(format!(
-                    "{} sack {} for missing the title race",
-                    w.teams[t].name, old
-                ));
+            if w.teams[t].rep >= elite_rep && finish_pos + 1 > elite_pos && !honours.contains(&t) {
+                let gap = ((finish_pos + 1) as f32 - w.params.elite_pos).max(1.0);
+                let p = (w.params.sack_elite_p * 0.20 * gap).clamp(0.0, 0.85);
+                if rng.gen_bool(p as f64) {
+                    let old = w.teams[t].manager.name.clone();
+                    w.teams[t].manager = Manager::fresh_hire(rng, &w.params);
+                    let where_ = finish_pos + 1;
+                    moves.push(format!(
+                        "{} sack {} for missing the title race (finished {})",
+                        w.teams[t].name, old, where_
+                    ));
+                }
             }
             // Title droughts end tenures cups can't save: a big club whose
             // CURRENT manager has gone six-plus seasons without a league title
@@ -2930,6 +3024,10 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         intl_apps: 0,
         shots: 0,
         sot: 0,
+        xg: 0.0,
+        xa: 0.0,
+        aerials_won: 0,
+        aerials_lost: 0,
         key_passes: 0,
         big_chances: 0,
         passes_att: 0,
@@ -2955,6 +3053,9 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         career_bcc: 0,
         career_ti: 0,
         career_cs: 0,
+        career_xg: 0.0,
+        career_xa: 0.0,
+        career_aerials: 0,
         career_apps: 0,
         career_rating_sum: 0.0,
         career_rating_apps: 0,
@@ -4630,6 +4731,9 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         p.career_ti += (p.tackles + p.interceptions) as u32;
         p.career_cs += p.clean_sheets as u32;
         p.career_apps += p.apps as u32;
+        p.career_xg += p.xg;
+        p.career_xa += p.xa;
+        p.career_aerials += (p.aerials_won + p.aerials_lost) as u32;
         p.career_rating_sum += p.rating_sum;
         p.career_rating_apps += p.rating_apps as u32;
     }
@@ -5459,6 +5563,10 @@ mod tests {
             intl_apps: 0,
             shots: 0,
             sot: 0,
+            xg: 0.0,
+            xa: 0.0,
+            aerials_won: 0,
+            aerials_lost: 0,
             key_passes: 0,
             big_chances: 0,
             passes_att: 0,
@@ -5484,6 +5592,9 @@ mod tests {
             career_bcc: 0,
             career_ti: 0,
             career_cs: 0,
+            career_xg: 0.0,
+            career_xa: 0.0,
+            career_aerials: 0,
             career_apps: 0,
             career_rating_sum: 0.0,
             career_rating_apps: 0,
@@ -5959,7 +6070,7 @@ mod tests {
             w.teams[0].manager.age = 45;
             w.teams[0].manager.seasons = 8;
             let tables = vec![vec![0usize], vec![1usize]];
-            let moves = post_season_evolution(&mut w, &tables, &mut rng);
+            let moves = post_season_evolution(&mut w, &tables, &HashSet::new(), &mut rng);
             if moves.iter().any(|m| m.contains("trophyless")) {
                 seen = true;
                 break;
@@ -5979,7 +6090,7 @@ mod tests {
             w.teams[0].manager.age = 71;
             w.teams[0].manager.seasons = 25;
             let tables = vec![vec![0usize], vec![1usize]];
-            let moves = post_season_evolution(&mut w, &tables, &mut rng);
+            let moves = post_season_evolution(&mut w, &tables, &HashSet::new(), &mut rng);
             if moves.iter().any(|m| m.contains("retires")) {
                 seen = true;
                 break;

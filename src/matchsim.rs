@@ -70,6 +70,14 @@ pub struct MatchStats {
     pub shots_on_target: u8,
     /// Expected goals accumulated from this player's shots (chance quality).
     pub xg: f32,
+    /// Expected assists: the xG of the chances this player's final ball
+    /// produced for others — creation scored on chance quality, not just on
+    /// whether the finisher happened to bury it.
+    pub xa: f32,
+    /// Aerial duels won/lost (headers challenged at set pieces and crosses),
+    /// the currency centre-backs and target men are actually judged on.
+    pub aerials_won: u8,
+    pub aerials_lost: u8,
     pub big_chances_created: u8,
     pub big_chances_missed: u8,
     pub key_passes: u8,
@@ -206,6 +214,28 @@ struct Rt {
     marker: Option<usize>,
 }
 
+/// How much a role actually competes for the ball. The anchor and the
+/// centre-backs live in the duels, the full-backs join in, and a poacher or an
+/// advanced playmaker is almost never the man who makes the challenge. Weighting
+/// every ball-winning duel by role is what puts tackles and interceptions on the
+/// players who win them in real life — without it the midfield five share every
+/// turnover evenly, and an attacking playmaker out-tackles N'Golo Kanté.
+fn role_defence_w(role: Role) -> f32 {
+    match role {
+        Role::Anchor => 1.45,
+        Role::CentralDefender | Role::BallPlayingDefender => 1.30,
+        Role::BoxToBox => 1.15,
+        Role::FullBack | Role::WingBack => 1.10,
+        Role::DeepLyingPlaymaker => 1.05,
+        Role::Winger => 0.55,
+        Role::FalseNine | Role::InsideForward | Role::AdvancedPlaymaker => 0.45,
+        Role::TargetMan => 0.35,
+        Role::ShadowStriker => 0.30,
+        Role::Poacher => 0.25,
+        Role::Goalkeeper | Role::SweeperKeeper => 0.0,
+    }
+}
+
 /// Shooting tendency by role: the shot-hunting of a poacher vs the restraint
 /// of a holding midfielder, emerging from where each role operates.
 fn shoot_tendency(role: Role) -> f32 {
@@ -307,6 +337,26 @@ impl Rt {
         (0..self.p.len())
             .filter(|&i| !self.out[i])
             .map(|i| (i, self.eff(i, base).max(1.0) * self.pos_w(i, fwd, mid, def, gkw)))
+            .filter(|&(_, w)| w > 0.0)
+            .collect()
+    }
+
+    /// The same pool, but for a genuine ball-winning duel: candidates are
+    /// additionally weighted by how much their ROLE defends, so the man picked
+    /// to make the challenge is the man who would actually be there to make it.
+    /// This is the difference between a season tackle chart led by a destroyer
+    /// and one led by whichever playmaker happened to have high vision.
+    fn duel_group(&self, base: &[f32], fwd: f32, mid: f32, def: f32, gkw: f32) -> Vec<(usize, f32)> {
+        (0..self.p.len())
+            .filter(|&i| !self.out[i])
+            .map(|i| {
+                (
+                    i,
+                    self.eff(i, base).max(1.0)
+                        * self.pos_w(i, fwd, mid, def, gkw)
+                        * role_defence_w(self.p[i].role),
+                )
+            })
             .filter(|&(_, w)| w > 0.0)
             .collect()
     }
@@ -649,7 +699,7 @@ fn drive(
 
     // Phase 2 — progression through midfield (pass or carry).
     let Some(pa) = wpick(&atk.group(&atk.passing, 0.9, 1.2, 0.5, 0.0), rng) else { return };
-    let Some(mut pd) = wpick(&def.group(&def.defend, 0.5, 1.0, 1.0, 0.0), rng) else { return };
+    let Some(mut pd) = wpick(&def.duel_group(&def.defend, 0.5, 1.0, 1.0, 0.0), rng) else { return };
     // Man-marking: the danger man gets no zonal duel — his shadow takes him
     // one-on-one instead of the picked defender, and all downstream credits,
     // fouls and turnovers follow the marker naturally. Shadowing tires him.
@@ -666,7 +716,15 @@ fn drive(
     let pres = def.eff(pd, &def.defend) * if man_marked { exec } else { 1.0 };
     // Isolated duels resolve steeply on the raw gap (no help to hide behind);
     // zonal duels stay saturated.
-    let carry = atk.eff(pa, &atk.dribble) > atk.eff(pa, &atk.passing) && rng.gen::<f32>() < 0.5;
+    // Whether he takes the man on or moves it on is a WEIGHTED CHOICE, not a
+    // switch: a player leans toward whichever skill he owns, but nobody goes a
+    // whole season without carrying the ball once. Before this, anyone whose
+    // passing out-rated his dribbling simply never dribbled — which is how a
+    // midfielder could finish a 50-game, 2,600-pass season on zero dribbles.
+    let drib = atk.eff(pa, &atk.dribble);
+    let pass = atk.eff(pa, &atk.passing);
+    let p_carry = (0.40 + (drib - pass) / 100.0).clamp(0.15, 0.70);
+    let carry = rng.gen::<f32>() < p_carry;
     if carry {
         atk.st[pa].dribbles_att += 1;
         atk.add_fatigue(pa, 0.006);
@@ -702,7 +760,7 @@ fn drive(
     // full-backs), so those roles — not just the striker — rack up the key
     // passes, assists and big chances, exactly as real chance-creation charts.
     let Some(ca) = wpick(&atk.group(&atk.creation, 0.95, 1.35, 0.45, 0.0), rng) else { return };
-    let Some(mut cd) = wpick(&def.group(&def.defend, 0.3, 0.7, 1.2, 0.0), rng) else { return };
+    let Some(mut cd) = wpick(&def.duel_group(&def.defend, 0.3, 0.7, 1.2, 0.0), rng) else { return };
     atk.st[ca].passes_att += 1;
     atk.add_fatigue(ca, 0.005);
     // Numbers in the final third emerge from mentalities: a side pouring
@@ -726,9 +784,14 @@ fn drive(
     }
     let mut resistance = def.eff(cd, &def.defend);
     if def_ment <= -1 {
-        let cover = (0..def.p.len())
-            .filter(|&i| i != cd && !def.out[i])
-            .map(|i| def.eff(i, &def.defend))
+        // The covering man is picked from the DEFENDERS, not from anyone with a
+        // decent defend score — a real deep block is marshalled by a centre-back
+        // stepping across, not by the nearest attacker.
+        let cover = def
+            .duel_group(&def.defend, 0.15, 0.5, 1.3, 0.0)
+            .into_iter()
+            .filter(|(i, _)| *i != cd)
+            .map(|(i, _)| def.eff(i, &def.defend))
             .fold(0.0f32, f32::max);
         // Cover helps, but a second man never doubles the duel — overloaded
         // defenses still concede, just less often.
@@ -748,9 +811,11 @@ fn drive(
         } else if def_ment <= -1 {
             // Beat his man into a set wall: the cover steps out for a second
             // isolated duel. Two wins or no chance.
-            let cover = (0..def.p.len())
-                .filter(|&i| i != cd && !def.out[i])
-                .map(|i| def.eff(i, &def.defend))
+            let cover = def
+                .duel_group(&def.defend, 0.15, 0.5, 1.3, 0.0)
+                .into_iter()
+                .filter(|(i, _)| *i != cd)
+                .map(|(i, _)| def.eff(i, &def.defend))
                 .fold(0.0f32, f32::max);
             rng.gen::<f32>() >= contest_iso(atk.eff(ca, &atk.creation), cover.max(1.0), direct - 1.0 + extra_man)
         } else {
@@ -834,6 +899,13 @@ fn drive(
     let creator = assister.unwrap_or(sh);
     if big {
         atk.st[creator].big_chances_created += 1;
+    }
+    // Expected assists: the final ball is credited with the quality of the
+    // chance it manufactured, whether or not the finisher buried it — so a
+    // playmaker whose strikers fluff gilt-edged openings still shows up on the
+    // creation chart, the way xA does in real tracking data.
+    if let Some(a) = assister {
+        atk.st[a].xa += xg;
     }
 
     let on_target;
@@ -926,23 +998,40 @@ fn header_attempt(
         .map(|i| (i, hq(atk, i) * atk.pos_w(i, 1.2, 0.8, 0.7, 0.0)))
         .collect();
     let Some(target) = wpick(&cands, rng) else { return };
-    let mark = (0..def.p.len())
+    // The marker is a NAME, not just a number: whoever actually goes up with
+    // him wins or loses the duel, so aerial contests build a real won/lost
+    // column for the defenders and strikers who contest them.
+    let mark_cand = (0..def.p.len())
         .filter(|&i| !def.out[i] && !def.is_gk(i))
-        .map(|i| def.eff(i, &def.aerial) * def.pos_w(i, 0.3, 0.6, 1.2, 0.0))
-        .fold(0.0f32, f32::max);
+        .map(|i| (i, def.eff(i, &def.aerial) * def.pos_w(i, 0.3, 0.6, 1.2, 0.0)))
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let mark_i = mark_cand.map(|(i, _)| i);
+    let mark = mark_cand.map(|(_, v)| v).unwrap_or(0.0);
     let keeper = def.gk_index().map(|g| def.eff(g, &def.gk)).unwrap_or(70.0);
     let threat = hq(atk, target);
     atk.st[taker].passes_att += 1;
     atk.st[taker].passes_cmp += 1;
     atk.add_fatigue(taker, 0.003);
     if rng.gen::<f32>() >= contest(threat, mark.max(keeper * 0.75), 2.0) {
-        return; // dealt with — keeper claims or the marker wins it
+        // Dealt with — but somebody still won the header. When the marker was
+        // the man the delivery had to beat, it goes on his ledger; when the
+        // keeper's claim was the higher obstacle, he simply plucked it out.
+        if let Some(mi) = mark_i.filter(|_| mark >= keeper * 0.75) {
+            def.st[mi].aerials_won += 1;
+            atk.st[target].aerials_lost += 1;
+        }
+        return;
     }
     // A won header: on target or not, then the keeper.
+    atk.st[target].aerials_won += 1;
+    if let Some(mi) = mark_i {
+        def.st[mi].aerials_lost += 1;
+    }
     atk.st[target].shots += 1;
     *shots += 1;
     atk.st[taker].key_passes += 1;
     let xg = (0.085 * (1.0 + (threat - mark) / 100.0)).clamp(0.04, 0.24);
+    atk.st[taker].xa += xg;
     let gk_stop = logistic((keeper - threat + 10.0) / 40.0);
     let scored = rng.gen::<f32>() < xg * (1.0 - gk_stop * 0.3);
     let on_target = scored || rng.gen::<f32>() < 0.45;
@@ -1119,28 +1208,39 @@ fn resolve_turnover(
 /// creation, defenders for duels and clean sheets — so a poacher who scores and
 /// a playmaker who creates and a centre-back who keeps a clean sheet can all
 /// rate highly in the same match, as in reality.
+///
+/// The scale is centred so an unremarkable outing sits BELOW the 6.5 an average
+/// player is supposed to rate: the baseline the Ballon d'Or arithmetic uses has
+/// to be the population's actual mean, or every vote is quietly inflated. That
+/// means the misses charge as loudly as the hits — shots off target, passes
+/// astray, dribbles lost, chances fluffed and fouls given away all cost — and
+/// pass volume no longer buys a seven on its own. Only what a player really
+/// contributes to the result lifts him.
 fn finalize_ratings(rt: &mut Rt, conceded: u8) {
     let clean = conceded == 0;
     for i in 0..rt.p.len() {
         let s = &mut rt.st[i];
         let is_def = matches!(rt.p[i].pos, Position::DEF | Position::GK);
         let is_gk = rt.p[i].pos == Position::GK;
-        let mut r = 6.0f32;
-        r += s.passes_cmp as f32 * 0.006;
+        let mut r = 5.8f32;
+        r += s.passes_cmp as f32 * 0.0045;
         r += s.dribbles_cmp as f32 * 0.08;
-        r += s.key_passes as f32 * 0.16;
+        r += s.key_passes as f32 * 0.15;
         r += s.shots_on_target as f32 * 0.10;
-        r += s.goals as f32 * 1.10;
-        r += s.assists as f32 * 0.80;
+        r += s.goals as f32 * 1.00;
+        r += s.assists as f32 * 0.75;
         r += s.big_chances_created as f32 * 0.12;
         r += s.saves as f32 * 0.14; // shot-stopping is a keeper's end product
+        r += s.aerials_won as f32 * 0.05; // duels actually won, not just contests
         let tackle_w = if is_def { 0.16 } else { 0.09 };
         r += s.tackles as f32 * tackle_w;
         r += s.interceptions as f32 * (tackle_w * 0.8);
-        r -= (s.passes_att.saturating_sub(s.passes_cmp)) as f32 * 0.010;
-        r -= (s.dribbles_att.saturating_sub(s.dribbles_cmp)) as f32 * 0.05;
-        r -= s.fouls as f32 * 0.08;
-        r -= s.big_chances_missed as f32 * 0.10;
+        // The cost side, which is where a rating is really earned.
+        r -= (s.passes_att.saturating_sub(s.passes_cmp)) as f32 * 0.013;
+        r -= (s.shots.saturating_sub(s.shots_on_target)) as f32 * 0.05;
+        r -= (s.dribbles_att.saturating_sub(s.dribbles_cmp)) as f32 * 0.06;
+        r -= s.fouls as f32 * 0.09;
+        r -= s.big_chances_missed as f32 * 0.14;
         if is_def {
             s.clean_sheet = clean;
             if clean {

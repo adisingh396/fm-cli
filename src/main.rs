@@ -270,10 +270,21 @@ fn run_season_sandbox() {
         years, years as u32 * 2100);
     io::stdout().flush().unwrap();
     let db = Database::load();
-    let seed = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    // FM_SEED pins the run so a fix can be A/B'd against the exact same
+    // history it is meant to correct; unset, the sim stays time-seeded.
+    let seed = match std::env::var("FM_SEED") {
+        Ok(s) if !s.trim().is_empty() => s.trim().parse().unwrap_or_else(|_| {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        }),
+        _ => SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    };
+    println!("  (seed {})", seed);
     let report = if years == 1 {
         season::simulate_full_season(&db, seed)
     } else {
