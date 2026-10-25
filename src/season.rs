@@ -1,6 +1,7 @@
 //! Season & multi-year sandbox: simulate the Big 5 leagues, the Champions
-//! League, the Europa League and international tournaments (World Cup every
-//! 4 years, Euros in between), for one season or a whole era, with aging,
+//! League, the Europa League and international football (a World Cup every four
+//! years, plus the Euros, Copa América, AFCON, Asian Cup and Gold Cup on their
+//! own confederation cycles), for one season or a whole era, with aging,
 //! attribute-based development, retirements and youth regens.
 //!
 //! All logic is original. Match strength and goal/assist attribution are
@@ -409,6 +410,10 @@ enum IntlKind {
     None,
     WorldCup,
     Euros,
+    CopaAmerica,
+    Afcon,
+    AsianCup,
+    GoldCup,
 }
 
 struct World {
@@ -458,6 +463,8 @@ struct SeasonOutcome {
     europa_winner: String,
     intl_kind: IntlKind,
     intl_winner: String,
+    /// Winners of every confederation final played this year.
+    confed_winners: Vec<(String, String)>,
     // Ballon d'Or: name, club, league g, league a, UCL g, UCL a, overall g, overall a
     ballon: (String, String, u16, u16, u16, u16, u16, u16),
     /// Winner's international goals, assists and appearances for the season
@@ -2004,13 +2011,51 @@ fn reset_season(w: &mut World) {
 }
 
 fn intl_kind_for(year: u16) -> IntlKind {
-    // World Cup 2026/2030/2034…, Euros 2028/2032…, nothing in odd years.
-    if year % 4 == 2 {
-        IntlKind::WorldCup
-    } else if year % 4 == 0 {
-        IntlKind::Euros
-    } else {
-        IntlKind::None
+    // The year's headline tournament, on the real four-year cycles.
+    match year % 4 {
+        0 => IntlKind::Euros,
+        1 => IntlKind::CopaAmerica,
+        2 => IntlKind::WorldCup,
+        _ => IntlKind::None,
+    }
+}
+
+/// Every confederation final played in a given year. Continental championships
+/// are not a World Cup substitute — they run on their own cycles alongside it,
+/// which is why a single "international" column made Copa América, AFCON, the
+/// Asian Cup and the Gold Cup vanish from the simulation entirely.
+fn confed_finals_for(year: u16) -> Vec<IntlKind> {
+    match year % 4 {
+        // Euros, Copa América and the Gold Cup share the summer cycle.
+        0 => vec![IntlKind::Euros, IntlKind::CopaAmerica, IntlKind::GoldCup],
+        // AFCON and the Asian Cup are staged in the January of odd years.
+        1 => vec![IntlKind::Afcon, IntlKind::AsianCup],
+        2 => vec![IntlKind::WorldCup],
+        _ => Vec::new(),
+    }
+}
+
+fn intl_label(kind: IntlKind) -> &'static str {
+    match kind {
+        IntlKind::WorldCup => "World Cup",
+        IntlKind::Euros => "European Championship",
+        IntlKind::CopaAmerica => "Copa América",
+        IntlKind::Afcon => "Africa Cup of Nations",
+        IntlKind::AsianCup => "AFC Asian Cup",
+        IntlKind::GoldCup => "CONCACAF Gold Cup",
+        IntlKind::None => "International windows",
+    }
+}
+
+fn intl_tag(kind: IntlKind) -> &'static str {
+    match kind {
+        IntlKind::WorldCup => "WC",
+        IntlKind::Euros => "Euro",
+        IntlKind::CopaAmerica => "Copa",
+        IntlKind::Afcon => "AFCON",
+        IntlKind::AsianCup => "Asian Cup",
+        IntlKind::GoldCup => "Gold Cup",
+        IntlKind::None => "-",
     }
 }
 
@@ -2210,24 +2255,32 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         .map(|t| w.teams[t].name.clone())
         .unwrap_or_else(|| "-".to_string());
 
-    // International tournament (calendar-driven). Squads get a summer break
-    // first — nobody plays a World Cup at 100 fatigue after league + Europe.
-    let intl_kind = intl_kind_for(year);
-    // Windows happen every year, not only when a World Cup or Euros is held.
-    // Tournament years then append the summer finals after the normal
-    // qualification/friendly workload.
+    // International calendar. Players get a summer break first — nobody plays a
+    // World Cup at 100 fatigue after league + Europe.
     for p in w.pool.iter_mut() {
         p.fatigue = p.fatigue.min(25);
     }
+    // Qualification and friendly windows run every year, even when no
+    // confederation final is held: they produce the 8–15 international caps a
+    // regular actually accumulates, and give minor nations a real fixture load.
     let mut window_nations = build_nations(&w.pool, IntlKind::WorldCup);
     play_international_windows(&mut window_nations, &mut w.pool, &w.params, rng);
-    let intl_winner = match intl_kind {
-        IntlKind::None => "-".to_string(),
-        kind => {
-            let mut nations = build_nations(&w.pool, kind);
-            run_international(&mut nations, &mut w.pool, &w.params, rng).unwrap_or_else(|| "-".to_string())
+    // Every confederation final scheduled for this year runs in turn. The
+    // headline column keeps the legacy year mapping; the rest are surfaced in
+    // the report so Copa América, AFCON, the Asian Cup and the Gold Cup stop
+    // disappearing from the simulation.
+    let intl_kind = intl_kind_for(year);
+    let mut confed_winners: Vec<(String, String)> = Vec::new();
+    for kind in confed_finals_for(year) {
+        let mut nations = build_nations(&w.pool, kind);
+        if let Some(winner) = run_international(&mut nations, &mut w.pool, &w.params, rng) {
+            confed_winners.push((intl_label(kind).to_string(), winner));
         }
-    };
+    }
+    let intl_winner = confed_winners
+        .first()
+        .map(|(_label, name)| name.clone())
+        .unwrap_or_else(|| "-".to_string());
 
     // Golden boot.
     let mut boot_idx: Vec<usize> = (0..w.pool.len()).collect();
@@ -2340,6 +2393,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         europa_winner,
         intl_kind,
         intl_winner,
+        confed_winners,
         ballon,
         ballon_intl: (w.pool[bwin].intl_goals, w.pool[bwin].intl_assists, w.pool[bwin].intl_apps),
         overall_boot,
@@ -4353,6 +4407,15 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
 
 fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
     let euro_only = kind == IntlKind::Euros;
+    let copa_only = kind == IntlKind::CopaAmerica;
+    let afcon_only = kind == IntlKind::Afcon;
+    let asian_only = kind == IntlKind::AsianCup;
+    let gold_only = kind == IntlKind::GoldCup;
+    let in_list = |n: &str, names: &[&str]| names.iter().any(|x| x.eq_ignore_ascii_case(n));
+    const CONMEBOL: &[&str] = &["Argentina", "Brazil", "Chile", "Colombia", "Ecuador", "Paraguay", "Peru", "Uruguay", "Bolivia", "Venezuela"];
+    const AFRICA: &[&str] = &["Algeria", "Cameroon", "Egypt", "Ghana", "Ivory Coast", "Morocco", "Nigeria", "Senegal", "South Africa", "Tunisia", "Mali", "Guinea"];
+    const ASIA: &[&str] = &["Japan", "South Korea", "Korea Republic", "Iran", "Australia", "Saudi Arabia", "Qatar", "Iraq", "China", "Uzbekistan"];
+    const CONCACAF: &[&str] = &["United States", "USA", "Mexico", "Canada", "Costa Rica", "Jamaica", "Panama", "Honduras"];
     let mut by_nation: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, w) in pool.iter().enumerate() {
         if w.retired {
@@ -4362,7 +4425,13 @@ fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
         if n.len() < 2 {
             continue;
         }
-        if euro_only && !EUROPE.iter().any(|e| e.eq_ignore_ascii_case(n)) {
+        let allowed = if euro_only { in_list(n, EUROPE) }
+            else if copa_only { in_list(n, CONMEBOL) }
+            else if afcon_only { in_list(n, AFRICA) }
+            else if asian_only { in_list(n, ASIA) }
+            else if gold_only { in_list(n, CONCACAF) }
+            else { true };
+        if !allowed {
             continue;
         }
         by_nation.entry(n.to_string()).or_default().push(i);
@@ -4380,7 +4449,7 @@ fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
         nations.push(Nation { name, players: idxs, strength });
     }
     nations.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
-    let cap = if euro_only { 24 } else { 32 };
+    let cap = if euro_only { 24 } else if copa_only { 16 } else if afcon_only || asian_only || gold_only { 24 } else { 32 };
     nations.truncate(cap);
     nations
 }
@@ -4490,17 +4559,30 @@ fn play_international_windows(nations: &mut [Nation], pool: &mut [WP], p: &Param
 
 fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<String> {
     let n = nations.len();
-    if n < 8 {
+    if n < 4 {
         return None;
     }
-    let groups_n = (n / 4).max(2);
-    let mut seeded: Vec<usize> = (0..n).collect();
+    // Finals are a deliberate knockout-sized field: 24 for a full World Cup or
+    // Euros, 16 for a continental finals, 8/4 for smaller confederations. A
+    // 24-team field qualifies the best four third-placed sides so it reaches a
+    // real 16-team bracket instead of dropping teams when an odd count is
+    // halved.
+    let field_n = if n >= 24 { 24 } else if n >= 16 { 16 } else if n >= 8 { 8 } else { 4 };
+    let groups_n = if field_n >= 24 { 6 } else if field_n >= 8 { 4 } else { 2 };
+    let teams_per_group = field_n / groups_n;
+    let mut seeded: Vec<usize> = (0..field_n).collect();
     seeded.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
     let mut groups: Vec<Vec<usize>> = vec![Vec::new(); groups_n];
+    // Pot-based serpentine draw: each group receives one team from each
+    // strength pot. This prevents a group of death and prevents one contender
+    // from receiving four minnows merely because the vector was shuffled.
     for (i, &t) in seeded.iter().enumerate() {
-        groups[i % groups_n].push(t);
+        let pot = i / groups_n;
+        let slot = if pot % 2 == 0 { i % groups_n } else { groups_n - 1 - (i % groups_n) };
+        groups[slot].push(t);
     }
     let mut advancing: Vec<usize> = Vec::new();
+    let mut thirds: Vec<usize> = Vec::new();
     for g in &groups {
         let mut pts: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         let mut gd: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
@@ -4521,7 +4603,18 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
         }
         let mut ranked = g.clone();
         ranked.sort_by(|x, y| pts[y].cmp(&pts[x]).then(gd[y].cmp(&gd[x])));
+        // Keep the third-placed side before the top two are moved out, so the
+        // 24-team path can pick the best four of the six thirds.
+        if let Some(&third) = ranked.get(2) {
+            thirds.push(third);
+        }
         advancing.extend(ranked.into_iter().take(2));
+    }
+    if teams_per_group == 4 && !thirds.is_empty() {
+        // 24-team finals: twelve group qualifiers plus the four strongest
+        // third-placed sides make a clean round of 16.
+        thirds.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+        advancing.extend(thirds.into_iter().take(4));
     }
     for &t in &advancing {
         for &pi in &nations[t].players {
@@ -4530,24 +4623,30 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
             }
         }
     }
-    // Keep the draw uncertain, but do not turn the knockout bracket into a
-    // lottery: the strongest surviving nations are seeded against the weakest
-    // qualifiers, which is how tournament seeding protects quality while still
-    // allowing a result-driven upset in the match itself.
+    // Seeded bracket: 1v16, 2v15, … so the strongest nations do not meet
+    // until the late rounds, exactly as real tournament seedings arrange.
     advancing.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    if advancing.len() > 16 {
+        advancing.truncate(16);
+    }
     let mut round = advancing;
     let mut tag = 2u8;
     while round.len() > 1 {
         let mut next = Vec::new();
-        let mut i = 0;
-        while i + 1 < round.len() {
-            let (a, b) = (round[i], round[i + 1]);
+        // Pair highest seed against lowest: 1vN, 2v(N-1), … so a clean
+        // bracket survives to the semis and finals, not a cluster of the
+        // four strongest sides meeting in the quarter-final.
+        let m = round.len();
+        for i in 0..m / 2 {
+            let (a, b) = (round[i], round[m - 1 - i]);
             let (ga, gb) = play_nation(a, b, nations, pool, p, rng);
             let win = if ga > gb {
                 a
             } else if gb > ga {
                 b
             } else {
+                // Penalty shootouts tilt slightly to the stronger side, but
+                // never become a coin flip decided by raw rating alone.
                 let pa = nations[a].strength / (nations[a].strength + nations[b].strength);
                 if rng.gen::<f32>() < pa {
                     a
@@ -4571,7 +4670,6 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
                 }
             }
             next.push(win);
-            i += 2;
         }
         round = next;
         tag += 1;
@@ -4832,15 +4930,19 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     }
     lines.push(String::new());
 
-    let intl_label = match out.intl_kind {
-        IntlKind::WorldCup => "World Cup",
-        IntlKind::Euros => "European Championship",
-        IntlKind::None => "No major tournament",
-    };
-    lines.push(format!("## International: {}", intl_label));
+    let header_label = intl_label(out.intl_kind);
+    lines.push(format!("## International: {}", header_label));
     lines.push(String::new());
-    lines.push(format!("- Winner: **{}**", out.intl_winner));
+    lines.push(format!("- Headline winner: **{}**", out.intl_winner));
     lines.push(String::new());
+    if !out.confed_winners.is_empty() {
+        lines.push("### Confederation finals".to_string());
+        lines.push(String::new());
+        for (label, name) in &out.confed_winners {
+            lines.push(format!("- **{}**: {}", label, name));
+        }
+        lines.push(String::new());
+    }
     lines.push("### International scoring leaders".to_string());
     lines.push(String::new());
     lines.push("| # | Player | Nation | G | A | Apps |".to_string());
@@ -4972,10 +5074,25 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
                 .map(|(_, c)| trunc(c, 17))
                 .unwrap_or_else(|| "-".to_string())
         };
-        let intl = match o.intl_kind {
-            IntlKind::WorldCup => format!("WC: {}", trunc(&o.intl_winner, 13)),
-            IntlKind::Euros => format!("Euro: {}", trunc(&o.intl_winner, 11)),
-            IntlKind::None => "-".to_string(),
+        let intl = if o.confed_winners.is_empty() {
+            "-".to_string()
+        } else {
+            o.confed_winners
+                .iter()
+                .map(|(label, name)| {
+                    let tag = match label.as_str() {
+                        "World Cup" => "WC",
+                        "European Championship" => "Euro",
+                        "Copa América" => "Copa",
+                        "Africa Cup of Nations" => "AFCON",
+                        "AFC Asian Cup" => "Asian",
+                        "CONCACAF Gold Cup" => "Gold",
+                        _ => label.as_str(),
+                    };
+                    format!("{}: {}", tag, trunc(name, 11))
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         lines.push(format!(
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",

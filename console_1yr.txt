@@ -1,0 +1,391 @@
+
+  ╔══════════════════════════════════════════╗
+  ║   ⚽  FOOTBALL MANAGER CLI  🏆          ║
+  ║   Built with Rust & FM 2023 Data        ║
+  ╚══════════════════════════════════════════╝
+[2J[H╔══════════════════════════════════════════════════════════════╗
+║          ⚽  FOOTBALL MANAGER CLI  🏆                       ║
+╚══════════════════════════════════════════════════════════════╝
+  MAIN MENU
+  ───────────────────────────────────────────────────────────
+
+  1.  New Game
+  2.  Load Game
+  3.  Simulate Season(s) — 1 season or up to 100 years (dynasty)
+  4.  Train AI — evolve parameters against real-world targets
+  5.  Observe / Spectate — watch matches live, browse a league
+  6.  Quit
+
+  Choose: [2J[H╔══════════════════════════════════════════════════════════════╗
+║          ⚽  FOOTBALL MANAGER CLI  🏆                       ║
+╚══════════════════════════════════════════════════════════════╝
+  SIMULATE SEASON(S)
+  ───────────────────────────────────────────────────────────
+
+  How many years to simulate? (1 = detailed single season,
+    up to 100 for a dynasty report) [default 10]: 
+  Loading database and simulating 1 season(s) (~2100 matches)...
+  Loaded 17849 players / 669 clubs from the 2026 players database.
+  (seed 424242)
+# Season 2026 Report
+
+## Premier League
+
+| # | Club | P | W | D | L | GF | GA | GD | Pts |
+|---|------|---|---|---|---|----|----|----|-----|
+| 1 | Manchester City | 38 | 23 | 10 | 5 | 76 | 26 | 50 | 79 |
+| 2 | Arsenal | 38 | 21 | 12 | 5 | 79 | 32 | 47 | 75 |
+| 3 | Man Utd | 38 | 16 | 17 | 5 | 59 | 39 | 20 | 65 |
+| 4 | Chelsea | 38 | 17 | 13 | 8 | 53 | 35 | 18 | 64 |
+| 5 | Brighton | 38 | 16 | 14 | 8 | 46 | 41 | 5 | 62 |
+| 6 | Spurs | 38 | 16 | 11 | 11 | 59 | 42 | 17 | 59 |
+
+**Top scorers** (goals/assists, avg rating, key attrs):
+- Benjamin Šeško — 20g 1a, avg 6.73 (PAC 85 SHO 82 PAS 66 DRI 75)
+- Viktor Gyökeres — 17g 2a, avg 6.66 (PAC 81 SHO 86 PAS 71 DRI 73)
+- Jérémy Doku — 16g 5a, avg 6.68 (PAC 92 SHO 74 PAS 78 DRI 90)
+
+## La Liga
+
+| # | Club | P | W | D | L | GF | GA | GD | Pts |
+|---|------|---|---|---|---|----|----|----|-----|
+| 1 | FC Barcelona | 38 | 26 | 10 | 2 | 72 | 22 | 50 | 88 |
+| 2 | Real Madrid | 38 | 26 | 6 | 6 | 89 | 29 | 60 | 84 |
+| 3 | Athletic Club | 38 | 23 | 8 | 7 | 66 | 33 | 33 | 77 |
+| 4 | Atlético de Madrid | 38 | 19 | 12 | 7 | 49 | 27 | 22 | 69 |
+| 5 | Celta | 38 | 18 | 8 | 12 | 58 | 43 | 15 | 62 |
+| 6 | Real Sociedad | 38 | 17 | 8 | 13 | 54 | 38 | 16 | 59 |
+
+**Top scorers** (goals/assists, avg rating, key attrs):
+- Orri Óskarsson — 21g 3a, avg 6.66 (PAC 74 SHO 73 PAS 62 DRI 70)
+- Iñaki Williams — 16g 1a, avg 6.60 (PAC 92 SHO 79 PAS 74 DRI 73)
+- Julián Alvarez — 15g 2a, avg 6.57 (PAC 86 SHO 86 PAS 81 DRI 87)
+
+## Serie A
+
+| # | Club | P | W | D | L | GF | GA | GD | Pts |
+|---|------|---|---|---|---|----|----|----|-----|
+| 1 | Lombardia FC | 38 | 23 | 9 | 6 | 70 | 29 | 41 | 78 |
+| 2 | Milano FC | 38 | 22 | 10 | 6 | 69 | 34 | 35 | 76 |
+| 3 | AS Roma | 38 | 22 | 8 | 8 | 66 | 38 | 28 | 74 |
+| 4 | Como | 38 | 19 | 12 | 7 | 62 | 39 | 23 | 69 |
+| 5 | Juventus | 38 | 20 | 8 | 10 | 55 | 29 | 26 | 68 |
+| 6 | Latium | 38 | 18 | 14 | 6 | 52 | 28 | 24 | 68 |
+
+**Top scorers** (goals/assists, avg rating, key attrs):
+- Rafael Leão — 22g 9a, avg 6.87 (PAC 93 SHO 78 PAS 79 DRI 80)
+- Giacomo Raspadori — 19g 4a, avg 6.73 (PAC 79 SHO 78 PAS 71 DRI 85)
+- Christopher Nkunku — 14g 7a, avg 6.71 (PAC 75 SHO 81 PAS 79 DRI 82)
+
+## Bundesliga
+
+| # | Club | P | W | D | L | GF | GA | GD | Pts |
+|---|------|---|---|---|---|----|----|----|-----|
+| 1 | Leverkusen | 34 | 24 | 8 | 2 | 64 | 24 | 40 | 80 |
+| 2 | FC Bayern München | 34 | 23 | 5 | 6 | 62 | 26 | 36 | 74 |
+| 3 | Borussia Dortmund | 34 | 22 | 7 | 5 | 59 | 23 | 36 | 73 |
+| 4 | Frankfurt | 34 | 21 | 4 | 9 | 50 | 27 | 23 | 67 |
+| 5 | TSG Hoffenheim | 34 | 13 | 9 | 12 | 39 | 32 | 7 | 48 |
+| 6 | 1. FC Köln | 34 | 14 | 6 | 14 | 42 | 42 | 0 | 48 |
+
+**Top scorers** (goals/assists, avg rating, key attrs):
+- Lennart Karl — 15g 3a, avg 6.79 (PAC 74 SHO 72 PAS 72 DRI 87)
+- Fábio Silva — 15g 3a, avg 6.64 (PAC 77 SHO 75 PAS 67 DRI 81)
+- Christian Kofane — 14g 2a, avg 6.53 (PAC 81 SHO 75 PAS 62 DRI 71)
+
+## Ligue 1
+
+| # | Club | P | W | D | L | GF | GA | GD | Pts |
+|---|------|---|---|---|---|----|----|----|-----|
+| 1 | Paris SG | 34 | 28 | 4 | 2 | 70 | 16 | 54 | 88 |
+| 2 | Stade Rennais FC | 34 | 19 | 12 | 3 | 55 | 22 | 33 | 69 |
+| 3 | LOSC Lille | 34 | 19 | 7 | 8 | 55 | 32 | 23 | 64 |
+| 4 | RC Lens | 34 | 18 | 5 | 11 | 47 | 39 | 8 | 59 |
+| 5 | OM | 34 | 15 | 10 | 9 | 56 | 34 | 22 | 55 |
+| 6 | OL | 34 | 13 | 14 | 7 | 45 | 41 | 4 | 53 |
+
+**Top scorers** (goals/assists, avg rating, key attrs):
+- Sofiane Diop — 18g 3a, avg 6.75 (PAC 77 SHO 70 PAS 74 DRI 81)
+- Eliezer Mayenda — 14g 5a, avg 6.51 (PAC 82 SHO 71 PAS 62 DRI 70)
+- Estéban Lepaul — 13g 2a, avg 6.55 (PAC 76 SHO 83 PAS 58 DRI 75)
+
+## European Golden Boot (Big 5)
+
+- Rafael Leão — 22g (Milano FC — Portugal)
+- Orri Óskarsson — 21g (Real Sociedad — Iceland)
+- Benjamin Šeško — 20g (Man Utd — Slovenia)
+- Giacomo Raspadori — 19g (Bergamo Calcio — Italy)
+- Sofiane Diop — 18g (OGC Nice — Morocco)
+
+## Top 10 by department (this season)
+
+_Positions: GK, CB, BPD (ball-playing CB), FB, WB (wing-back), DM, DLP (deep playmaker), CM, AP (advanced playmaker), W (winger), IF (inside forward), SS (second striker), TM (target man), ST, F9 (false nine)._
+
+### Goals
+
+| # | Player | Pos | Club | G (A) |
+|--:|--------|:--:|------|--:|
+| 1 | Orri Óskarsson | TM | Real Sociedad | 25 (6) |
+| 2 | Rafael Leão | SS | Milano FC | 25 (10) |
+| 3 | Viktor Gyökeres | TM | Arsenal | 24 (5) |
+| 4 | Benjamin Šeško | TM | Man Utd | 24 (1) |
+| 5 | Alexander Isak | ST | Liverpool | 22 (4) |
+| 6 | Giacomo Raspadori | SS | Bergamo Calcio | 22 (4) |
+| 7 | Sofiane Diop | F9 | OGC Nice | 22 (3) |
+| 8 | Gabriel Martinelli | SS | Arsenal | 21 (4) |
+| 9 | Jérémy Doku | SS | Manchester City | 21 (9) |
+| 10 | Arda Güler | AP | Real Madrid | 20 (14) |
+
+### Assists
+
+| # | Player | Pos | Club | A (G) |
+|--:|--------|:--:|------|--:|
+| 1 | Martin Ødegaard | DLP | Arsenal | 18 (8) |
+| 2 | Eduardo Camavinga | CM | Real Madrid | 16 (11) |
+| 3 | Frenkie de Jong | DLP | FC Barcelona | 16 (3) |
+| 4 | Nicolò Barella | DLP | Lombardia FC | 16 (4) |
+| 5 | Elliot Anderson | DLP | Manchester City | 15 (3) |
+| 6 | Jack Grealish | DLP | Manchester City | 15 (5) |
+| 7 | Sandro Tonali | CM | Spurs | 15 (2) |
+| 8 | Aurélien Tchouaméni | DM | Real Madrid | 14 (7) |
+| 9 | Arda Güler | AP | Real Madrid | 14 (20) |
+| 10 | Ilan Kebbal | W | Paris FC | 14 (4) |
+
+### Big chances created
+
+| # | Player | Pos | Club | BCC |
+|--:|--------|:--:|------|--:|
+| 1 | Martin Ødegaard | DLP | Arsenal | 28 |
+| 2 | Arda Güler | AP | Real Madrid | 25 |
+| 3 | Beñat Prados | DM | Athletic Club | 24 |
+| 4 | Nicolò Barella | DLP | Lombardia FC | 23 |
+| 5 | Eduardo Camavinga | CM | Real Madrid | 21 |
+| 6 | Lamine Yamal | F9 | FC Barcelona | 20 |
+| 7 | Martin Baturina | AP | Como | 20 |
+| 8 | Kylian Mbappé | SS | Real Madrid | 19 |
+| 9 | Kenan Yıldız | W | Juventus | 19 |
+| 10 | Kiernan Dewsbury-Hall | DLP | Everton | 18 |
+
+### Key passes
+
+| # | Player | Pos | Club | KP |
+|--:|--------|:--:|------|--:|
+| 1 | Sandro Tonali | CM | Spurs | 120 |
+| 2 | Eduardo Camavinga | CM | Real Madrid | 117 |
+| 3 | Kevin De Bruyne | DLP | SSC Napoli | 116 |
+| 4 | Elliot Anderson | DLP | Manchester City | 108 |
+| 5 | Enzo Fernández | DLP | Chelsea | 107 |
+| 6 | Beñat Prados | DM | Athletic Club | 104 |
+| 7 | Henrikh Mkhitaryan | DLP | Lombardia FC | 104 |
+| 8 | Luka Modrić | DLP | Milano FC | 104 |
+| 9 | Jack Grealish | DLP | Manchester City | 103 |
+| 10 | Arda Güler | AP | Real Madrid | 103 |
+
+### Dribbles completed
+
+| # | Player | Pos | Club | Drb |
+|--:|--------|:--:|------|--:|
+| 1 | Rafael Leão | SS | Milano FC | 104 |
+| 2 | Ousmane Dembélé | SS | Paris SG | 102 |
+| 3 | Kylian Mbappé | SS | Real Madrid | 98 |
+| 4 | Matias Fernandez-Pardo | SS | LOSC Lille | 97 |
+| 5 | Giacomo Raspadori | SS | Bergamo Calcio | 90 |
+| 6 | Eduardo Camavinga | CM | Real Madrid | 85 |
+| 7 | Iñaki Williams | SS | Athletic Club | 84 |
+| 8 | Georges Mikautadze | SS | Villarreal CF | 82 |
+| 9 | Donyell Malen | SS | AS Roma | 82 |
+| 10 | Harry Wilson | ST | Leeds United | 80 |
+
+### Tackles
+
+| # | Player | Pos | Club | Tkl |
+|--:|--------|:--:|------|--:|
+| 1 | Aymeric Laporte | CB | Athletic Club | 176 |
+| 2 | Jules Koundé | CB | FC Barcelona | 170 |
+| 3 | Kevin Diks | CB | M'gladbach | 151 |
+| 4 | Matthieu Udol | CB | RC Lens | 143 |
+| 5 | Joško Gvardiol | CB | Manchester City | 142 |
+| 6 | Jon Mikel Aramburu | FB | Real Sociedad | 142 |
+| 7 | Denis Zakaria | DM | AS Monaco | 142 |
+| 8 | Aïssa Mandi | CB | Levante UD | 141 |
+| 9 | Ibrahim Sangaré | DM | Nott'm Forest | 140 |
+| 10 | Pape Gueye | DM | Villarreal CF | 140 |
+
+### Interceptions
+
+| # | Player | Pos | Club | Int |
+|--:|--------|:--:|------|--:|
+| 1 | Sandro Tonali | CM | Spurs | 93 |
+| 2 | Ryan Gravenberch | DLP | Liverpool | 91 |
+| 3 | Mamadou Sangaré | DLP | Brentford | 91 |
+| 4 | Robin Fellhauer | CM | FC Augsburg | 88 |
+| 5 | Sergio Gómez | WB | Real Sociedad | 83 |
+| 6 | Beñat Prados | DM | Athletic Club | 81 |
+| 7 | Anton Stach | DLP | Leeds United | 80 |
+| 8 | Teun Koopmeiners | DLP | Juventus | 80 |
+| 9 | Leon Avdullahu | DLP | TSG Hoffenheim | 79 |
+| 10 | Enzo Fernández | DLP | Chelsea | 78 |
+
+### Pass completion (outfield, ≥600 passes)
+
+| # | Player | Pos | Club | Cmp% |
+|--:|--------|:--:|------|--:|
+| 1 | Matteo Ruggeri | FB | Aston Villa | 86.2% (674/782) |
+| 2 | Adrien Truffert | WB | AFC Bournemouth | 85.7% (888/1036) |
+| 3 | John Donald | CB | Elche CF | 85.6% (548/640) |
+| 4 | Keane Lewis-Potter | WB | Brentford | 85.5% (1326/1550) |
+| 5 | Jonathan Clauss | WB | OGC Nice | 85.5% (705/825) |
+| 6 | Joao Tanaka | W | PSV Eindhoven | 85.4% (583/683) |
+| 7 | Sergio Gómez | WB | Real Sociedad | 85.2% (2979/3498) |
+| 8 | Bartol Franjić | CB | Venezia | 84.9% (817/962) |
+| 9 | Marcos Alonso | BPD | Celta | 84.9% (1828/2153) |
+| 10 | Pedro Porro | WB | Spurs | 84.9% (572/674) |
+
+### Goalkeeper saves
+
+| # | Player | Pos | Club | Sv |
+|--:|--------|:--:|------|--:|
+| 1 | David Raya | GK | Arsenal | 216 (22 clean sheets) |
+| 2 | Đorđe Petrović | GK | AFC Bournemouth | 216 (11 clean sheets) |
+| 3 | Arijanet Murić | GK | Sassuolo | 214 (9 clean sheets) |
+| 4 | Matías Dituro | GK | Elche CF | 213 (8 clean sheets) |
+| 5 | Alfonso Herrero | GK | Málaga CF | 212 (9 clean sheets) |
+| 6 | Nick Pope | GK | Newcastle Utd | 208 (12 clean sheets) |
+| 7 | Matz Sels | GK | Nott'm Forest | 203 (14 clean sheets) |
+| 8 | Maarten Vandevoordt | GK | RB Leipzig | 203 (16 clean sheets) |
+| 9 | Bart Verbruggen | GK | Brighton | 194 (15 clean sheets) |
+| 10 | Mike Maignan | GK | Milano FC | 192 (18 clean sheets) |
+
+### Clean sheets
+
+| # | Player | Pos | Club | CS |
+|--:|--------|:--:|------|--:|
+| 1 | Jules Koundé | CB | FC Barcelona | 24 |
+| 2 | Jon Martín | CB | Real Sociedad | 23 |
+| 3 | Jon Mikel Aramburu | FB | Real Sociedad | 23 |
+| 4 | Aihen Muñoz | FB | Real Sociedad | 23 |
+| 5 | Sergio Gómez | WB | Real Sociedad | 23 |
+| 6 | David Raya | GK | Arsenal | 22 |
+| 7 | Joško Gvardiol | CB | Manchester City | 22 |
+| 8 | Eric García | BPD | FC Barcelona | 22 |
+| 9 | Achraf Hakimi | WB | Paris SG | 22 |
+| 10 | Pau Cubarsí | CB | FC Barcelona | 21 |
+
+### Average rating (≥15 apps)
+
+| # | Player | Pos | Club | Avg |
+|--:|--------|:--:|------|--:|
+| 1 | Eberechi Eze | AP | Arsenal | 7.13 |
+| 2 | Piotr Zieliński | DLP | Lombardia FC | 7.11 |
+| 3 | Youssouf Fofana | DLP | Milano FC | 7.09 |
+| 4 | Edmond Tapsoba | CB | Leverkusen | 7.06 |
+| 5 | Eduardo Camavinga | CM | Real Madrid | 7.05 |
+| 6 | Martin Ødegaard | DLP | Arsenal | 7.05 |
+| 7 | Matthieu Udol | CB | RC Lens | 7.03 |
+| 8 | Arda Güler | AP | Real Madrid | 7.01 |
+| 9 | Nicolò Barella | DLP | Lombardia FC | 7.00 |
+| 10 | Henrikh Mkhitaryan | DLP | Lombardia FC | 6.99 |
+
+## Academy watch (best under-20s)
+
+| # | Player | Age | Pos | Club | Ovr | Pot |
+|--:|--------|----:|:--:|------|----:|----:|
+| 1 | Kacper Bakker | 19 | ST | PSV Eindhoven | 85 | 94 |
+| 2 | Bruno Muller-Cruz | 19 | GK | SL Benfica | 85 | 93 |
+| 3 | Stefan Dubois-Werner | 19 | AP | FC Porto | 83 | 94 |
+| 4 | Kacper Abubakar-Marino | 18 | AP | FC Porto | 82 | 94 |
+| 5 | Achraf Popov-Horvath | 18 | SS | FC Porto | 82 | 94 |
+| 6 | Mikkel Werner | 18 | W | AFC Ajax | 82 | 94 |
+| 7 | Joao Tanaka | 17 | W | PSV Eindhoven | 79 | 94 |
+| 8 | Rafael Muller | 19 | DM | RB Salzburg | 79 | 94 |
+
+## Anomalies & storylines
+
+- No great shocks: every league broadly followed the money this year.
+
+## Continental Cups
+
+- Champions League: **SL Benfica** (top scorer Seydou Novak 10g)
+- Europa League: **Real Sociedad**
+
+### Champions League scoring chart
+
+| # | Player | Pos | Club | G | Apps |
+|--:|--------|:--:|------|:-:|:----:|
+| 1 | Seydou Novak | ST | SL Benfica | 10 | 15 |
+| 2 | Malik Schmidt-Moreno | SS | AFC Ajax | 9 | 10 |
+| 3 | Yuki Hassan | SS | AFC Ajax | 8 | 10 |
+| 4 | Arda Güler | AP | Real Madrid | 8 | 13 |
+| 5 | Gabriel Martinelli | SS | Arsenal | 7 | 12 |
+| 6 | Viktor Gyökeres | TM | Arsenal | 7 | 14 |
+| 7 | Phil Foden | AP | Manchester City | 6 | 9 |
+| 8 | Anthony Gordon | SS | FC Barcelona | 6 | 10 |
+| 9 | Serhou Guirassy | TM | Borussia Dortmund | 6 | 12 |
+| 10 | João Pedro | ST | Chelsea | 5 | 10 |
+
+### Club finances (opening books)
+
+| Club | Wealth | Revenue | Cash | Will. | Reg | HG |
+|------|-------:|--------:|-----:|:-----:|----:|---:|
+| FC Barcelona | 91 | 862m | 474m | 0.77 | 20 | 0 |
+| Real Madrid | 90 | 840m | 348m | 0.84 | 21 | 0 |
+| Arsenal | 89 | 825m | 268m | 0.83 | 23 | 0 |
+| Paris SG | 90 | 790m | 208m | 0.79 | 24 | 0 |
+| Lombardia FC | 87 | 765m | 315m | 0.81 | 25 | 0 |
+| FC Bayern München | 88 | 762m | 313m | 0.77 | 25 | 0 |
+| Manchester City | 85 | 685m | 128m | 0.76 | 25 | 0 |
+| Man Utd | 84 | 620m | 145m | 0.75 | 25 | 0 |
+| Chelsea | 82 | 577m | -11m | 0.79 | 25 | 0 |
+| Borussia Dortmund | 81 | 573m | 163m | 0.83 | 25 | 0 |
+
+## International: World Cup
+
+- Winner: **Uruguay**
+
+## Ballon d'Or
+
+### Winner: Arda Güler (400 pts)
+
+Why he won it:
+- League goals (10 × 6): +60 pts
+- League assists (9 × 4): +36 pts
+- Chances created (25 × 1.4): +35 pts
+- Appearances (50 × 0.35 (all comps)): +18 pts
+- Average rating (0.51 above 6.5 baseline): +32 pts
+- UCL goals (8 × 7): +56 pts
+- UCL assists (2 × 5): +10 pts
+- UCL run (UCL semi-final): +18 pts
+- International goals (2 × 6): +12 pts
+- International assists (3 × 4): +12 pts
+- International run (tournament semi-final): +14 pts
+- Ball-winning (67 tackles+int × 0.22): +15 pts
+- Build-up & creation (3118 passes, 73 dribbles, 103 key passes): +47 pts
+- Media & reputation (club reputation 90): +22 pts
+- Narrative & recency (journalists' mood): +14 pts
+
+Also in the running:
+- 2. Federico Valverde — 12g 3a, UCL 2g 3a, Intl 2g 2a (389 pts)
+- 3. Eduardo Camavinga — 10g 11a, UCL 1g 5a, Intl 0g 0a (351 pts)
+- 4. Jérémy Doku — 16g 5a, UCL 5g 2a, Intl 0g 2a (343 pts)
+- 5. Martin Ødegaard — 5g 14a, UCL 3g 4a, Intl 0g 0a (331 pts)
+Winning margin: +11 over Federico Valverde
+
+  (Full report saved to season_1yr.md)
+
+  Press Enter to continue...
+[2J[H╔══════════════════════════════════════════════════════════════╗
+║          ⚽  FOOTBALL MANAGER CLI  🏆                       ║
+╚══════════════════════════════════════════════════════════════╝
+  MAIN MENU
+  ───────────────────────────────────────────────────────────
+
+  1.  New Game
+  2.  Load Game
+  3.  Simulate Season(s) — 1 season or up to 100 years (dynasty)
+  4.  Train AI — evolve parameters against real-world targets
+  5.  Observe / Spectate — watch matches live, browse a league
+  6.  Quit
+
+  Choose: 
+  Thanks for playing Football Manager CLI! ⚽
+
