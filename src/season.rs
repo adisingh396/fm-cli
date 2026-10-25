@@ -1159,8 +1159,9 @@ fn weekly_recovery(
                 pool[i].morale -= 1;
             }
             let apps = pool[i].apps;
+            let age = pool[i].age;
             let morale = &mut pool[i].morale;
-            minds[i].evaluate(apps, played, rank, morale);
+            minds[i].evaluate(apps, played, rank, age, morale);
         }
     }
 }
@@ -1868,15 +1869,19 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         .filter(|w| w.nation.trim().len() >= 2)
         .map(|w| w.nation.clone())
         .collect();
-    // Elite ceiling for regens = ~the 96th percentile of current overalls, so
-    // youth can eventually become stars but never instantly outclass the world.
+    // Elite ceiling for regens: the percentile of current overalls, CLAMPED to
+    // the band real generational talent actually occupies (94–96). Without the
+    // floor, a thin or aging initial pool drags the ceiling down with it — the
+    // best prospects inherit it, cap out early, and world talent ratchets
+    // downward every generation because nobody is allowed to be the next Messi
+    // or Yamal. Without the ceiling, growth has no human limit at all.
     let mut ovrs: Vec<u8> = pool.iter().map(|w| w.ovr).collect();
     ovrs.sort_unstable();
     let elite_cap = ovrs
-        .get(ovrs.len() * 96 / 100)
+        .get(ovrs.len() * 98 / 100)
         .copied()
-        .unwrap_or(33)
-        .max(28);
+        .unwrap_or(90)
+        .clamp(94, 96);
 
     World {
         pool,
@@ -2621,7 +2626,14 @@ fn post_season_evolution(
             // trophyless history pinned on a man who just arrived.
             let drought = w.teams[t].manager.title_drought;
             let stature = w.teams[t].rep.max(w.teams[t].wealth);
-            if stature >= 85 && drought >= 6 {
+            // …but only when it actually cost the club Europe. A giant that
+            // finished 2nd–4th still plays Champions League football, and
+            // firing a manager for a trophyless *league* while he keeps the
+            // club in Europe is how a board churns away its own stability.
+            // (A table too small to have European places can't be judged on
+            // them — hence the length check.)
+            let missed_europe = table.len() < 8 || finish_pos >= 4;
+            if stature >= 85 && drought >= 6 && missed_europe {
                 let p = (0.25 + 0.10 * (drought - 6) as f32).min(0.8);
                 if rng.gen_bool(p.clamp(0.0, 1.0) as f64) {
                     let old = w.teams[t].manager.name.clone();
@@ -2845,6 +2857,16 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
     // trick for revenues, feeding the superstar wage spiral below.
     let boosts: Vec<f32> = w.teams.iter().map(|t| t.manager.youth_boost()).collect();
     let revs: Vec<i64> = w.teams.iter().map(|t| t.revenue_last).collect();
+    // Spanish superclub assets carry prohibitive buy-out clauses: Spanish law
+    // makes the *player* able to buy himself out, so the club sets the number
+    // and a giant sets it deliberately out of everyone's reach. A billion for a
+    // prized youngster is symbolic — it means "not for sale to a domestic
+    // rival or a state-backed superclub", not "price him".
+    let spanish_giant: Vec<bool> = w
+        .teams
+        .iter()
+        .map(|t| t.league_idx == 1 && t.rep >= 88)
+        .collect();
     for (idx, p) in w.pool.iter_mut().enumerate() {
         if p.retired {
             continue;
@@ -2880,12 +2902,22 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         // overall costs ~2.5× value, not ~6×): superstar clauses stay huge but
         // bounded, so fees can't compound into €867m absurdities on their own.
         if p.ovr >= 82 {
-            let v = market_value(p.ovr, p.age, p.pos) as f32 * w.inflation;
-            // Clauses decay with age past 29: nobody holds a €138m clause on a
-            // 31-year-old keeper — veteran clauses price the declining asset.
-            let age_f = (1.0 - (p.age.saturating_sub(29)) as f32 * 0.12).max(0.35);
-            let mult = (w.params.clause_mult + (p.ovr.saturating_sub(82)) as f32 * 0.12).min(3.0);
-            p.release_clause = Some((v * mult * age_f) as i64);
+            let giant = spanish_giant.get(p.team).copied().unwrap_or(false);
+            let core = p.ovr >= 85 || (p.age <= 22 && p.pot >= 88);
+            if giant && core {
+                // €1bn, in this model's million-unit scale. Nobody's budget or
+                // FFP ceiling clears it, so the clause can't be *triggered* —
+                // it is a refusal with a number attached. It expires on its own
+                // the moment he ages out of the core or drops below the bar.
+                p.release_clause = Some(1_000);
+            } else {
+                let v = market_value(p.ovr, p.age, p.pos) as f32 * w.inflation;
+                // Clauses decay with age past 29: nobody holds a €138m clause on a
+                // 31-year-old keeper — veteran clauses price the declining asset.
+                let age_f = (1.0 - (p.age.saturating_sub(29)) as f32 * 0.12).max(0.35);
+                let mult = (w.params.clause_mult + (p.ovr.saturating_sub(82)) as f32 * 0.12).min(3.0);
+                p.release_clause = Some((v * mult * age_f) as i64);
+            }
         } else {
             p.release_clause = None;
         }
@@ -2928,8 +2960,31 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             .filter(|&i| !w.pool[i].retired)
             .collect();
         w.teams[ti].players = active;
-        let deficit = 20i32 - w.teams[ti].players.len() as i32;
         let rep = w.teams[ti].rep;
+
+        // Guaranteed academy intake: every club graduates a class every summer,
+        // scaled by how good its academy is. The old rule only ever topped a
+        // squad UP to 20, so a club that had never dipped below 22 — i.e. every
+        // healthy club — produced zero club-trained players forever: the
+        // registration floor had no supply, and the world's talent pool simply
+        // stopped renewing once the real stars aged out.
+        let academy = w.teams[ti].academy;
+        let intake = match academy {
+            5 => rng.gen_range(2..=3),
+            3..=4 => rng.gen_range(1..=2),
+            _ => usize::from(rng.gen_bool(0.65)),
+        };
+        // Pure anti-runaway valve (40), not a pathway gate: academies graduate
+        // whether or not the XI is full, which is the whole point of the fix —
+        // this only stops a pathological squad from growing without limit.
+        if w.teams[ti].players.len() < 40 {
+            for _ in 0..intake {
+                let idx = spawn_regen(w, ti, rep, rng);
+                w.teams[ti].players.push(idx);
+            }
+        }
+        // Safety net: if retirements hollowed the squad out, replenish depth.
+        let deficit = 18i32 - w.teams[ti].players.len() as i32;
         for _ in 0..deficit.max(0) {
             let idx = spawn_regen(w, ti, rep, rng);
             w.teams[ti].players.push(idx);
@@ -3143,16 +3198,68 @@ fn do_loan(
 /// settled starters need a clearly bigger club, a triggered clause, or a
 /// transfer request (which works laterally like a soft clause). One predicate
 /// for buyer- and seller-initiated paths alike, so neither can bypass it.
+/// True when two clubs are genuine local or national enemies — the derbies a
+/// century of history makes categorical rather than financial. A release
+/// clause, a fatter wallet and a bigger badge do not buy a Clásico: the player
+/// and the selling board simply refuse. Not "expensive", not "unlikely" — no.
+fn is_direct_rival(club_a: &str, club_b: &str) -> bool {
+    const RIVALS: &[(&str, &str)] = &[
+        ("Real Madrid", "FC Barcelona"),
+        ("Real Madrid", "Atlético de Madrid"),
+        ("Arsenal", "Spurs"),
+        ("Manchester City", "Man Utd"),
+        ("Liverpool", "Man Utd"),
+        ("Liverpool", "Everton"),
+        ("Newcastle Utd", "Sunderland"),
+        ("Milano FC", "Lombardia FC"),
+        ("Juventus", "Lombardia FC"),
+        ("AS Roma", "Latium"),
+        ("Borussia Dortmund", "FC Bayern München"),
+        ("Paris SG", "OM"),
+    ];
+    RIVALS.iter().any(|&(a, b)| {
+        (club_a.contains(a) && club_b.contains(b)) || (club_a.contains(b) && club_b.contains(a))
+    })
+}
+
+/// Will this player actually make this move? Attributes and reputation set the
+/// price of a transfer; this decides whether it happens at all — the sporting
+/// and personal veto that keeps the market from being a pure auction.
+#[allow(clippy::too_many_arguments)]
 fn transfer_willing(
     surplus: bool,
     clause_deal: bool,
     requested: bool,
     ambition: f32,
+    loyalty: f32,
+    homegrown: bool,
     buyer_rep: u8,
     seller_rep: u8,
+    buyer_name: &str,
+    seller_name: &str,
     gap_clause: f32,
     gap_starter: f32,
 ) -> bool {
+    // 1. The derby line. Crossing a direct rival is categorical: a homegrown
+    //    player never does it, and anyone else has to be genuinely mercenary —
+    //    already demanding a move of his own — before loyalty to his own club
+    //    stops being the deciding vote. A met clause is not an argument here,
+    //    which is what stops a Clásico icon being sold across the Clásico.
+    if is_direct_rival(buyer_name, seller_name) {
+        if homegrown {
+            return false;
+        }
+        if loyalty > 0.15 || !requested {
+            return false;
+        }
+    }
+    // 2. Boyhood pull. A settled club-trained starter doesn't leave the
+    //    academy that raised him for a sideways or minor step up — only a real
+    //    upgrade, or a request of his own, breaks that. Benched players still
+    //    circulate: sitting outside the XI is its own answer.
+    if !surplus && homegrown && loyalty >= 0.50 && !requested && buyer_rep <= seller_rep + 6 {
+        return false;
+    }
     if surplus {
         (buyer_rep as i32) + 15 >= seller_rep as i32
             && !((buyer_rep as i32) + 12 < seller_rep as i32 && ambition > 0.6)
@@ -3364,6 +3471,15 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     if ask < 1 {
                         continue;
                     }
+                    // Nothing a club may not legally buy: the FFP-style ceiling
+                    // (35% of turnover, fee + agent) is applied at *selection*
+                    // time, so a symbolic billion-euro buy-out can't monopolise
+                    // a need slot and leave the buyer walking away with nobody
+                    // — he simply moves to the next man he can afford.
+                    let ask_agent = (ask as f32 * w.params.agent_fee) as i64;
+                    if ask + ask_agent > (w.teams[buyer].revenue_last as f32 * 0.35) as i64 {
+                        continue;
+                    }
                     let clause_deal = p.release_clause.map_or(false, |rc| ask >= rc);
                     // Benched/surplus players are sellable to any club that meets
                     // the fee — unwanted players move freely, which keeps talent
@@ -3378,8 +3494,12 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                         clause_deal,
                         w.minds[pi].requested,
                         w.minds[pi].ambition,
+                        w.minds[pi].loyalty,
+                        w.pool[pi].homegrown,
                         buyer_rep,
                         seller_rep,
+                        &w.teams[buyer].name,
+                        &w.teams[ti].name,
                         w.params.gap_clause,
                         w.params.gap_starter,
                     );
@@ -3772,7 +3892,12 @@ fn settle_finances(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) {
         // ~55% of its heritage-level turnover. This is what lets a fallen Man
         // United or Arsenal keep spending power to rebuild instead of spiralling
         // to minnow income and vanishing from the title race for 50 years.
-        let brand_floor = revenue(w.teams[t].heritage) * 0.55;
+        // Commercial floor anchored to 80% of heritage revenue: a fallen giant
+        // keeps most of its global brand through a sporting dip, the way
+        // Barcelona, Liverpool and United actually do. At 55% a single bad year
+        // cut the commercial base by nearly half, which forced distress sales,
+        // which caused the next bad year — a self-fulfilling decline.
+        let brand_floor = revenue(w.teams[t].heritage) * 0.80;
         let base = revenue(w.teams[t].wealth).max(brand_floor) * infl;
         let revenue = (base + (league_prize + ucl_prize + el_prize) * infl) as i64;
         let wages = wage_bill(w, t);
@@ -6041,18 +6166,43 @@ mod tests {
     fn transfer_willing_requested_goes_lateral() {
         // A requesting settled starter may leave laterally (soft clause) but
         // never downward for money: dynasties rot through exits, not freefalls.
-        assert!(transfer_willing(false, false, true, 0.9, 95, 99, 4.0, 8.0));
-        assert!(transfer_willing(false, false, true, 0.9, 99, 99, 4.0, 8.0));
-        assert!(!transfer_willing(false, false, true, 0.9, 70, 99, 4.0, 8.0));
+        // (Neither player is academy-trained and the two clubs aren't rivals,
+        // so only the ordinary rules are in play.)
+        let (a, b) = ("Umbrella Utd", "Sparta FC");
+        assert!(transfer_willing(false, false, true, 0.9, 0.9, false, 95, 99, a, b, 4.0, 8.0));
+        assert!(transfer_willing(false, false, true, 0.9, 0.9, false, 99, 99, a, b, 4.0, 8.0));
+        assert!(!transfer_willing(false, false, true, 0.9, 0.9, false, 70, 99, a, b, 4.0, 8.0));
         // Unrequested settled starters need a clearly bigger club.
-        assert!(!transfer_willing(false, false, false, 0.9, 95, 99, 4.0, 8.0));
-        assert!(transfer_willing(false, false, false, 0.9, 99, 90, 4.0, 8.0));
+        assert!(!transfer_willing(false, false, false, 0.9, 0.9, false, 95, 99, a, b, 4.0, 8.0));
+        assert!(transfer_willing(false, false, false, 0.9, 0.9, false, 99, 90, a, b, 4.0, 8.0));
         // Surplus men circulate within 15 rep points; ambitious ones refuse
         // even smaller drops, while low-ambition veterans wind down freely.
-        assert!(transfer_willing(true, false, false, 0.9, 80, 90, 4.0, 8.0));
-        assert!(!transfer_willing(true, false, false, 0.9, 70, 90, 4.0, 8.0));
-        assert!(transfer_willing(true, false, false, 0.3, 76, 90, 4.0, 8.0));
-        assert!(!transfer_willing(true, false, false, 0.3, 70, 90, 4.0, 8.0));
+        assert!(transfer_willing(true, false, false, 0.9, 0.9, false, 80, 90, a, b, 4.0, 8.0));
+        assert!(!transfer_willing(true, false, false, 0.9, 0.9, false, 70, 90, a, b, 4.0, 8.0));
+        assert!(transfer_willing(true, false, false, 0.3, 0.9, false, 76, 90, a, b, 4.0, 8.0));
+        assert!(!transfer_willing(true, false, false, 0.3, 0.9, false, 70, 90, a, b, 4.0, 8.0));
+    }
+
+    #[test]
+    fn direct_rivals_never_trade_each_other() {
+        // A met clause is not a Clásico. Crossing a direct rival is categorical:
+        // an academy player never does it, and everyone else has to already have
+        // demanded a move while being genuinely disloyal to even consider it.
+        let (mad, bar) = ("Real Madrid", "FC Barcelona");
+        assert!(!transfer_willing(false, true, true, 0.9, 0.9, true, 99, 95, mad, bar, 4.0, 8.0));
+        assert!(!transfer_willing(false, true, false, 0.9, 0.05, false, 99, 95, mad, bar, 4.0, 8.0));
+        assert!(!transfer_willing(true, true, false, 0.9, 0.05, false, 99, 95, mad, bar, 4.0, 8.0));
+        assert!(transfer_willing(false, true, true, 0.9, 0.05, false, 99, 95, mad, bar, 4.0, 8.0));
+        // The same deal between non-rivals is untouched.
+        assert!(transfer_willing(false, true, true, 0.9, 0.9, false, 99, 95, mad, "Bayern", 4.0, 8.0));
+        // The matrix itself, in both directions and with look-alike names.
+        assert!(is_direct_rival("Paris SG", "OM"));
+        assert!(is_direct_rival("OM", "Paris SG"));
+        assert!(is_direct_rival("Juventus", "Lombardia FC"));
+        assert!(!is_direct_rival("Real Madrid", "Real Betis"));
+        assert!(!is_direct_rival("Arsenal", "Manchester City"));
+        assert!(is_direct_rival("Milano FC", "Lombardia FC"));
+        assert!(!is_direct_rival("Milano FC", "Juventus"));
     }
 
     #[test]

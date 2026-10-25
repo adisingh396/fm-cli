@@ -50,20 +50,25 @@ impl PlayerMind {
     /// Falls short badly → unhappy + morale hit; far short + disloyal →
     /// transfer request stands until the market sells them. Meeting or beating
     /// expectation lifts morale. Professionals never sink as far.
-    pub fn evaluate(&mut self, apps: u16, played: u16, rank: usize, morale: &mut u8) {
-        let expected = played as f32 * pace_for_rank(rank);
+    pub fn evaluate(&mut self, apps: u16, played: u16, rank: usize, age: u8, morale: &mut u8) {
+        // A teenager is a prospect, not a snubbed starter. Sitting behind a
+        // 90-rated star doesn't judge him against the first XI yet, so he
+        // neither sulks nor demands a move — he waits and develops. Without
+        // this, the best academies drove their own kids to transfer requests
+        // the moment they blocked a debut, and no prospect could ever break in.
+        let expected = played as f32 * if age <= 19 { 0.15 } else { pace_for_rank(rank) };
         let shortfall = expected - apps as f32;
-        if shortfall >= 4.0 {
+        if shortfall >= 6.0 {
             self.unhappy = true;
-            *morale = morale.saturating_sub(6).max(30);
-            if shortfall >= 8.0 && self.loyalty < 0.45 {
+            *morale = morale.saturating_sub(4).max(40);
+            if shortfall >= 10.0 && self.loyalty < 0.40 && age >= 21 {
                 self.requested = true;
             }
         } else if shortfall <= 0.0 {
             self.unhappy = false;
             *morale = (*morale + 2).min(85);
         }
-        let floor = (30.0 + self.professionalism * 20.0) as u8;
+        let floor = (35.0 + self.professionalism * 20.0) as u8;
         if *morale < floor {
             *morale = floor;
         }
@@ -101,7 +106,7 @@ mod tests {
         let mut m = PlayerMind::new(&mut rng);
         m.loyalty = 0.9; // loyal: unhappy but no request
         let mut morale = 70u8;
-        m.evaluate(0, 10, 5, &mut morale);
+        m.evaluate(0, 10, 5, 22, &mut morale);
         assert!(m.unhappy);
         assert!(!m.requested);
         assert!(morale < 70);
@@ -113,7 +118,7 @@ mod tests {
         let mut m = PlayerMind::new(&mut rng);
         m.loyalty = 0.1;
         let mut morale = 70u8;
-        m.evaluate(0, 12, 3, &mut morale);
+        m.evaluate(0, 12, 3, 22, &mut morale);
         assert!(m.requested);
         assert_eq!(m.morale_target(), 45);
     }
@@ -124,7 +129,7 @@ mod tests {
         let mut m = PlayerMind::new(&mut rng);
         m.unhappy = true;
         let mut morale = 60u8;
-        m.evaluate(10, 10, 2, &mut morale);
+        m.evaluate(10, 10, 2, 25, &mut morale);
         assert!(!m.unhappy);
         assert!(morale > 60);
     }
@@ -137,8 +142,25 @@ mod tests {
         m.loyalty = 0.9;
         let mut morale = 70u8;
         for _ in 0..10 {
-            m.evaluate(0, 30, 0, &mut morale);
+            m.evaluate(0, 30, 0, 25, &mut morale);
         }
         assert!(morale >= 50);
+    }
+
+    #[test]
+    fn prospects_are_patient() {
+        // A teenager blocking behind a star neither sulks nor hands in a
+        // request — he's a prospect, not a neglected starter. The identical
+        // seat for a 25-year-old is a different story.
+        let mut rng = Pcg64Mcg::new(7);
+        let mut m = PlayerMind::new(&mut rng);
+        m.loyalty = 0.1; // would ask out the moment he was genuinely upset
+        let mut morale = 70u8;
+        m.evaluate(0, 30, 20, 18, &mut morale);
+        assert!(!m.unhappy);
+        assert!(!m.requested);
+        m.evaluate(0, 30, 20, 25, &mut morale);
+        assert!(m.unhappy);
+        assert!(morale < 70);
     }
 }

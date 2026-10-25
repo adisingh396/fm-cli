@@ -916,8 +916,23 @@ fn drive(
     // club's focal point. Centred so a league-average forward is neutral.
     let gk_save = def.gk_index().map(|g| def.eff(g, &def.gk)).unwrap_or(70.0);
     let gk_stop = logistic((gk_save - quality + 27.0) / 53.0);
-    let finish_factor = (quality / 79.0).powf(1.15).clamp(0.6, 1.15);
-    let raw = xg * (1.0 - gk_stop * 0.35) * finish_factor;
+    // Finishing skill matters, but it cannot turn every attack from a dominant
+    // side into a goal: elite forwards still face goalkeeper quality, pressure
+    // and the randomness of the chance itself. A small league-wide lift keeps
+    // ordinary matches in the 2–3 goal band while the lower ceiling prevents a
+    // single wonderkid from converting a mismatch into 50+ goals.
+    let finish_factor = (quality / 79.0).powf(1.15).clamp(0.6, 1.10);
+    // Even a superteam faces diminishing returns when every attack is built
+    // against a collapsed opponent: the chance count rises, but conversion
+    // does not scale linearly with the mismatch. This keeps a generated
+    // wonderkid from turning one-sided fixtures into a 50-goal season while
+    // leaving ordinary and merely strong sides untouched.
+    let dominance_brake = if quality > 90.0 {
+        (1.0 - (quality - 90.0) * 0.045).clamp(0.72, 1.0)
+    } else {
+        1.0
+    };
+    let raw = xg * (1.0 - gk_stop * 0.35) * finish_factor * 1.15 * dominance_brake;
     // No open-play shot exceeds ~26%: even the most gilt-edged chance needs
     // the finish, and nobody sustains better than roughly a quarter across a
     // season. And tired legs snatch at volume: past a normal workload, each
