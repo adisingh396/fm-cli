@@ -205,6 +205,9 @@ struct WP {
     career_ti: u32,
     career_cs: u32,
     career_apps: u32,
+    career_intl_goals: u32,
+    career_intl_assists: u32,
+    career_intl_apps: u32,
     career_xg: f32,
     career_xa: f32,
     career_aerials: u32,
@@ -457,6 +460,9 @@ struct SeasonOutcome {
     intl_winner: String,
     // Ballon d'Or: name, club, league g, league a, UCL g, UCL a, overall g, overall a
     ballon: (String, String, u16, u16, u16, u16, u16, u16),
+    /// Winner's international goals, assists and appearances for the season
+    /// header; kept separate to avoid breaking the existing trainer tuple.
+    ballon_intl: (u16, u16, u16),
     // Managerial merry-go-round moves that closed this season.
     manager_moves: Vec<String>,
     // All-competitions top scorer: name, overall goals, overall assists, club
@@ -1625,6 +1631,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         career_xa: 0.0,
                         career_aerials: 0,
                         career_apps: 0,
+                        career_intl_goals: 0,
+                        career_intl_assists: 0,
+                        career_intl_apps: 0,
                         career_rating_sum: 0.0,
                         career_rating_apps: 0,
                         ballons: 0,
@@ -1800,6 +1809,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     career_xa: 0.0,
                     career_aerials: 0,
                     career_apps: 0,
+                    career_intl_goals: 0,
+                    career_intl_assists: 0,
+                    career_intl_apps: 0,
                     career_rating_sum: 0.0,
                     career_rating_apps: 0,
                     ballons: 0,
@@ -1926,7 +1938,13 @@ fn reset_season(w: &mut World) {
         p.career_bcc += p.big_chances as u32;
         p.career_ti += (p.tackles + p.interceptions) as u32;
         p.career_cs += p.clean_sheets as u32;
-        p.career_apps += p.apps as u32;
+        // Career appearances include league, Europe and country. The old board
+        // counted league apps only, so an international regular looked like he
+        // had a shorter career than he actually played.
+        p.career_apps += (p.apps + p.ucl_apps + p.el_apps + p.intl_apps) as u32;
+        p.career_intl_goals += p.intl_goals as u32;
+        p.career_intl_assists += p.intl_assists as u32;
+        p.career_intl_apps += p.intl_apps as u32;
         p.career_xg += p.xg;
         p.career_xa += p.xa;
         p.career_aerials += (p.aerials_won + p.aerials_lost) as u32;
@@ -2195,12 +2213,17 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     // International tournament (calendar-driven). Squads get a summer break
     // first — nobody plays a World Cup at 100 fatigue after league + Europe.
     let intl_kind = intl_kind_for(year);
+    // Windows happen every year, not only when a World Cup or Euros is held.
+    // Tournament years then append the summer finals after the normal
+    // qualification/friendly workload.
+    for p in w.pool.iter_mut() {
+        p.fatigue = p.fatigue.min(25);
+    }
+    let mut window_nations = build_nations(&w.pool, IntlKind::WorldCup);
+    play_international_windows(&mut window_nations, &mut w.pool, &w.params, rng);
     let intl_winner = match intl_kind {
         IntlKind::None => "-".to_string(),
         kind => {
-            for p in w.pool.iter_mut() {
-                p.fatigue = p.fatigue.min(25);
-            }
             let mut nations = build_nations(&w.pool, kind);
             run_international(&mut nations, &mut w.pool, &w.params, rng).unwrap_or_else(|| "-".to_string())
         }
@@ -2318,6 +2341,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         intl_kind,
         intl_winner,
         ballon,
+        ballon_intl: (w.pool[bwin].intl_goals, w.pool[bwin].intl_assists, w.pool[bwin].intl_apps),
         overall_boot,
         ballon_why,
         manager_moves,
@@ -2362,13 +2386,22 @@ fn ballon_breakdown(w: &WP, club_rep: u8, year: u16) -> (f32, Vec<(&'static str,
     parts.push(("UCL goals", format!("{} × 7", w.ucl_goals), ug));
     let ua = w.ucl_assists as f32 * 5.0;
     parts.push(("UCL assists", format!("{} × 5", w.ucl_assists), ua));
-    let ur = match w.ucl_result {
-        5 => 70.0,
-        4 => 35.0,
-        3 => 18.0,
-        2 => 8.0,
+    // Winning the UCL matters, but the trophy cannot erase a quiet knockout
+    // campaign: one goal and three assists over 15 matches should not beat a
+    // rival's elite production on the strength of the medal alone.
+    let ucl_run_base = match w.ucl_result {
+        5 => 45.0,
+        4 => 25.0,
+        3 => 13.0,
+        2 => 6.0,
         _ => 0.0,
     };
+    // A medal is team context, not an individual performance. A player who
+    // appeared in 15 matches with 1 goal and 3 assists gets credit for winning
+    // the UCL, but not the same individual award credit as its decisive scorer.
+    let ucl_contribution = w.ucl_goals as f32 + w.ucl_assists as f32 * 0.7;
+    let ucl_factor = (0.25 + ucl_contribution / 12.0 * 0.75).clamp(0.25, 1.0);
+    let ur = ucl_run_base * ucl_factor;
     parts.push(("UCL run", run_label(w.ucl_result, "UCL"), ur));
     let eg = w.el_goals as f32 * 3.0;
     parts.push(("Europa goals", format!("{} × 3", w.el_goals), eg));
@@ -3112,6 +3145,9 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         career_xa: 0.0,
         career_aerials: 0,
         career_apps: 0,
+        career_intl_goals: 0,
+        career_intl_assists: 0,
+        career_intl_apps: 0,
         career_rating_sum: 0.0,
         career_rating_apps: 0,
         ballons: 0,
@@ -4424,6 +4460,34 @@ fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Para
     (o.goals_a as u32, o.goals_b as u32)
 }
 
+/// Five international windows per football year: September, October, November,
+/// March and June. These are qualifiers, Nations League fixtures and friendlies
+/// rather than a tournament, so they add the 8–15 caps a regular international
+/// actually accumulates without inventing a second trophy. A tournament year
+/// then adds its summer matches on top.
+fn play_international_windows(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) {
+    if nations.len() < 2 {
+        return;
+    }
+    let mut order: Vec<usize> = (0..nations.len()).collect();
+    order.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    // Two matches in each of the September, October, November and March
+    // windows, plus one June friendly/qualifier: nine fixtures is the centre of
+    // the 8–15 annual workload for a regular international.
+    for (window, matches) in [2usize, 2, 2, 2, 1].into_iter().enumerate() {
+        for _ in 0..matches {
+            // Rotate the list so the same countries do not meet every window.
+            let len = order.len();
+            order.rotate_left(1 + window % len);
+            for pair in order.chunks(2) {
+                if let [a, b] = pair {
+                    let _ = play_nation(*a, *b, nations, pool, p, rng);
+                }
+            }
+        }
+    }
+}
+
 fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<String> {
     let n = nations.len();
     if n < 8 {
@@ -4466,7 +4530,11 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
             }
         }
     }
-    advancing.shuffle(rng);
+    // Keep the draw uncertain, but do not turn the knockout bracket into a
+    // lottery: the strongest surviving nations are seeded against the weakest
+    // qualifiers, which is how tournament seeding protects quality while still
+    // allowing a result-driven upset in the match itself.
+    advancing.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
     let mut round = advancing;
     let mut tag = 2u8;
     while round.len() > 1 {
@@ -4773,11 +4841,23 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     lines.push(String::new());
     lines.push(format!("- Winner: **{}**", out.intl_winner));
     lines.push(String::new());
+    lines.push("### International scoring leaders".to_string());
+    lines.push(String::new());
+    lines.push("| # | Player | Nation | G | A | Apps |".to_string());
+    lines.push("|--:|--------|--------|--:|--:|-----:|".to_string());
+    let mut intl: Vec<usize> = (0..w.pool.len()).filter(|&i| w.pool[i].intl_apps > 0).collect();
+    intl.sort_by(|&a, &b| w.pool[b].intl_goals.cmp(&w.pool[a].intl_goals)
+        .then(w.pool[b].intl_assists.cmp(&w.pool[a].intl_assists)));
+    for (r, &i) in intl.iter().take(10).enumerate() {
+        let p = &w.pool[i];
+        lines.push(format!("| {} | {} | {} | {} | {} | {} |", r + 1, trunc(&p.name, 22), trunc(&p.nation, 18), p.intl_goals, p.intl_assists, p.intl_apps));
+    }
+    lines.push(String::new());
 
     lines.push("## Ballon d'Or".to_string());
     lines.push(String::new());
     let mut bd: Vec<(usize, f32)> = (0..w.pool.len())
-        .map(|i| (i, ballon_score(&w.pool[i], w.teams[w.pool[i].team].rep, BASE_YEAR)))
+        .map(|i| (i, ballon_score(&w.pool[i], w.teams[w.pool[i].team].rep, out.year)))
         .collect();
     bd.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     for (r, (i, sc)) in bd.iter().take(5).enumerate() {
@@ -4790,7 +4870,9 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
             ));
             lines.push(String::new());
             lines.push("Why he won it:".to_string());
-            let (_, parts) = ballon_breakdown(p, w.teams[p.team].rep, BASE_YEAR);
+            lines.push(format!("League **{}g {}a** · UCL **{}g {}a** · International **{}g {}a ({} apps)** · Overall **{}g {}a** · Club: **{}**", p.goals, p.assists, p.ucl_goals, p.ucl_assists, p.intl_goals, p.intl_assists, p.intl_apps, p.overall_goals(), p.overall_assists(), trunc(&w.teams[p.team].name, 24)));
+            lines.push(String::new());
+            let (_, parts) = ballon_breakdown(p, w.teams[p.team].rep, out.year);
             for (label, detail, pts) in parts {
                 if pts > 0.0 {
                     lines.push(format!("- {} ({}): +{} pts", label, detail, pts.round() as i32));
@@ -4855,7 +4937,13 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         p.career_bcc += p.big_chances as u32;
         p.career_ti += (p.tackles + p.interceptions) as u32;
         p.career_cs += p.clean_sheets as u32;
-        p.career_apps += p.apps as u32;
+        // Career appearances include league, Europe and country. The old board
+        // counted league apps only, so an international regular looked like he
+        // had a shorter career than he actually played.
+        p.career_apps += (p.apps + p.ucl_apps + p.el_apps + p.intl_apps) as u32;
+        p.career_intl_goals += p.intl_goals as u32;
+        p.career_intl_assists += p.intl_assists as u32;
+        p.career_intl_apps += p.intl_apps as u32;
         p.career_xg += p.xg;
         p.career_xa += p.xa;
         p.career_aerials += (p.aerials_won + p.aerials_lost) as u32;
@@ -4932,11 +5020,14 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             }
         );
         lines.push(format!(
-            "League **{}g {}a** · UCL **{}g {}a** · Overall **{}g {}a** · Golden Boot (league): {} · Top scorer (all comps): {}",
+            "League **{}g {}a** · UCL **{}g {}a** · International **{}g {}a ({} apps)** · Overall **{}g {}a** · Golden Boot (league): {} · Top scorer (all comps): {}",
             o.ballon.2,
             o.ballon.3,
             o.ballon.4,
             o.ballon.5,
+            o.ballon_intl.0,
+            o.ballon_intl.1,
+            o.ballon_intl.2,
             o.ballon.6,
             o.ballon.7,
             boot_str,
@@ -5199,8 +5290,11 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     top10(&mut lines, "Biggest mark (career G + 0.8×A + 40×BdOr)", "G / A / BdOr", &w.pool, &w.teams, &career,
         |p| p.career_goals as f32 + p.career_assists as f32 * 0.8 + p.ballons as f32 * 40.0,
         |p| format!("{} / {} / {}", p.career_goals, p.career_assists, p.ballons));
-    top10(&mut lines, "Career goals", "G", &w.pool, &w.teams, &career,
-        |p| p.career_goals as f32, |p| format!("{}", p.career_goals));
+    top10(&mut lines, "Career goals (all competitions + country)", "G / Intl G", &w.pool, &w.teams, &career,
+        |p| p.career_goals as f32, |p| format!("{} / {}", p.career_goals, p.career_intl_goals));
+    top10(&mut lines, "Career international record", "Intl G / A / Apps", &w.pool, &w.teams, &career,
+        |p| p.career_intl_goals as f32 * 2.0 + p.career_intl_assists as f32 * 0.8,
+        |p| format!("{} / {} / {}", p.career_intl_goals, p.career_intl_assists, p.career_intl_apps));
     top10(&mut lines, "Career assists", "A", &w.pool, &w.teams, &career,
         |p| p.career_assists as f32, |p| format!("{}", p.career_assists));
     top10(&mut lines, "Career big chances created", "BCC", &w.pool, &w.teams, &career,
@@ -5721,6 +5815,9 @@ mod tests {
             career_xa: 0.0,
             career_aerials: 0,
             career_apps: 0,
+            career_intl_goals: 0,
+            career_intl_assists: 0,
+            career_intl_apps: 0,
             career_rating_sum: 0.0,
             career_rating_apps: 0,
             ballons: 0,
