@@ -2716,36 +2716,41 @@ fn ballon_breakdown(_w: &WP, _club_rep: u8, _year: u16) -> (f32, Vec<(&'static s
         if w.league_won { "won".to_string() } else { "no".to_string() },
         league_title,
     ));
-    let ucl_goals = w.ucl_goals as f32 * 4.0 + w.ucl_assists as f32 * 2.0;
+    let ucl_goals = w.ucl_goals as f32 * 5.0 + w.ucl_assists as f32 * 2.5;
     parts.push(("UCL production", format!("{}g {}a", w.ucl_goals, w.ucl_assists), ucl_goals));
     let ucl_run = match w.ucl_result {
-        5 => 12.0,
-        4 => 8.0,
-        3 => 5.0,
-        2 => 2.0,
+        5 => 20.0, // UCL Champion
+        4 => 12.0, // UCL Finalist
+        3 => 7.0,  // Semi-finalist
+        2 => 3.0,  // Quarter-finalist
         _ => 0.0,
     };
     parts.push(("UCL run", run_label(w.ucl_result, "UCL"), ucl_run));
 
-    let europa = w.el_goals as f32 * 2.0 + w.el_assists as f32;
+    let europa = w.el_goals as f32 * 2.5 + w.el_assists as f32 * 1.5;
     parts.push(("Europa production", format!("{}g {}a", w.el_goals, w.el_assists), europa));
     let europa_run = match w.el_result {
-        5 => 5.0,
-        4 => 3.0,
+        5 => 8.0,
+        4 => 5.0,
+        3 => 2.0,
         _ => 0.0,
     };
     parts.push(("Europa run", run_label(w.el_result, "EL"), europa_run));
 
-    let intl = w.intl_goals as f32 * 4.0 + w.intl_assists as f32 * 2.0;
+    let is_wc_year = _year % 4 == 2;
+    let intl_goal_w = if is_wc_year { 6.0 } else { 4.5 };
+    let intl_ast_w = if is_wc_year { 3.0 } else { 2.2 };
+    let intl = w.intl_goals as f32 * intl_goal_w + w.intl_assists as f32 * intl_ast_w;
     parts.push(("International production", format!("{}g {}a", w.intl_goals, w.intl_assists), intl));
     let intl_run = match w.intl_result {
-        5 => 12.0,
-        4 => 8.0,
-        3 => 5.0,
-        2 => 2.0,
+        5 => if is_wc_year { 25.0 } else { 16.0 }, // World Cup / Continental Champion
+        4 => if is_wc_year { 16.0 } else { 10.0 }, // Finalist
+        3 => if is_wc_year { 10.0 } else { 6.0 },  // Semi-finalist
+        2 => if is_wc_year { 5.0 } else { 3.0 },
         _ => 0.0,
     };
-    parts.push(("International run", run_label(w.intl_result, "tournament"), intl_run));
+    let intl_label_tag = if is_wc_year { "World Cup" } else { "tournament" };
+    parts.push(("International run", run_label(w.intl_result, intl_label_tag), intl_run));
 
     let total: f32 = parts.iter().map(|(_, _, score)| *score).sum();
     (total, parts)
