@@ -32,6 +32,7 @@ mod net;
 mod observe;
 mod players;
 mod season;
+mod career;
 mod tune;
 
 use std::collections::{HashMap, HashSet};

@@ -19,6 +19,7 @@ use crate::data::Database;
 use crate::engine;
 use crate::gen::Gen;
 use crate::managers::Manager;
+use crate::career::CareerRow;
 use crate::matchsim::{self, MatchPlayer, Side, Venue};
 use crate::model::*;
 use crate::net;
@@ -450,6 +451,7 @@ struct World {
     /// Learned/hand simulation constants (see tune.rs). Loaded from
     /// tuned_params.json when present, defaults otherwise.
     params: Params,
+    career: crate::career::CareerDb,
 }
 
 /// One season-long loan: a young player developing on someone else's minutes.
@@ -2054,6 +2056,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         loans: Vec::new(),
         free_agents: Vec::new(),
         used_names,
+        career: crate::career::CareerDb::new(),
     }
 }
 
@@ -2063,6 +2066,103 @@ fn seed_minds(w: &mut World, rng: &mut Pcg64Mcg) {
 }
 
 // ── One season ─────────────────────────────────────────────────────────
+
+fn snapshot_season(w: &World, year: u16, ballon_winner: Option<usize>) -> Vec<CareerRow> {
+    let mut rows = Vec::new();
+    for (i, p) in w.pool.iter().enumerate() {
+        if p.retired {
+            continue;
+        }
+        let total_apps = p.apps + p.ucl_apps + p.el_apps + p.cup_apps + p.intl_apps;
+        if total_apps == 0 {
+            continue;
+        }
+
+        let club = w.teams[p.team].name.clone();
+        let avg = if p.rating_apps > 0 {
+            p.rating_sum / p.rating_apps as f32
+        } else {
+            0.0
+        };
+
+        rows.push(CareerRow {
+            player_id: i,
+            name: p.name.clone(),
+            nation: p.nation.clone(),
+            position: match p.pos {
+                crate::model::Position::GK => "GK".to_string(),
+                crate::model::Position::DEF => "DEF".to_string(),
+                crate::model::Position::MID => "MID".to_string(),
+                crate::model::Position::FWD => "FWD".to_string(),
+            },
+            age: p.age,
+            season_year: year,
+            club,
+            ovr: p.ovr,
+            pot: p.pot,
+            pace: p.attrs.pace,
+            shooting: p.attrs.shooting,
+            passing: p.attrs.passing,
+            dribbling: p.attrs.dribbling,
+            tackling: p.attrs.tackling,
+            heading: p.attrs.heading,
+            strength: p.attrs.strength,
+            stamina: p.attrs.stamina,
+            vision: p.attrs.vision,
+            composure: p.attrs.composure,
+            goalkeeping: p.attrs.goalkeeping,
+            first_touch: p.attrs.first_touch,
+            morale: p.morale,
+            fatigue: p.fatigue,
+            injury_days: p.injury_days,
+            value: p.value,
+            wage: p.wage,
+            apps: total_apps,
+            minutes: p.minutes,
+            goals: p.overall_goals(),
+            assists: p.overall_assists(),
+            avg_rating: avg,
+            league_apps: p.apps,
+            league_goals: p.goals,
+            league_assists: p.assists,
+            ucl_apps: p.ucl_apps,
+            ucl_goals: p.ucl_goals,
+            ucl_assists: p.ucl_assists,
+            el_apps: p.el_apps,
+            el_goals: p.el_goals,
+            el_assists: p.el_assists,
+            cup_apps: p.cup_apps,
+            cup_goals: p.cup_goals,
+            cup_assists: p.cup_assists,
+            intl_apps: p.intl_apps,
+            intl_goals: p.intl_goals,
+            intl_assists: p.intl_assists,
+            shots: p.shots,
+            sot: p.sot,
+            xg: p.xg,
+            xa: p.xa,
+            key_passes: p.key_passes,
+            big_chances: p.big_chances,
+            passes_att: p.passes_att,
+            passes_cmp: p.passes_cmp,
+            dribbles_att: p.dribbles_att,
+            dribbles_cmp: p.dribbles_cmp,
+            tackles: p.tackles,
+            interceptions: p.interceptions,
+            fouls: p.fouls,
+            saves: p.saves,
+            clean_sheets: p.clean_sheets,
+            aerials_won: p.aerials_won,
+            aerials_lost: p.aerials_lost,
+            league_won: p.league_won,
+            ucl_result: p.ucl_result,
+            el_result: p.el_result,
+            intl_result: p.intl_result,
+            ballon_dor: ballon_winner == Some(i),
+        });
+    }
+    rows
+}
 
 fn reset_season(w: &mut World) {
     for t in &mut w.teams {
@@ -2529,6 +2629,8 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     // it stood when it lifted the trophy — never a stale pre-season number or
     // a decades-drifted present value.
     let ucl_winner_rep = ucl_winner_idx.map(|t| w.teams[t].rep).unwrap_or(0);
+    let snap = snapshot_season(w, year, Some(bwin));
+    w.career.push_season(snap);
     SeasonOutcome {
         year,
         champions,
@@ -5187,6 +5289,7 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
             trunc(&w.pool[bd[1].0].name, 20)
         ));
     }
+    crate::career::write_career_db(&w.career, "data/players.csv");
     SeasonReport { lines }
 }
 
@@ -5666,6 +5769,7 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             lines.push(format!("- {}", g));
         }
     }
+    crate::career::write_career_db(&w.career, "data/players.csv");
     SeasonReport { lines }
 }
 
@@ -6255,6 +6359,7 @@ mod tests {
             free_agents: Vec::new(),
             used_names: HashSet::new(),
             params: Params::default(),
+            career: crate::career::CareerDb::new(),
         }
     }
 
