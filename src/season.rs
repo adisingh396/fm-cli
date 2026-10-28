@@ -4832,7 +4832,7 @@ fn play_international_windows(nations: &mut [Nation], pool: &mut [WP], p: &Param
     // Two matches in each of the September, October, November and March
     // windows, plus one June friendly/qualifier: nine fixtures is the centre of
     // the 8–15 annual workload for a regular international.
-    for (window, matches) in [2usize, 2, 2, 2, 1].into_iter().enumerate() {
+    for (window, matches) in [2usize, 2, 2, 2, 2].into_iter().enumerate() {
         for _ in 0..matches {
             // Rotate the list so the same countries do not meet every window.
             let len = order.len();

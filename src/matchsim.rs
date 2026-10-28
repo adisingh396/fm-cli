@@ -426,16 +426,16 @@ impl Rt {
             .map(|i| {
                 let hot = 1.0 + 0.20 * (self.st[i].goals.min(2) as f32);
                 let attention =
-                    1.0 / (1.0 + 0.32 * (self.st[i].shots.min(10) as f32 - 3.0).max(0.0));
+                    1.0 / (1.0 + 0.28 * (self.st[i].shots.min(10) as f32 - 3.0).max(0.0));
                 let shadowed = if Some(i) == marked { 0.92 } else { 1.0 };
                 // Modest non-linear finishing curve: elite finishers take more shots
                 // than midfield/defensive teammates without pathological runaway volume.
                 let fin = self.eff(i, &self.finish).max(1.0);
-                let fin_weight = (fin / 60.0).powf(1.30);
+                let fin_weight = (fin / 60.0).powf(1.35);
                 (
                     i,
                     fin_weight
-                        * self.pos_w(i, 1.35, 0.90, 0.20, 0.0)
+                        * self.pos_w(i, 1.38, 0.90, 0.20, 0.0)
                         * self.shoot_tend[i]
                         * hot
                         * attention
@@ -1051,7 +1051,7 @@ fn drive(
     let roll = (rng.gen::<f32>() - (create_gap / 150.0).clamp(-0.08, 0.09)).clamp(0.0, 0.999);
     let base = if roll < 0.020 {
         0.75 // won a penalty / rounded the keeper
-    } else if roll < 0.14 {
+    } else if roll < 0.16 {
         rng.gen_range(0.30..0.55) // clear-cut
     } else if roll < 0.42 {
         rng.gen_range(0.12..0.24) // decent look
@@ -1088,7 +1088,7 @@ fn drive(
     let keeper_edge = logistic((gk_save - quality) / 42.0);
     let finisher_edge = logistic((quality - 70.0) / 34.0);
     let fatigue = (1.0 - (atk.p[sh].start_fatigue + atk.fat[sh]) * 0.12).clamp(0.82, 1.0);
-    let scored_p = (xg * (0.72 + finisher_edge * 0.52) * (1.0 - keeper_edge * 0.24) * fatigue)
+    let scored_p = (xg * (0.76 + finisher_edge * 0.55) * (1.0 - keeper_edge * 0.22) * fatigue)
         .clamp(0.005, 0.95);
     let scored = rng.gen::<f32>() < scored_p;
     if scored {
