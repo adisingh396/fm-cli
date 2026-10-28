@@ -199,8 +199,8 @@ impl Database {
             }
             // Primary position drives the role bucket; wingers (LW/RW/CF) count
             // as forwards through fc_position.
-            let _ = i_alt;
-            let pos = fc_position(&get(&fields, Some(i_pos)));
+            let alt = get(&fields, i_alt);
+            let pos = fc_position(&get(&fields, Some(i_pos)), &alt);
             let age = Self::age_from_birthdate(&get(&fields, i_birth));
             let attrs = Attributes {
                 pace: avg(&fields, &[c_acc, c_spr]),
@@ -245,11 +245,21 @@ impl Database {
                 personality: Personality::Balanced,
             };
             let ovr = player.overall();
-            // Potential cap: current ability plus a little youth headroom, hard-
-            // capped at 95 (just above the dataset's 91 ceiling) so wonderkids
-            // can grow into generational talents without strolling to 99.
-            let youth = (23i32 - age as i32).clamp(0, 8) as u16;
-            player.potential = (ovr as u16 + youth).min(95).max(ovr as u16) as u8;
+            // Potential is a realistic ceiling, not a free 8-point bump. It
+            // shrinks as the player is already elite: a 90-rated 18-year-old
+            // can only reach ~94, a 65-rated 18-year-old can reach ~80, and a
+            // 28-year-old barely at all. Mental attributes (reactions,
+            // composure, vision) are the best available proxy for ceiling.
+            let reactions: u8 = get(&fields, a("movement_reactions")).trim().parse::<f32>().unwrap_or(70.0).round().clamp(1.0,99.0) as u8;
+            let composure: u8 = get(&fields, c_comp).trim().parse::<f32>().unwrap_or(70.0).round().clamp(1.0,99.0) as u8;
+            let vision: u8 = get(&fields, c_vis).trim().parse::<f32>().unwrap_or(70.0).round().clamp(1.0,99.0) as u8;
+            let mental = (reactions as u16 + composure as u16 + vision as u16) / 3;
+            let max_headroom: u16 = if ovr >= 88 { 4 } else if ovr >= 80 { 6 } else if ovr >= 70 { 8 } else { 10 };
+            let age_decay: u16 = (age as i32 - 17).clamp(0, 12) as u16;
+            let age_headroom = max_headroom.saturating_sub(age_decay * 7 / 10).max(0);
+            let mental_bonus = if mental >= 85 && age <= 21 { 2u16 } else if mental >= 80 && age <= 23 { 1u16 } else { 0u16 };
+            let headroom = (age_headroom + mental_bonus).min(max_headroom + 2);
+            player.potential = (ovr as u16 + headroom).min(95).max(ovr as u16) as u8;
             // Starting value/wage derive from ability (the sim re-prices everyone
             // from market_value on build, so this is only a seed).
             let v = (ovr as u64).pow(3);
@@ -445,16 +455,22 @@ fn parse_csv_line(line: &str) -> Vec<&str> {
     result
 }
 
-fn fc_position(pos_str: &str) -> Position {
+fn fc_position(pos_str: &str, alt_str: &str) -> Position {
     // SoFIFA-style "RM, RW" — a player is a forward if ANY listed slot is an
     // attacking one (wingers who cut inside score like forwards), else fall
     // back to the primary slot. Reading only the first token misclassifies
     // wingers such as Yamal (RM, RW) as midfielders and guts their scoring.
-    let tokens: Vec<String> = pos_str
+    let mut tokens: Vec<String> = pos_str
         .split([',', ' '])
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty())
         .collect();
+    tokens.extend(
+        alt_str
+            .split([',', ' '])
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| !s.is_empty()),
+    );
     let is_fwd = |t: &str| {
         matches!(
             t,

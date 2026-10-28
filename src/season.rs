@@ -6,8 +6,8 @@
 //!
 //! All logic is original. Match strength and goal/assist attribution are
 //! driven by each player's real attributes (pace, shooting, passing, …) via
-//! `engine::simulate_score` (per-shot xG), so distributions look believable
-//! (champion ~85-95 pts, golden boot ~25-36) and the best actual squads win.
+//! the minute-by-minute `matchsim` engine, so distributions look believable
+//! (champion ~85-95 pts, golden boot ~25-36) and the best actual elevens win.
 
 use std::collections::{HashMap, HashSet};
 
@@ -152,18 +152,22 @@ struct WP {
     homegrown: bool,
     // per-season
     apps: u16,
+    minutes: u32,
     goals: u16,
     assists: u16,
     rating_sum: f32,
     rating_apps: u16,
     ucl_goals: u16,
     el_goals: u16,
+    cup_goals: u16,
     intl_goals: u16,
     ucl_assists: u16,
     el_assists: u16,
+    cup_assists: u16,
     intl_assists: u16,
     ucl_apps: u16,
     el_apps: u16,
+    cup_apps: u16,
     intl_apps: u16,
     // detailed per-season stat lines (aggregated across all competitions),
     // fed by the possession engine so a spectator sees real match output.
@@ -206,6 +210,7 @@ struct WP {
     career_ti: u32,
     career_cs: u32,
     career_apps: u32,
+    career_minutes: u32,
     career_intl_goals: u32,
     career_intl_assists: u32,
     career_intl_apps: u32,
@@ -247,11 +252,11 @@ impl WP {
     }
     /// Goals across every competition (league + UCL + Europa + international).
     fn overall_goals(&self) -> u16 {
-        self.goals + self.ucl_goals + self.el_goals + self.intl_goals
+        self.goals + self.ucl_goals + self.el_goals + self.cup_goals + self.intl_goals
     }
     /// Assists across every competition.
     fn overall_assists(&self) -> u16 {
-        self.assists + self.ucl_assists + self.el_assists + self.intl_assists
+        self.assists + self.ucl_assists + self.el_assists + self.cup_assists + self.intl_assists
     }
     /// Goals against the quality of chances he actually received. Positive =
     /// finishing above the chances (a hot year), negative = leaving goals out
@@ -370,6 +375,9 @@ struct Team {
     /// Seasons since this club last won its league (Big5 only). Boards lose
     /// patience with droughts no trophy cabinet excuses — cups don't save you.
     title_drought: u8,
+    /// Consecutive Big-5 league titles. Long dynasties create real restlessness
+    /// and wage pressure instead of becoming a permanent scripted monopoly.
+    title_streak: u8,
     /// Registered 25 for the season (squad-registration rules): only these may
     /// play league/European football. Unregistered players still train, get
     /// paid, and can be sold or loaned — exactly like real life.
@@ -400,6 +408,7 @@ struct Nation {
 #[derive(Clone, Copy, PartialEq)]
 enum Comp {
     League,
+    Cup,
     Ucl,
     Europa,
     Intl,
@@ -607,6 +616,35 @@ fn revenue(rep: u8) -> f32 {
     50.0
 }
 
+/// A long title run creates pressure through the parts of football that really
+/// change under a dynasty: recruitment budgets tighten, wages and expectations
+/// rise, and ambitious stars start looking for a new challenge. This deliberately
+/// never changes a match result directly; it changes the squad that reaches the
+/// next season. The first two titles are normal success, while a third title
+/// starts a capped, gradual pressure curve.
+fn dynasty_budget_factor(title_streak: u8) -> f32 {
+    let excess = title_streak.saturating_sub(2).min(5) as f32;
+    (1.0 - excess * 0.06).max(0.70)
+}
+
+fn dynasty_maintenance_rate(title_streak: u8) -> f32 {
+    let excess = title_streak.saturating_sub(2).min(5) as f32;
+    (excess * 0.015).min(0.075)
+}
+
+fn dynasty_challenge_probability(title_streak: u8, ambition: f32) -> f64 {
+    if title_streak < 3 {
+        return if ambition > 0.8 { 0.10 } else { 0.0 };
+    }
+    let excess = title_streak.saturating_sub(3).min(7) as f64;
+    (0.03 + ambition.clamp(0.0, 1.0) as f64 * 0.08 + excess * 0.025).min(0.28)
+}
+
+fn dynasty_exit_probability(title_streak: u8) -> f64 {
+    let excess = title_streak.saturating_sub(3).min(4) as f64;
+    (excess * 0.07).min(0.28)
+}
+
 /// Indices of a club's best XI (1 GK, 4 DEF, 3 MID, 3 FWD), rated by
 /// fatigue-neutral rating. Used for market surplus checks: a benched player
 /// the manager won't pick is sellable. Deliberately NOT fatigue-aware — the
@@ -778,7 +816,16 @@ fn select_xi(
                 let eff = pool[i].effective();
                 // Prefer naturals for the line, but allow anyone at suitability cost.
                 let line_bonus = if line_of(pool[i].pos) == line { 1.0 } else { 0.82 };
-                (eff * line_bonus, i)
+                // Potential is not a magic override of current ability. It is a
+                // small tie-breaker for a young player close enough to the XI
+                // that real minutes can unlock the ceiling.
+                let headroom = pool[i].pot.saturating_sub(pool[i].ovr).min(8) as f32;
+                let youth_push = if pool[i].age <= 21 {
+                    1.0 + headroom * 0.008
+                } else {
+                    1.0
+                };
+                (eff * line_bonus * youth_push, i)
             })
             .collect();
         cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -869,10 +916,10 @@ fn weighted_pick<R: Rng + ?Sized>(
 }
 
 /// Build a rotated matchday squad with roles: the tactical XI from select_xi,
-/// then rest logic — each starter (except the talisman) sits with probability
-/// = effective rotation (sharply higher when exhausted), replaced by the best
-/// same-line alternative who takes the best-fitting role on that line. Bench
-/// filled to ~15. Returns (player, role) pairs.
+/// then rest logic driven by fatigue, youth development and the manager's
+/// ordinary rotation tendency. There is no "talisman always plays" exception;
+/// stars earn their totals from the minutes the clock and squad actually give
+/// them. Bench filled to ~15. Returns (player, role) pairs.
 fn matchday_squad(
     idxs: &[usize],
     pool: &[WP],
@@ -882,18 +929,6 @@ fn matchday_squad(
     rng: &mut impl Rng,
 ) -> Vec<(usize, Role)> {
     let xi = select_xi(idxs, pool, shape);
-    // The talisman (best attacking output) is never rested — he plays every
-    // game, so a genuine star sustains a big season tally year after year.
-    let talisman = xi
-        .iter()
-        .copied()
-        .max_by(|&(a, _ra, _), &(b, _rb, _)| {
-            pool[a]
-                .goal_weight()
-                .partial_cmp(&pool[b].goal_weight())
-                .unwrap()
-        })
-        .map(|(i, _, _)| i);
     let rot = mgr.effective_rotation();
     let yboost = mgr.youth_boost();
     let in_xi = |i: usize| xi.iter().any(|&(x, _, _)| x == i);
@@ -906,44 +941,47 @@ fn matchday_squad(
     let score = |i: usize| -> f32 {
         let mut s = pool[i].effective();
         if pool[i].age <= 21 {
-            s *= yboost;
+            let headroom = pool[i].pot.saturating_sub(pool[i].ovr).min(10) as f32;
+            s *= yboost * (1.0 + headroom * 0.008);
         }
         s
     };
     let mut squad: Vec<(usize, Role)> = Vec::with_capacity(15);
     let squad_has = |squad: &Vec<(usize, Role)>, i: usize| squad.iter().any(|&(x, _)| x == i);
-    // Managers field full-strength sides in Europe and internationals — stars
-    // and creators play through the rotation that rests them in league games.
-    // Same rule for every club, so UCL scoring rates reflect the best players,
-    // not whoever happened to avoid the rest lottery.
+    // Europe is a little less rotated than the league, but still follows the
+    // same fatigue/competition rules for every player rather than granting a
+    // hidden talisman privilege.
     let comp_factor = match comp {
         Comp::League => 1.0,
-        _ => 0.35,
+        _ => 0.55,
     };
     for &(s, _role, line) in &xi {
-        if Some(s) != talisman {
-            // Exhausted players are rested almost regardless of rotation trait.
-            let p_rest = if pool[s].fatigue > 60 {
-                ((rot + 0.45) * comp_factor).min(0.95)
-            } else {
-                rot * comp_factor
-            };
-            if rng.gen::<f32>() < p_rest {
-                // Best same-line alternative by selection score.
-                let mut cands: Vec<usize> = bench
-                    .iter()
-                    .copied()
-                    .filter(|&b| line_of(pool[b].pos) == line && !squad_has(&squad, b))
-                    .collect();
-                cands.sort_by(|&a, &b| {
-                    score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                if let Some(&alt) = cands.first() {
-                    let (arole, _) = best_role_for(&pool[alt].attrs, pool[alt].pos, line);
-                    squad.push((alt, arole));
-                    bench.retain(|&b| b != alt);
-                    continue;
-                }
+        // Exhausted players are rested almost regardless of rotation trait;
+        // young high-potential players get a small development opening.
+        let headroom = pool[s].pot.saturating_sub(pool[s].ovr).min(10) as f32;
+        let youth_opening = if pool[s].age <= 21 { headroom * 0.012 } else { 0.0 };
+        let p_rest = if pool[s].fatigue > 60 {
+            ((rot + 0.45) * comp_factor + youth_opening).min(0.95)
+        } else if pool[s].fatigue > 35 {
+            ((rot * 0.55) * comp_factor + youth_opening).min(0.75)
+        } else {
+            (rot * 0.30 * comp_factor + youth_opening).min(0.55)
+        };
+        if rng.gen::<f32>() < p_rest {
+            // Best same-line alternative by selection score.
+            let mut cands: Vec<usize> = bench
+                .iter()
+                .copied()
+                .filter(|&b| line_of(pool[b].pos) == line && !squad_has(&squad, b))
+                .collect();
+            cands.sort_by(|&a, &b| {
+                score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if let Some(&alt) = cands.first() {
+                let (arole, _) = best_role_for(&pool[alt].attrs, pool[alt].pos, line);
+                squad.push((alt, arole));
+                bench.retain(|&b| b != alt);
+                continue;
             }
         }
         // Starter keeps the role from the tactical XI.
@@ -1012,6 +1050,11 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
                 pool[i].assists += s.assists as u16;
                 pool[i].apps += 1;
             }
+            Comp::Cup => {
+                pool[i].cup_goals += s.goals as u16;
+                pool[i].cup_assists += s.assists as u16;
+                pool[i].cup_apps += 1;
+            }
             Comp::Ucl => {
                 pool[i].ucl_goals += s.goals as u16;
                 pool[i].ucl_assists += s.assists as u16;
@@ -1028,6 +1071,10 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
                 pool[i].intl_apps += 1;
             }
         }
+        // Minutes come from the actual match clock. A player injured in the
+        // first half does not silently receive a full 90, and a knockout match
+        // that reaches extra time records the extra minutes too.
+        pool[i].minutes = pool[i].minutes.saturating_add(s.minutes as u32);
         // Detailed lines aggregate across every competition.
         pool[i].shots += s.shots as u16;
         pool[i].sot += s.shots_on_target as u16;
@@ -1088,6 +1135,35 @@ fn play(
     p: &Params,
     rng: &mut Pcg64Mcg,
 ) -> (u32, u32) {
+    play_with_rules(home, away, comp, venue, agg, false, teams, pool, p, rng)
+}
+
+fn play_deciding(
+    home: usize,
+    away: usize,
+    comp: Comp,
+    venue: Venue,
+    agg: (u8, u8),
+    teams: &mut [Team],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> (u32, u32) {
+    play_with_rules(home, away, comp, venue, agg, true, teams, pool, p, rng)
+}
+
+fn play_with_rules(
+    home: usize,
+    away: usize,
+    comp: Comp,
+    venue: Venue,
+    agg: (u8, u8),
+    deciding: bool,
+    teams: &mut [Team],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> (u32, u32) {
     // Only registered players may play league/European football — the
     // registration list is the team sheet's legal boundary.
     let hsel = selectable(teams, home);
@@ -1111,12 +1187,13 @@ fn play(
         quality: teams[away].manager.quality,
         threat: 1.0,
     };
-    // Both dugouts scout the matchup off the two XIs (never reputation):
-    // underdogs start cagier, favourites start on the front foot.
-    let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
-    side_h.threat = th;
-    side_a.threat = ta;
-    let o = matchsim::simulate(&side_h, &side_a, venue, agg, rng);
+    // Match outcomes come from the named players in the two XIs. Manager
+    // ambition/quality and club reputation are not hidden result multipliers.
+    let o = if deciding {
+        matchsim::simulate_deciding(&side_h, &side_a, venue, agg, rng)
+    } else {
+        matchsim::simulate(&side_h, &side_a, venue, agg, rng)
+    };
     apply_match(&o, comp, pool, p);
     (o.goals_a as u32, o.goals_b as u32)
 }
@@ -1232,6 +1309,30 @@ fn rank(team_ids: &[usize], teams: &[Team]) -> Vec<usize> {
 /// reality). Aggregates both legs; level after 180' goes to strength-weighted
 /// penalties. Two legs halve the fluke factor vs single ties, so the better
 /// side goes through far more often while upsets still happen.
+fn shootout_strength(team: usize, teams: &[Team], pool: &[WP]) -> f32 {
+    let xi = select_xi(&selectable(teams, team), pool, teams[team].shape);
+    let keeper = xi
+        .iter()
+        .filter(|&&(i, _, _)| pool[i].pos == Position::GK)
+        .map(|&(i, _, _)| pool[i].attrs.goalkeeping as f32 * 0.45 + pool[i].attrs.composure as f32 * 0.55)
+        .next()
+        .unwrap_or(50.0);
+    let mut takers: Vec<f32> = xi
+        .iter()
+        .filter(|&&(i, _, _)| pool[i].pos != Position::GK)
+        .map(|&(i, _, _)| pool[i].attrs.shooting as f32 * 0.55 + pool[i].attrs.composure as f32 * 0.45)
+        .collect();
+    takers.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let taker_avg = takers.iter().take(5).sum::<f32>() / takers.len().min(5).max(1) as f32;
+    keeper + taker_avg
+}
+
+fn shootout_winner(a: usize, b: usize, teams: &[Team], pool: &[WP], rng: &mut Pcg64Mcg) -> usize {
+    let sa = shootout_strength(a, teams, pool);
+    let sb = shootout_strength(b, teams, pool);
+    if rng.gen::<f32>() < sa / (sa + sb).max(1.0) { a } else { b }
+}
+
 fn knockout_tie(
     a: usize,
     b: usize,
@@ -1245,41 +1346,27 @@ fn knockout_tie(
     // aggregate so both managers play the tie: a side trailing on aggregate
     // pushes, the side ahead manages the game out.
     let (g1a, g1b) = play(a, b, comp, Venue::HomeA, (0, 0), teams, pool, p, rng);
-    let (g2b, g2a) = play(b, a, comp, Venue::HomeA, (g1b as u8, g1a as u8), teams, pool, p, rng);
+    let (g2b, g2a) = play_deciding(b, a, comp, Venue::HomeA, (g1b as u8, g1a as u8), teams, pool, p, rng);
     let (ta, tb) = (g1a + g2a, g1b + g2b);
     if ta > tb {
         a
     } else if tb > ta {
         b
     } else {
-        let pa = teams[a].strength / (teams[a].strength + teams[b].strength);
-        if rng.gen::<f32>() < pa {
-            a
-        } else {
-            b
-        }
+        shootout_winner(a, b, teams, pool, rng)
     }
 }
 
-/// A lightweight domestic-cup tie (no per-player stat attribution — the cup
-/// exists mainly to enable domestic doubles and continental trebles).
-fn cup_tie(a: usize, b: usize, teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -> usize {
-    let hs = teams[a].strength * rng.gen_range(p.swing_cup_lo..p.swing_cup_hi);
-    let as_ = teams[b].strength * rng.gen_range(p.swing_cup_lo..p.swing_cup_hi);
-    let hs = teams[a].strength * rng.gen_range(0.84..1.16);
-    let as_ = teams[b].strength * rng.gen_range(0.84..1.16);
-    let (ga, gb, _, _, _, _) = engine::simulate_score(rng, hs, as_);
+/// Domestic cups use the same player-v-player clock as league and European
+/// matches. There is no separate team-strength dice roll hiding in the cup.
+fn cup_tie(a: usize, b: usize, teams: &mut [Team], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> usize {
+    let (ga, gb) = play_deciding(a, b, Comp::Cup, Venue::HomeA, (0, 0), teams, pool, p, rng);
     if ga > gb {
         a
     } else if gb > ga {
         b
     } else {
-        let pa = teams[a].strength / (teams[a].strength + teams[b].strength);
-        if rng.gen::<f32>() < pa {
-            a
-        } else {
-            b
-        }
+        shootout_winner(a, b, teams, pool, rng)
     }
 }
 
@@ -1288,7 +1375,7 @@ fn cup_tie(a: usize, b: usize, teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -
 /// Single-elimination domestic cup among a league's clubs. Byes handle odd
 /// fields. Returns (winner, losing finalist) so the season can also stage a
 /// super cup (the Final Four in Spain and Italy pulls in the cup runner-up).
-fn run_domestic_cup(ids: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -> Option<(usize, usize)> {
+fn run_domestic_cup(ids: &[usize], teams: &mut [Team], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<(usize, usize)> {
     if ids.is_empty() {
         return None;
     }
@@ -1301,7 +1388,7 @@ fn run_domestic_cup(ids: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mc
         while i < round.len() {
             if i + 1 < round.len() {
                 let (a, b) = (round[i], round[i + 1]);
-                let w = cup_tie(a, b, teams, p, rng);
+                let w = cup_tie(a, b, teams, pool, p, rng);
                 // When the round that produced this tie had exactly two teams,
                 // that tie was the final — remember the beaten finalist.
                 if round.len() == 2 {
@@ -1327,21 +1414,21 @@ fn run_domestic_cup(ids: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mc
 /// final for two teams, or a Final Four (semis seeded 1v4 / 2v3, then the
 /// final) for four. Ties run on team strength via `cup_tie`. Returns the
 /// winner, or None for an empty field.
-fn super_cup_winner(field: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -> Option<usize> {
+fn super_cup_winner(field: &[usize], teams: &mut [Team], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<usize> {
     match field.len() {
         0 => None,
         1 => Some(field[0]),
-        2 => Some(cup_tie(field[0], field[1], teams, p, rng)),
+        2 => Some(cup_tie(field[0], field[1], teams, pool, p, rng)),
         3 => {
             // Odd field: top seed gets a bye to the final.
-            let s = cup_tie(field[1], field[2], teams, p, rng);
-            Some(cup_tie(field[0], s, teams, p, rng))
+            let s = cup_tie(field[1], field[2], teams, pool, p, rng);
+            Some(cup_tie(field[0], s, teams, pool, p, rng))
         }
         _ => {
             // Final Four: 1v4 and 2v3 semis, then the final.
-            let s1 = cup_tie(field[0], field[3], teams, p, rng);
-            let s2 = cup_tie(field[1], field[2], teams, p, rng);
-            Some(cup_tie(s1, s2, teams, p, rng))
+            let s1 = cup_tie(field[0], field[3], teams, pool, p, rng);
+            let s2 = cup_tie(field[1], field[2], teams, pool, p, rng);
+            Some(cup_tie(s1, s2, teams, pool, p, rng))
         }
     }
 }
@@ -1563,20 +1650,24 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         // Database players arrive with unknown academy history:
                         // conservatively not counted as club-trained.
                         homegrown: false,
-                        apps: 0,
-                        goals: 0,
+                         apps: 0,
+                         minutes: 0,
+                         goals: 0,
                         assists: 0,
                         rating_sum: 0.0,
                         rating_apps: 0,
-                        ucl_goals: 0,
-                        el_goals: 0,
-                        intl_goals: 0,
-                        ucl_assists: 0,
-                        el_assists: 0,
-                        intl_assists: 0,
-                        ucl_apps: 0,
-                        el_apps: 0,
-                        intl_apps: 0,
+                         ucl_goals: 0,
+                         el_goals: 0,
+                         cup_goals: 0,
+                         intl_goals: 0,
+                         ucl_assists: 0,
+                         el_assists: 0,
+                         cup_assists: 0,
+                         intl_assists: 0,
+                         ucl_apps: 0,
+                         el_apps: 0,
+                         cup_apps: 0,
+                         intl_apps: 0,
                         shots: 0,
                         sot: 0,
                         xg: 0.0,
@@ -1637,8 +1728,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         career_xg: 0.0,
                         career_xa: 0.0,
                         career_aerials: 0,
-                        career_apps: 0,
-                        career_intl_goals: 0,
+                         career_apps: 0,
+                         career_minutes: 0,
+                         career_intl_goals: 0,
                         career_intl_assists: 0,
                         career_intl_apps: 0,
                         career_rating_sum: 0.0,
@@ -1692,7 +1784,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                 budget_alloc: 0,
                 willingness,
                 academy,
-                title_drought: 0,
+                 title_drought: 0,
+                 title_streak: 0,
                 registered: Vec::new(),
                 manager: Manager::new_random(rng, &params),
                 shape,
@@ -1764,20 +1857,24 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     adapt: 0,
                     on_loan: false,
                     homegrown: false,
-                    apps: 0,
-                    goals: 0,
+                     apps: 0,
+                     minutes: 0,
+                     goals: 0,
                     assists: 0,
                     rating_sum: 0.0,
                     rating_apps: 0,
-                    ucl_goals: 0,
-                    el_goals: 0,
-                    intl_goals: 0,
-                    ucl_assists: 0,
-                    el_assists: 0,
-                    intl_assists: 0,
-                    ucl_apps: 0,
-                    el_apps: 0,
-                    intl_apps: 0,
+                     ucl_goals: 0,
+                     el_goals: 0,
+                     cup_goals: 0,
+                     intl_goals: 0,
+                     ucl_assists: 0,
+                     el_assists: 0,
+                     cup_assists: 0,
+                     intl_assists: 0,
+                     ucl_apps: 0,
+                     el_apps: 0,
+                     cup_apps: 0,
+                     intl_apps: 0,
                     shots: 0,
                     sot: 0,
                     xg: 0.0,
@@ -1815,8 +1912,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     career_xg: 0.0,
                     career_xa: 0.0,
                     career_aerials: 0,
-                    career_apps: 0,
-                    career_intl_goals: 0,
+                     career_apps: 0,
+                     career_minutes: 0,
+                     career_intl_goals: 0,
                     career_intl_assists: 0,
                     career_intl_apps: 0,
                     career_rating_sum: 0.0,
@@ -1866,7 +1964,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             budget_alloc: 0,
             willingness,
             academy,
-            title_drought: 0,
+             title_drought: 0,
+             title_streak: 0,
             registered: Vec::new(),
             manager: Manager::new_random(rng, &params),
             shape,
@@ -1948,7 +2047,8 @@ fn reset_season(w: &mut World) {
         // Career appearances include league, Europe and country. The old board
         // counted league apps only, so an international regular looked like he
         // had a shorter career than he actually played.
-        p.career_apps += (p.apps + p.ucl_apps + p.el_apps + p.intl_apps) as u32;
+        p.career_apps += (p.apps + p.ucl_apps + p.el_apps + p.cup_apps + p.intl_apps) as u32;
+        p.career_minutes += p.minutes;
         p.career_intl_goals += p.intl_goals as u32;
         p.career_intl_assists += p.intl_assists as u32;
         p.career_intl_apps += p.intl_apps as u32;
@@ -1958,18 +2058,22 @@ fn reset_season(w: &mut World) {
         p.career_rating_sum += p.rating_sum;
         p.career_rating_apps += p.rating_apps as u32;
         p.apps = 0;
+        p.minutes = 0;
         p.goals = 0;
         p.assists = 0;
         p.rating_sum = 0.0;
         p.rating_apps = 0;
         p.ucl_goals = 0;
         p.el_goals = 0;
+        p.cup_goals = 0;
         p.intl_goals = 0;
         p.ucl_assists = 0;
         p.el_assists = 0;
+        p.cup_assists = 0;
         p.intl_assists = 0;
         p.ucl_apps = 0;
         p.el_apps = 0;
+        p.cup_apps = 0;
         p.intl_apps = 0;
         p.shots = 0;
         p.sot = 0;
@@ -2081,6 +2185,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         if let Some(&champ) = table.first() {
             w.teams[champ].league_titles += 1;
             w.teams[champ].title_drought = 0;
+            w.teams[champ].title_streak = w.teams[champ].title_streak.saturating_add(1);
             w.teams[champ].manager.title_drought = 0;
             champ_idxs.push(champ);
             honours.insert(champ);
@@ -2089,6 +2194,11 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
                 w.pool[pi].league_won = true;
             }
             champions.push((BIG5[li].to_string(), cname));
+        }
+        for &t in &w.league_teams[li] {
+            if Some(t) != table.first().copied() {
+                w.teams[t].title_streak = 0;
+            }
         }
         tables.push(table);
     }
@@ -2113,7 +2223,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     for li in 0..BIG5.len() {
         let ids = w.league_teams[li].clone();
         if ids.len() >= 4 {
-            if let Some((win, finalist)) = run_domestic_cup(&ids, &w.teams, &w.params, rng) {
+            if let Some((win, finalist)) = run_domestic_cup(&ids, &mut w.teams, &mut w.pool, &w.params, rng) {
                 w.teams[win].manager.trophies += 1;
                 honours.insert(win);
                 cup_winners.push((BIG5[li].to_string(), w.teams[win].name.clone()));
@@ -2169,7 +2279,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
                 push(r, &mut field);
             }
         }
-        if let Some(win) = super_cup_winner(&field, &w.teams, &w.params, rng) {
+        if let Some(win) = super_cup_winner(&field, &mut w.teams, &mut w.pool, &w.params, rng) {
             w.teams[win].super_cups += 1;
             w.teams[win].manager.trophies += 1;
             honours.insert(win);
@@ -2408,154 +2518,93 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
 
 /// Ballon d'Or score broken into named components so the report can justify
 /// the award bullet by bullet. Returns (total, components in display order).
-fn ballon_breakdown(w: &WP, club_rep: u8, year: u16) -> (f32, Vec<(&'static str, String, f32)>) {
+fn ballon_breakdown(_w: &WP, _club_rep: u8, _year: u16) -> (f32, Vec<(&'static str, String, f32)>) {
+    let w = _w;
+    let total_apps = w.apps + w.ucl_apps + w.el_apps + w.cup_apps + w.intl_apps;
     let mut parts: Vec<(&'static str, String, f32)> = Vec::new();
-    let g = w.goals as f32 * 6.0;
-    parts.push(("League goals", format!("{} × 6", w.goals), g));
-    let a = w.assists as f32 * 4.0;
-    parts.push(("League assists", format!("{} × 4", w.assists), a));
-    // Creativity beyond the final ball: carving out big chances is rewarded, so
-    // an assist king / creator competes with a pure poacher for the award.
-    let cc = w.big_chances as f32 * 1.4;
-    parts.push(("Chances created", format!("{} × 1.4", w.big_chances), cc));
-    // Appearances across every competition the player featured in — league,
-    // Europe and international caps all count, so a season carrying both club
-    // and country is rewarded, not just the domestic games.
-    let total_apps = w.apps + w.ucl_apps + w.el_apps + w.intl_apps;
-    let ap = total_apps as f32 * 0.35;
-    parts.push(("Appearances", format!("{} × 0.35 (all comps)", total_apps), ap));
-    let rt = (w.avg_rating() - 6.5).max(0.0) * 62.0;
+    // A name with no real season cannot win because of a badge or a hash-based
+    // narrative. This was the source of "out of nowhere" regen awards.
+    if w.rating_apps < 12 || total_apps < 15 {
+        return (
+            -1_000_000.0,
+            vec![("Eligibility", format!("{} appearances", total_apps), -1_000_000.0)],
+        );
+    }
+
+    let production = w.overall_goals() as f32 * 4.0 + w.overall_assists() as f32 * 3.0;
+    parts.push((
+        "Goals & assists",
+        format!("{}g {}a (all tracked competitions)", w.overall_goals(), w.overall_assists()),
+        production,
+    ));
+    let rating = (w.avg_rating() - 6.5).max(0.0) * 70.0;
     parts.push((
         "Average rating",
         format!("{:.2} above 6.5 baseline", (w.avg_rating() - 6.5).max(0.0)),
-        rt,
+        rating,
     ));
-    let lt = if w.league_won { 35.0 } else { 0.0 };
-    parts.push((
-        "League title",
-        if w.league_won { "won".to_string() } else { "no".to_string() },
-        lt,
-    ));
-    let ug = w.ucl_goals as f32 * 7.0;
-    parts.push(("UCL goals", format!("{} × 7", w.ucl_goals), ug));
-    let ua = w.ucl_assists as f32 * 5.0;
-    parts.push(("UCL assists", format!("{} × 5", w.ucl_assists), ua));
-    // Winning the UCL matters, but the trophy cannot erase a quiet knockout
-    // campaign: one goal and three assists over 15 matches should not beat a
-    // rival's elite production on the strength of the medal alone.
-    let ucl_run_base = match w.ucl_result {
-        5 => 45.0,
-        4 => 25.0,
-        3 => 13.0,
-        2 => 6.0,
-        _ => 0.0,
-    };
-    // A medal is team context, not an individual performance. A player who
-    // appeared in 15 matches with 1 goal and 3 assists gets credit for winning
-    // the UCL, but not the same individual award credit as its decisive scorer.
-    let ucl_contribution = w.ucl_goals as f32 + w.ucl_assists as f32 * 0.7;
-    let ucl_factor = (0.25 + ucl_contribution / 12.0 * 0.75).clamp(0.25, 1.0);
-    let ur = ucl_run_base * ucl_factor;
-    parts.push(("UCL run", run_label(w.ucl_result, "UCL"), ur));
-    let eg = w.el_goals as f32 * 3.0;
-    parts.push(("Europa goals", format!("{} × 3", w.el_goals), eg));
-    // Every competition's assists count, mirroring the goal weights: without
-    // these two lines the all-comps header never reconciles with the parts.
-    let ea = w.el_assists as f32 * 2.0;
-    parts.push(("Europa assists", format!("{} × 2", w.el_assists), ea));
-    let er = match w.el_result {
-        5 => 22.0,
-        4 => 11.0,
-        _ => 0.0,
-    };
-    parts.push(("Europa run", run_label(w.el_result, "EL"), er));
-    let ig = w.intl_goals as f32 * 6.0;
-    parts.push(("International goals", format!("{} × 6", w.intl_goals), ig));
-    let ia = w.intl_assists as f32 * 4.0;
-    parts.push(("International assists", format!("{} × 4", w.intl_assists), ia));
-    let ir = match w.intl_result {
-        5 => 55.0,
-        4 => 28.0,
-        3 => 14.0,
-        _ => 0.0,
-    };
-    parts.push(("International run", run_label(w.intl_result, "tournament"), ir));
-    // All-round game, weighted small so it only tips the award to a defender or
-    // a holding midfielder in a genuinely monumental season (a Rodri/Modric or
-    // a title-winning centre-back), never over a prolific forward in a normal
-    // year. Ball-winning: a destroyer's tackles and interceptions.
-    let dw = (w.tackles + w.interceptions) as f32 * 0.22;
-    parts.push(("Ball-winning", format!("{} tackles+int × 0.22", w.tackles + w.interceptions), dw));
-    // Clean sheets reward the men who keep them — defenders and keepers only.
-    let is_def = matches!(w.pos, Position::DEF | Position::GK);
-    let cs = if is_def { w.clean_sheets as f32 * 3.2 } else { 0.0 };
-    parts.push(("Clean sheets", format!("{} × 3.2", w.clean_sheets), cs));
-    // Defensive masterclass: a defender or keeper who anchors a title win with a
-    // wall of clean sheets gets a one-off historic bump — the rare season a
-    // Cannavaro/Maldini-type actually takes the Ballon off the forwards.
-    let rock = if is_def && w.league_won && w.clean_sheets >= 18 { 35.0 } else { 0.0 };
-    parts.push((
-        "Defensive masterclass",
-        if rock > 0.0 { format!("title + {} clean sheets", w.clean_sheets) } else { "no".to_string() },
-        rock,
-    ));
-    // Control of the game: completed passes, dribbles and the final ball before
-    // the chance — each tiny, so only a true metronome/creator climbs on them.
-    let poss = w.passes_cmp as f32 * 0.004 + w.dribbles_cmp as f32 * 0.05 + w.key_passes as f32 * 0.3;
+    let availability = (total_apps as f32).sqrt() * 3.0;
+    parts.push(("Availability", format!("{} appearances", total_apps), availability));
+
+    let creation = w.big_chances as f32 * 0.8
+        + w.key_passes as f32 * 0.10
+        + w.passes_cmp as f32 * 0.002
+        + w.dribbles_cmp as f32 * 0.04;
     parts.push((
         "Build-up & creation",
         format!("{} passes, {} dribbles, {} key passes", w.passes_cmp, w.dribbles_cmp, w.key_passes),
-        poss,
+        creation,
     ));
-    // Winning everything in one year is historic — a league + Champions League
-    // double (the treble's spine) is rewarded over and above the parts, so the
-    // heartbeat of a clean-sweep side (a Rodri/Modric year) can take the award.
-    let sweep = if w.league_won && w.ucl_result == 5 { 45.0 } else { 0.0 };
-    parts.push((
-        "Clean-sweep season",
-        if sweep > 0.0 { "league + UCL".to_string() } else { "no".to_string() },
-        sweep,
-    ));
-    // Underdog story: carrying a lower-reputation club to a Champions League
-    // final or title is the stuff of legend and voters reward it — the
-    // counterweight to the big-club media bias below.
-    let underdog = if club_rep < 78 && w.ucl_result >= 4 { 38.0 } else { 0.0 };
-    parts.push((
-        "Underdog run",
-        if underdog > 0.0 { format!("deep UCL run at rep {}", club_rep) } else { "no".to_string() },
-        underdog,
-    ));
-    // The Ballon is voted by journalists, not computed — so two human factors
-    // sit on top of the on-pitch maths, enough to decide the close calls the
-    // way real PR and storylines do, never to crown a nobody.
-    // Media & reputation: coverage follows the badge; a superclub star is seen,
-    // debated and remembered more than an equal season at a provincial club.
-    let media = (club_rep as f32 - 70.0).max(0.0) * 1.1;
-    parts.push(("Media & reputation", format!("club reputation {}", club_rep), media));
-    // Narrative swing: recency, storyline and voter whimsy — deterministic per
-    // player per year (stable within a run), a bounded boost that reorders only
-    // genuinely tight races. This is the subjectivity behind every real-world
-    // Ballon controversy, instead of a purely robotic formula.
-    let swing = ballon_narrative(&w.name, year);
-    parts.push(("Narrative & recency", "journalists' mood".to_string(), swing));
-    let total: f32 = parts.iter().map(|(_, _, s)| s).sum();
-    (total, parts)
-}
 
-/// Deterministic pseudo-random Ballon "narrative" boost in [0, 28), from a
-/// stable hash of the player's name and the year — so the same season always
-/// tells the same story, yet different players and years diverge. One-sided
-/// (never negative) so the printed breakdown always reconciles with the total.
-fn ballon_narrative(name: &str, year: u16) -> f32 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in name.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h ^= year as u64;
-    h = h.wrapping_mul(0x100000001b3);
-    let u = ((h >> 40) & 0xffff) as f32 / 65536.0; // [0,1)
-    u * 28.0
+    let ball_winning = (w.tackles + w.interceptions) as f32 * 0.08;
+    parts.push((
+        "Ball-winning",
+        format!("{} tackles+int × 0.08", w.tackles + w.interceptions),
+        ball_winning,
+    ));
+    let is_def = matches!(w.pos, Position::DEF | Position::GK);
+    let clean_sheets = if is_def { w.clean_sheets as f32 * 0.5 } else { 0.0 };
+    parts.push(("Clean sheets", format!("{} × 0.5", w.clean_sheets), clean_sheets));
+
+    let league_title = if w.league_won { 10.0 } else { 0.0 };
+    parts.push((
+        "League title",
+        if w.league_won { "won".to_string() } else { "no".to_string() },
+        league_title,
+    ));
+    let ucl_goals = w.ucl_goals as f32 * 4.0 + w.ucl_assists as f32 * 2.0;
+    parts.push(("UCL production", format!("{}g {}a", w.ucl_goals, w.ucl_assists), ucl_goals));
+    let ucl_run = match w.ucl_result {
+        5 => 12.0,
+        4 => 8.0,
+        3 => 5.0,
+        2 => 2.0,
+        _ => 0.0,
+    };
+    parts.push(("UCL run", run_label(w.ucl_result, "UCL"), ucl_run));
+
+    let europa = w.el_goals as f32 * 2.0 + w.el_assists as f32;
+    parts.push(("Europa production", format!("{}g {}a", w.el_goals, w.el_assists), europa));
+    let europa_run = match w.el_result {
+        5 => 5.0,
+        4 => 3.0,
+        _ => 0.0,
+    };
+    parts.push(("Europa run", run_label(w.el_result, "EL"), europa_run));
+
+    let intl = w.intl_goals as f32 * 4.0 + w.intl_assists as f32 * 2.0;
+    parts.push(("International production", format!("{}g {}a", w.intl_goals, w.intl_assists), intl));
+    let intl_run = match w.intl_result {
+        5 => 12.0,
+        4 => 8.0,
+        3 => 5.0,
+        2 => 2.0,
+        _ => 0.0,
+    };
+    parts.push(("International run", run_label(w.intl_result, "tournament"), intl_run));
+
+    let total: f32 = parts.iter().map(|(_, _, score)| *score).sum();
+    (total, parts)
 }
 
 fn run_label(result: u8, comp: &str) -> String {
@@ -2848,13 +2897,20 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, rng: &mut Pcg64M
         // develop — and international caps count as minutes too, so a teenager
         // breaking into his national team grows from that experience, not only
         // from club games.
-        let minutes = p.apps + p.intl_apps;
+        let minutes = p.minutes / 90;
+        let headroom = p.pot.saturating_sub(p.ovr);
         let mut steps = rng.gen_range(1..=3);
         if minutes >= 15 && rng.gen_bool(0.35) {
             steps += 1; // playing develops
         }
         if youth_boost > 1.05 && minutes >= 15 && rng.gen_bool(0.5) {
             steps += 1; // …especially for a manager who trusts kids
+        }
+        // High-potential players are not guaranteed a peak, but meaningful
+        // minutes let the latent ceiling express itself instead of leaving a
+        // 96-potential teenager permanently trapped behind one selection roll.
+        if headroom >= 8 && minutes >= 10 && rng.gen_bool(0.45) {
+            steps += 1;
         }
         for _ in 0..steps {
             match p.pos {
@@ -2944,6 +3000,7 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
     // trick for revenues, feeding the superstar wage spiral below.
     let boosts: Vec<f32> = w.teams.iter().map(|t| t.manager.youth_boost()).collect();
     let revs: Vec<i64> = w.teams.iter().map(|t| t.revenue_last).collect();
+    let title_streaks: Vec<u8> = w.teams.iter().map(|t| t.title_streak).collect();
     // Spanish superclub assets carry prohibitive buy-out clauses: Spanish law
     // makes the *player* able to buy himself out, so the club sets the number
     // and a giant sets it deliberately out of everyone's reach. A billion for a
@@ -2960,6 +3017,7 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         }
         p.age = p.age.saturating_add(1);
         let yb = boosts.get(p.team).copied().unwrap_or(1.0);
+        let title_streak = title_streaks.get(p.team).copied().unwrap_or(0);
         develop_player(p, dev_mid_p, yb, rng);
         // Revalue every player to the inflated market each year — without this,
         // fees and clauses freeze at 2026 prices while budgets inflate, so by
@@ -3013,9 +3071,23 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         // and retained 95-finishers feast for 70-goal seasons. Generational
         // talents (90+) mostly stay; very good players (82+) hit the market
         // about half the time, keeping the pyramid fluid like reality.
-        if p.ovr >= 90 && p.locked <= 1 && p.age <= 32 && rng.gen_bool(0.80) {
+        let renewal_pressure = if title_streak >= 3 {
+            (title_streak.saturating_sub(2).min(5) as f64) * 0.06
+        } else {
+            0.0
+        };
+        if p.ovr >= 90
+            && p.locked <= 1
+            && p.age <= 32
+            && rng.gen_bool((0.80 - renewal_pressure).max(0.55))
+        {
             p.locked = 5 + (rng.gen::<u8>() % 3); // 5..=7 more years
-        } else if p.ovr >= 82 && p.ovr < 90 && p.locked <= 1 && p.age <= 32 && rng.gen_bool(0.55) {
+        } else if p.ovr >= 82
+            && p.ovr < 90
+            && p.locked <= 1
+            && p.age <= 32
+            && rng.gen_bool((0.55 - renewal_pressure * 0.75).max(0.30))
+        {
             p.locked = 3 + (rng.gen::<u8>() % 3); // 3..=5 more years
         }
         // Champion restlessness: highly ambitious winners in their prime
@@ -3026,11 +3098,17 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             && p.age <= 30
             && p.ovr >= 82
             && !w.minds[idx].requested
-            && w.minds[idx].ambition > 0.8
-            && rng.gen_bool(0.10)
+            && rng.gen_bool(dynasty_challenge_probability(title_streak, w.minds[idx].ambition))
         {
             w.minds[idx].requested = true;
             w.minds[idx].unhappy = true;
+            // From the fourth straight title onward, a subset of these
+            // requests also reaches the contract desk immediately. That is a
+            // realistic way for a dynasty to lose a core player: a new
+            // challenge, not a hidden handicap in the next match.
+            if rng.gen_bool(dynasty_exit_probability(title_streak)) {
+                p.locked = 0;
+            }
         }
         let is_gk = p.pos == Position::GK;
         if rng.gen_bool(retire_prob(p.age, is_gk)) {
@@ -3151,18 +3229,22 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         // Fresh out of this club's own academy: club-trained by definition.
         homegrown: true,
         apps: 0,
+        minutes: 0,
         goals: 0,
         assists: 0,
         rating_sum: 0.0,
         rating_apps: 0,
         ucl_goals: 0,
         el_goals: 0,
+        cup_goals: 0,
         intl_goals: 0,
         ucl_assists: 0,
         el_assists: 0,
+        cup_assists: 0,
         intl_assists: 0,
         ucl_apps: 0,
         el_apps: 0,
+        cup_apps: 0,
         intl_apps: 0,
         shots: 0,
         sot: 0,
@@ -3199,6 +3281,7 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         career_xa: 0.0,
         career_aerials: 0,
         career_apps: 0,
+        career_minutes: 0,
         career_intl_goals: 0,
         career_intl_assists: 0,
         career_intl_apps: 0,
@@ -3283,6 +3366,57 @@ fn do_loan(
     )
 }
 
+/// Put a small, randomized slice of a long-running champion's core on the
+/// market. This is the football version of dynasty pressure: a settled starter
+/// who has already won four or more league titles can decide that the next
+/// challenge is elsewhere. The existing transfer rules still decide whether a
+/// buyer can afford him and where he goes; this function only makes the request
+/// visible instead of letting an apex squad remain perfectly sealed forever.
+fn release_dynasty_core(w: &mut World, rng: &mut Pcg64Mcg) {
+    let mut releases: Vec<usize> = Vec::new();
+    for ti in 0..w.teams.len() {
+        let streak = w.teams[ti].title_streak;
+        if streak < 4 {
+            continue;
+        }
+        let exits = 2 + ((streak.saturating_sub(4) as usize) / 2).min(2);
+        let xi = best_xi_indices(&selectable(&w.teams, ti), &w.pool);
+        let mut core: Vec<usize> = w.teams[ti]
+            .players
+            .iter()
+            .copied()
+            .filter(|&pi| {
+                xi.contains(&pi)
+                    && !w.pool[pi].retired
+                    && !w.pool[pi].on_loan
+                    && !w.minds[pi].requested
+                    && w.pool[pi].ovr >= 82
+                    && (21..=31).contains(&w.pool[pi].age)
+            })
+            .collect();
+        // Prefer non-homegrown stars first; an academy icon can still request a
+        // move if necessary, but the market should not empty a club's identity
+        // before it has moved its imported core.
+        core.sort_by(|&a, &b| {
+            w.pool[a]
+                .homegrown
+                .cmp(&w.pool[b].homegrown)
+                .then(w.pool[b].value.cmp(&w.pool[a].value))
+        });
+        let chance = (0.65 + (streak.saturating_sub(4).min(5) as f64) * 0.05).min(0.90);
+        for pi in core.into_iter().take(exits) {
+            if rng.gen_bool(chance) {
+                releases.push(pi);
+            }
+        }
+    }
+    for pi in releases {
+        w.minds[pi].requested = true;
+        w.minds[pi].unhappy = true;
+        w.pool[pi].locked = 0;
+    }
+}
+
 /// Bilateral willingness: may this player move to this buyer? Surplus men go
 /// anywhere within 15 rep points (ambitious ones refuse big steps down);
 /// settled starters need a clearly bigger club, a triggered clause, or a
@@ -3354,7 +3488,12 @@ fn transfer_willing(
         (buyer_rep as i32) + 15 >= seller_rep as i32
             && !((buyer_rep as i32) + 12 < seller_rep as i32 && ambition > 0.6)
     } else if clause_deal || requested {
-        buyer_rep as f32 + gap_clause >= seller_rep as f32
+        // A requested starter is actively opening the market. He can move
+        // laterally to a credible challenger, not only to a club five points
+        // above his current badge; otherwise a rep-100 dynasty can keep every
+        // unhappy core player simply because nobody is technically "bigger".
+        let requested_gap = if requested { gap_clause.max(10.0) } else { gap_clause };
+        buyer_rep as f32 + requested_gap >= seller_rep as f32
     } else {
         buyer_rep as f32 >= seller_rep as f32 + gap_starter
     }
@@ -3428,11 +3567,13 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
         // Revenue is already nominal (it tracks football inflation in
         // settle_finances), so no extra inflation factor here — that would
         // square inflation and mint nominal billions out of thin air.
+        let dynasty_factor = dynasty_budget_factor(t.title_streak);
         t.budget = if t.cash < 0 {
             0
         } else {
-            (t.cash.max(0) as f32 * 0.15
-                + t.revenue_last as f32 * effective_will * w.params.budget_ratio) as i64
+            ((t.cash.max(0) as f32 * 0.15
+                + t.revenue_last as f32 * effective_will * w.params.budget_ratio)
+                * dynasty_factor) as i64
         };
         t.budget_alloc = t.budget;
         // New window, new books: transfer net spend accumulates from here.
@@ -3442,6 +3583,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     for p in &mut w.pool {
         p.locked = p.locked.saturating_sub(1);
     }
+    release_dynasty_core(w, rng);
     // Proactive squad trimming: bloated (>23 active), wage-strapped (>90% of
     // the revenue cap), or cash-negative (FFP fire-sale mode: sell before you
     // can buy anything) clubs move their most valuable benched player down the
@@ -3988,10 +4130,21 @@ fn settle_finances(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) {
         // cut the commercial base by nearly half, which forced distress sales,
         // which caused the next bad year — a self-fulfilling decline.
         let brand_floor = revenue(w.teams[t].heritage) * 0.80;
-        let base = revenue(w.teams[t].wealth).max(brand_floor) * infl;
+        // Domestic broadcasting is a shared league asset, not another reward
+        // for already having the biggest badge. A fixed TV share gives a good
+        // mid-table club enough oxygen to recruit and develop challengers while
+        // remaining small beside a superclub's commercial revenue. Continental
+        // outsiders receive a smaller central share.
+        let tv_share = if w.teams[t].league_idx < BIG5.len() { 110.0 } else { 65.0 };
+        let base = (revenue(w.teams[t].wealth).max(brand_floor) + tv_share) * infl;
         let revenue = (base + (league_prize + ucl_prize + el_prize) * infl) as i64;
         let wages = wage_bill(w, t);
-        let operating = (base * 0.25) as i64;
+        // A long title run carries a real operating cost: retention bonuses,
+        // expectation pressure, and the extra depth needed to defend every
+        // competition. It is capped and financial only, so it never scripts a
+        // result or lowers an individual player's attributes.
+        let dynasty_cost = revenue as f32 * dynasty_maintenance_rate(w.teams[t].title_streak);
+        let operating = (base * 0.25 + dynasty_cost) as i64;
         w.teams[t].revenue_last = revenue;
         // Audit trail: the season's money, stream by stream (nominal — the
         // report deflates by inflation for honest cross-era comparison).
@@ -4050,6 +4203,15 @@ fn settle_finances(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) {
         }
         if w.teams[t].cash < -200 {
             dw -= 1;
+        }
+        // Sustained winners also pay an empire-maintenance cost in wealth:
+        // wage inflation, retention bonuses, and the infrastructure needed to
+        // defend every competition. This is slow enough to preserve a giant's
+        // stature, but it prevents a decade champion from keeping an untouched
+        // 99-wealth balance forever.
+        if w.teams[t].title_streak >= 3 {
+            let pressure = 1 + ((w.teams[t].title_streak.saturating_sub(3) as i32) / 2).min(3);
+            dw -= pressure;
         }
         // Empire maintenance: holding 95+ wealth without winning the league
         // costs two points — staying on top is expensive (wage demands,
@@ -4253,24 +4415,11 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
     // the volume for genuine 8-12-goal European campaigns.
     // Circle-method rounds give distinct opponents each round; the first 8
     // rounds are everyone's 8 fixtures. Odd fields sit one out per round.
-    let mut seeded = field.to_vec();
-    seeded.sort_by(|&a, &b| teams[b].strength.partial_cmp(&teams[a].strength).unwrap());
-    // Snake the strength order (1st, last, 2nd, second-last…) so the opening
-    // rounds pair giants with outsiders — the pot diversity of the real draw,
-    // giving favourites their farmers instead of eight straight coin-flips.
-    let mut ring: Vec<usize> = Vec::with_capacity(seeded.len());
-    let (mut lo, mut hi) = (0usize, seeded.len());
-    let mut take_top = true;
-    while lo < hi {
-        if take_top {
-            ring.push(seeded[lo]);
-            lo += 1;
-        } else {
-            hi -= 1;
-            ring.push(seeded[hi]);
-        }
-        take_top = !take_top;
-    }
+    // The Swiss draw is random within the field. The players still decide the
+    // result of every fixture, but a fixed snake no longer hands every giant
+    // the same easy opening path every run.
+    let mut ring = field.to_vec();
+    ring.shuffle(rng);
     if ring.len() % 2 == 1 {
         ring.push(usize::MAX); // bye marker
     }
@@ -4351,48 +4500,13 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
     // both sides go for it, as in reality.
     if round.len() == 2 {
         let (a, b) = (round[0], round[1]);
-        let asel = selectable(teams, a);
-        let bsel = selectable(teams, b);
-        let hmd = matchday_squad(&asel, pool, teams[a].shape, &teams[a].manager.clone(), comp, rng);
-        let amd = matchday_squad(&bsel, pool, teams[b].shape, &teams[b].manager.clone(), comp, rng);
-        let winner = if hmd.is_empty() || amd.is_empty() {
-            if rng.gen::<f32>() < 0.5 { a } else { b }
+        let (ga, gb) = play_deciding(a, b, comp, Venue::Neutral, (0, 0), teams, pool, p, rng);
+        let winner = if ga > gb {
+            a
+        } else if gb > ga {
+            b
         } else {
-            let axi = build_lineup(&hmd, pool);
-            let bxi = build_lineup(&amd, pool);
-            let mut side_a = Side { players: &axi, ambition: teams[a].manager.ambition, quality: teams[a].manager.quality, threat: 1.0 };
-            let mut side_b = Side { players: &bxi, ambition: teams[b].manager.ambition, quality: teams[b].manager.quality, threat: 1.0 };
-            let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
-            side_a.threat = ta;
-            side_b.threat = tb;
-            let o = matchsim::simulate(
-                &side_a,
-                &side_b,
-                Venue::Neutral,
-                (0, 0),
-                rng,
-            );
-            apply_match(&o, comp, pool, p);
-            if o.goals_a == o.goals_b {
-                // Level after 90': stronger shootout nerve (keeper + composure)
-                // edges it — still the players, not a coin flip.
-                let nerve = |xi: &[MatchPlayer]| -> f32 {
-                    xi.iter()
-                        .map(|mp| {
-                            mp.attrs.goalkeeping as f32 * 0.3 + mp.attrs.composure as f32 * 0.7
-                        })
-                        .sum::<f32>()
-                };
-                if rng.gen::<f32>() < nerve(&axi) / (nerve(&axi) + nerve(&bxi)).max(1.0) {
-                    a
-                } else {
-                    b
-                }
-            } else if o.goals_a > o.goals_b {
-                a
-            } else {
-                b
-            }
+            shootout_winner(a, b, teams, pool, rng)
         };
         let loser = if winner == a { b } else { a };
         set_result(teams, pool, winner, 5);
@@ -4508,6 +4622,22 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
 /// sides from weak ones through the eleven on the pitch, so cup runs are less
 /// of a lottery than the old strength-swing draw.
 fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> (u32, u32) {
+    play_nation_with_rules(a, b, nations, false, pool, p, rng)
+}
+
+fn play_nation_deciding(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> (u32, u32) {
+    play_nation_with_rules(a, b, nations, true, pool, p, rng)
+}
+
+fn play_nation_with_rules(
+    a: usize,
+    b: usize,
+    nations: &[Nation],
+    deciding: bool,
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> (u32, u32) {
     let axi = nation_xi(&nations[a].players, pool);
     let bxi = nation_xi(&nations[b].players, pool);
     if axi.len() < 7 || bxi.len() < 7 {
@@ -4515,18 +4645,30 @@ fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Para
     }
     let mut side_a = Side { players: &axi, ambition: 1.0, quality: 1.0, threat: 1.0 };
     let mut side_b = Side { players: &bxi, ambition: 1.0, quality: 1.0, threat: 1.0 };
-    let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
-    side_a.threat = ta;
-    side_b.threat = tb;
-    let o = matchsim::simulate(
-        &side_a,
-        &side_b,
-        Venue::Neutral,
-        (0, 0),
-        rng,
-    );
+    let o = if deciding {
+        matchsim::simulate_deciding(&side_a, &side_b, Venue::Neutral, (0, 0), rng)
+    } else {
+        matchsim::simulate(&side_a, &side_b, Venue::Neutral, (0, 0), rng)
+    };
     apply_match(&o, Comp::Intl, pool, p);
     (o.goals_a as u32, o.goals_b as u32)
+}
+
+fn nation_shootout_strength(nation: usize, nations: &[Nation], pool: &[WP]) -> f32 {
+    let xi = nation_xi(&nations[nation].players, pool);
+    let keeper = xi
+        .iter()
+        .filter(|mp| mp.pos == Position::GK)
+        .map(|mp| mp.attrs.goalkeeping as f32 * 0.45 + mp.attrs.composure as f32 * 0.55)
+        .next()
+        .unwrap_or(50.0);
+    let mut takers: Vec<f32> = xi
+        .iter()
+        .filter(|mp| mp.pos != Position::GK)
+        .map(|mp| mp.attrs.shooting as f32 * 0.55 + mp.attrs.composure as f32 * 0.45)
+        .collect();
+    takers.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    keeper + takers.iter().take(5).sum::<f32>() / takers.len().min(5).max(1) as f32
 }
 
 /// Five international windows per football year: September, October, November,
@@ -4623,32 +4765,30 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
             }
         }
     }
-    // Seeded bracket: 1v16, 2v15, … so the strongest nations do not meet
-    // until the late rounds, exactly as real tournament seedings arrange.
+    // The group phase already supplied a strength filter. The knockout draw is
+    // then randomized so the same strongest-v-weakest path cannot manufacture
+    // the same finalist every tournament and strong nations can meet early.
     advancing.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
     if advancing.len() > 16 {
         advancing.truncate(16);
     }
+    advancing.shuffle(rng);
     let mut round = advancing;
     let mut tag = 2u8;
     while round.len() > 1 {
         let mut next = Vec::new();
-        // Pair highest seed against lowest: 1vN, 2v(N-1), … so a clean
-        // bracket survives to the semis and finals, not a cluster of the
-        // four strongest sides meeting in the quarter-final.
         let m = round.len();
         for i in 0..m / 2 {
             let (a, b) = (round[i], round[m - 1 - i]);
-            let (ga, gb) = play_nation(a, b, nations, pool, p, rng);
+            let (ga, gb) = play_nation_deciding(a, b, nations, pool, p, rng);
             let win = if ga > gb {
                 a
             } else if gb > ga {
                 b
             } else {
-                // Penalty shootouts tilt slightly to the stronger side, but
-                // never become a coin flip decided by raw rating alone.
-                let pa = nations[a].strength / (nations[a].strength + nations[b].strength);
-                if rng.gen::<f32>() < pa {
+                let sa = nation_shootout_strength(a, nations, pool);
+                let sb = nation_shootout_strength(b, nations, pool);
+                if rng.gen::<f32>() < sa / (sa + sb).max(1.0) {
                     a
                 } else {
                     b
@@ -5042,7 +5182,8 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         // Career appearances include league, Europe and country. The old board
         // counted league apps only, so an international regular looked like he
         // had a shorter career than he actually played.
-        p.career_apps += (p.apps + p.ucl_apps + p.el_apps + p.intl_apps) as u32;
+        p.career_apps += (p.apps + p.ucl_apps + p.el_apps + p.cup_apps + p.intl_apps) as u32;
+        p.career_minutes += p.minutes;
         p.career_intl_goals += p.intl_goals as u32;
         p.career_intl_assists += p.intl_assists as u32;
         p.career_intl_apps += p.intl_apps as u32;
@@ -5249,8 +5390,8 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     // All money columns read in 2026 money (see opening books).
     lines.push("## Club finances (why each club can spend what it spends)".to_string());
     lines.push(String::new());
-    lines.push("| Club | Wealth | Revenue | Cash | Will. | Budget | Reg | HG | Loans |".to_string());
-    lines.push("|------|-------:|--------:|-----:|:-----:|-------:|----:|---:|:-----:|".to_string());
+    lines.push("| Club | Wealth | Revenue | Cash | Will. | Budget | Reg | HG | Loans | Streak | Spend factor |".to_string());
+    lines.push("|------|-------:|--------:|-----:|:-----:|-------:|----:|---:|:-----:|-------:|-------------:|".to_string());
     let dd = w.inflation.max(1.0);
     let dreal = |v: i64| (v as f32 / dd) as i64;
     let mut by_money: Vec<usize> = (0..w.teams.len()).collect();
@@ -5264,7 +5405,7 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         // unspent remainder — the remainder would read as if big spenders are
         // poor and misers rich.
         lines.push(format!(
-            "| {} | {} | {}m | {}m | {:.2} | {}m | {} | {} | {}+{} |",
+            "| {} | {} | {}m | {}m | {:.2} | {}m | {} | {} | {}+{} | {} | {:.2} |",
             trunc(&tm.name, 20),
             tm.wealth,
             dreal(tm.revenue_last),
@@ -5274,7 +5415,9 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             tm.registered.len(),
             hg,
             loans_out,
-            loans_in
+            loans_in,
+            tm.title_streak,
+            dynasty_budget_factor(tm.title_streak)
         ));
     }
     lines.push(String::new());
@@ -5570,19 +5713,45 @@ fn detect_glitches(w: &World, history: &[SeasonOutcome]) -> Vec<String> {
             .iter()
             .filter_map(|o| o.champions.iter().find(|(l, _)| l == lname).map(|(_, c)| c))
             .collect();
+        let mut longest_run = 0usize;
+        let mut current_run = 0usize;
+        let mut current_club: Option<&String> = None;
+        let mut longest_club: Option<&String> = None;
+        for club in &winners {
+            if current_club == Some(*club) {
+                current_run += 1;
+            } else {
+                current_club = Some(*club);
+                current_run = 1;
+            }
+            if current_run > longest_run {
+                longest_run = current_run;
+                longest_club = Some(*club);
+            }
+        }
+        if longest_run >= 7 {
+            out.push(format!(
+                "{} had a {}-season title run by {} (competition warning).",
+                lname,
+                longest_run,
+                longest_club.map(|c| c.as_str()).unwrap_or("one club")
+            ));
+        }
         if winners.len() == history.len() && winners.len() >= 4 {
             let first = winners[0];
             if winners.iter().all(|c| *c == first) {
-                // A superclub monopoly (rep 88+, cf. Bayern's 11 straight or
-                // PSG's decade) is realistic; a lesser club sweeping every
-                // year means the league never competes.
+                // A short superclub run is realistic, but a seven-year or
+                // longer sweep is still a competition warning even for a
+                // historically giant club. The report should surface the
+                // problem instead of silently excusing the exact PSG-style
+                // decade monopoly this simulator is meant to diagnose.
                 let rep = w
                     .teams
                     .iter()
                     .find(|t| &t.name == first)
                     .map(|t| t.rep)
                     .unwrap_or(0);
-                if rep < 88 {
+                if longest_run < 7 && rep < 88 {
                     out.push(format!(
                         "{} won by {} (rep {}) in all {} years (no title turnover).",
                         lname,
@@ -5884,18 +6053,22 @@ mod tests {
             on_loan: false,
             homegrown,
             apps: 0,
+            minutes: 0,
             goals: 0,
             assists: 0,
             rating_sum: 0.0,
             rating_apps: 0,
             ucl_goals: 0,
             el_goals: 0,
+            cup_goals: 0,
             intl_goals: 0,
             ucl_assists: 0,
             el_assists: 0,
+            cup_assists: 0,
             intl_assists: 0,
             ucl_apps: 0,
             el_apps: 0,
+            cup_apps: 0,
             intl_apps: 0,
             shots: 0,
             sot: 0,
@@ -5932,6 +6105,7 @@ mod tests {
             career_xa: 0.0,
             career_aerials: 0,
             career_apps: 0,
+            career_minutes: 0,
             career_intl_goals: 0,
             career_intl_assists: 0,
             career_intl_apps: 0,
@@ -5978,6 +6152,7 @@ mod tests {
             willingness: 0.7,
             academy: 3,
             title_drought: 0,
+            title_streak: 0,
             registered: Vec::new(),
             manager: Manager::new_random(rng, &Params::default()),
             shape: (4, 4, 2),
@@ -6189,16 +6364,16 @@ mod tests {
         // super cup resolves a winner from both the single-match and the
         // Final Four shapes — all drawn from the field, never inventing teams.
         let mut rng = Pcg64Mcg::new(44);
-        let w = mini_world(&mut rng);
-        let (win, finalist) = run_domestic_cup(&[0, 1], &w.teams, &w.params, &mut rng).unwrap();
+        let mut w = mini_world(&mut rng);
+        let (win, finalist) = run_domestic_cup(&[0, 1], &mut w.teams, &mut w.pool, &w.params, &mut rng).unwrap();
         assert_ne!(win, finalist, "two-team cup must have a distinct runner-up");
         assert!(win < 2 && finalist < 2);
-        let sc = super_cup_winner(&[0, 1], &w.teams, &w.params, &mut rng).unwrap();
+        let sc = super_cup_winner(&[0, 1], &mut w.teams, &mut w.pool, &w.params, &mut rng).unwrap();
         assert!(sc == 0 || sc == 1);
-        let ff = super_cup_winner(&[0, 1, 0, 1], &w.teams, &w.params, &mut rng).unwrap();
+        let ff = super_cup_winner(&[0, 1, 0, 1], &mut w.teams, &mut w.pool, &w.params, &mut rng).unwrap();
         assert!(ff == 0 || ff == 1);
-        assert_eq!(super_cup_winner(&[0], &w.teams, &w.params, &mut rng), Some(0));
-        assert_eq!(super_cup_winner(&[], &w.teams, &w.params, &mut rng), None);
+        assert_eq!(super_cup_winner(&[0], &mut w.teams, &mut w.pool, &w.params, &mut rng), Some(0));
+        assert_eq!(super_cup_winner(&[], &mut w.teams, &mut w.pool, &w.params, &mut rng), None);
     }
 
     #[test]
@@ -6490,6 +6665,29 @@ mod tests {
     }
 
     #[test]
+    fn long_dynasties_expose_core_players_to_the_market() {
+        let mut seen = false;
+        for seed in 0..20u64 {
+            let mut rng = Pcg64Mcg::new(7000 + seed as u128);
+            let mut w = mini_world(&mut rng);
+            let star = w.pool.iter().position(|p| p.name == "Big Mid 0").unwrap();
+            w.teams[0].title_streak = 10;
+            w.pool[star].attrs = attrs_all(85);
+            w.pool[star].ovr = 85;
+            w.pool[star].pot = 90;
+            w.pool[star].age = 25;
+            w.pool[star].locked = 5;
+            w.pool[star].homegrown = false;
+            release_dynasty_core(&mut w, &mut rng);
+            if w.minds[star].requested && w.pool[star].locked == 0 {
+                seen = true;
+                break;
+            }
+        }
+        assert!(seen, "a long-running champion never exposed a core player");
+    }
+
+    #[test]
     fn tired_stars_are_not_surplus() {
         // End-of-season fatigue must never mislabel a starter as sellable:
         // an exhausted 80-ovr senior stays in the best XI over a fresh 78.
@@ -6512,8 +6710,11 @@ mod tests {
         let mut rng = Pcg64Mcg::new(21);
         let mut w = mini_world(&mut rng);
         w.pool[0].apps = 30;
+        w.pool[0].minutes = 2700;
         w.pool[0].goals = 12;
         w.pool[0].assists = 5;
+        w.pool[0].cup_goals = 1;
+        w.pool[0].cup_apps = 2;
         w.pool[0].key_passes = 40;
         w.pool[0].big_chances = 9;
         w.pool[0].tackles = 20;
@@ -6524,19 +6725,37 @@ mod tests {
         w.pool[0].ucl_assists = 2;
         reset_season(&mut w);
         let p = &w.pool[0];
-        assert_eq!(p.career_goals, 12 + 4);
+        assert_eq!(p.career_goals, 12 + 4 + 1);
         assert_eq!(p.career_assists, 5 + 2);
         assert_eq!(p.career_kp, 40);
         assert_eq!(p.career_bcc, 9);
         assert_eq!(p.career_ti, 35);
-        assert_eq!(p.career_apps, 30);
+        assert_eq!(p.career_apps, 30 + 2);
+        assert_eq!(p.career_minutes, 2700);
         assert!((p.career_rating_sum - 210.0).abs() < 1e-6);
         assert_eq!(p.career_rating_apps, 30);
         // ...and the season counters are wiped for the new year.
         assert_eq!(p.apps, 0);
+        assert_eq!(p.minutes, 0);
         assert_eq!(p.goals, 0);
+        assert_eq!(p.cup_goals, 0);
+        assert_eq!(p.cup_apps, 0);
         assert_eq!(p.ucl_goals, 0);
         assert_eq!(p.key_passes, 0);
+    }
+
+    #[test]
+    fn dynasty_pressure_is_gradual_and_capped() {
+        assert!((dynasty_budget_factor(0) - 1.0).abs() < f32::EPSILON);
+        assert!((dynasty_budget_factor(2) - 1.0).abs() < f32::EPSILON);
+        assert!(dynasty_budget_factor(3) < 1.0);
+        assert!(dynasty_budget_factor(4) < dynasty_budget_factor(3));
+        assert!((dynasty_budget_factor(99) - 0.70).abs() < f32::EPSILON);
+        assert!(dynasty_maintenance_rate(4) > dynasty_maintenance_rate(3));
+        assert!(dynasty_challenge_probability(7, 0.8) > dynasty_challenge_probability(3, 0.8));
+        assert!(dynasty_exit_probability(4) > dynasty_exit_probability(3));
+        assert!(dynasty_challenge_probability(99, 1.0) <= 0.28);
+        assert!(dynasty_exit_probability(99) <= 0.28);
     }
 
     #[test]

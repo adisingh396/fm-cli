@@ -132,7 +132,13 @@ pub struct MatchOutcome {
     /// All 22 starters' lines (side_a flag distinguishes teams).
     pub stats: Vec<MatchStats>,
     pub events: Vec<Event>,
+    /// Real match duration, including stoppage time and extra time when the
+    /// fixture was a deciding knockout match.
+    pub duration: u8,
+    pub went_extra_time: bool,
     /// Final mentality each manager settled on (−3 very defensive .. 3 very attacking).
+    /// The season sandbox no longer lets this value decide match outcomes; it
+    /// remains in the result for the interactive observer's existing display.
     pub end_mentality_a: i8,
     pub end_mentality_b: i8,
 }
@@ -286,7 +292,10 @@ impl Rt {
             rt.st.push(MatchStats {
                 id: mp.id,
                 side_a,
-                minutes: 90,
+                // Filled with the actual regulation/extra-time duration after
+                // the clock has run. Injured players keep the minute at which
+                // they left the pitch.
+                minutes: 0,
                 rating: 6.0,
                 ..Default::default()
             });
@@ -482,12 +491,11 @@ pub fn injury_chance(intensity: f32, robust: f32, victim_fatigue: f32) -> f32 {
 }
 
 /// Attribute contest → success probability, clamped away from certainty so
-/// upsets remain possible. `bias` nudges in raw skill points. The raw ability
-/// gap saturates slowly (even +20 mismatches win phases, not whole matches —
-/// otherwise dominant sides manufacture 30-shot games), while the tactical
-/// bias stays sharp, so mentality and pressing still swing duels.
+/// upsets remain possible. The gap is deliberately resolved at the individual
+/// duel level: a ten-point advantage matters, but it never becomes a scripted
+/// outcome. Team reputation and manager ratings do not enter this function.
 fn contest(att: f32, def: f32, bias: f32) -> f32 {
-    logistic((att - def) / 110.0 + bias / 55.0).clamp(0.03, 0.97)
+    logistic((att - def) / 68.0 + bias / 55.0).clamp(0.04, 0.96)
 }
 
 /// Isolated 1v1 contest for man-marked duels: the marker shadows his man away
@@ -495,7 +503,7 @@ fn contest(att: f32, def: f32, bias: f32) -> f32 {
 /// a star to scraps while a weak one gets destroyed, exactly as it should be.
 /// Even matchups resolve near coin-flips, same as the zonal version.
 fn contest_iso(att: f32, def: f32, bias: f32) -> f32 {
-    logistic((att - def) / 45.0 + bias / 55.0).clamp(0.03, 0.97)
+    logistic((att - def) / 38.0 + bias / 55.0).clamp(0.04, 0.96)
 }
 
 /// Not every lost ball is a *credited* defensive action by a named player —
@@ -522,104 +530,169 @@ fn wpick(cands: &[(usize, f32)], rng: &mut impl Rng) -> Option<usize> {
     cands.last().map(|&(i, _)| i)
 }
 
-/// Simulate one match. `agg` is the aggregate carried in from a previous leg
-/// (a_prev, b_prev); pass (0, 0) for a one-off. Managers read the running
-/// aggregate, so second legs of ties play to the tie, not just the day.
+/// Resolve who starts the next attacking sequence from one actual ball-side
+/// duel. This is intentionally not a team-strength lambda: a named passer and
+/// a named presser contest the ball, with the home venue only nudging the duel.
+fn control_duel_probability(a: &Rt, b: &Rt, home_bias: f32, rng: &mut impl Rng) -> f32 {
+    let ap = a.group(&a.passing, 0.7, 1.25, 0.7, 0.05);
+    let bp = b.group(&b.passing, 0.7, 1.25, 0.7, 0.05);
+    let ad = b.duel_group(&b.press, 0.4, 1.0, 0.8, 0.0);
+    let bd = a.duel_group(&a.press, 0.4, 1.0, 0.8, 0.0);
+    let Some(a_pass) = wpick(&ap, rng) else { return 0.5 };
+    let Some(b_pass) = wpick(&bp, rng) else { return 0.5 };
+    let Some(b_press) = wpick(&ad, rng) else { return 0.5 };
+    let Some(a_press) = wpick(&bd, rng) else { return 0.5 };
+
+    let a_wins = contest(
+        a.eff(a_pass, &a.passing),
+        b.eff(b_press, &b.press),
+        home_bias * 8.0,
+    );
+    let b_wins = contest(
+        b.eff(b_pass, &b.passing),
+        a.eff(a_press, &a.press),
+        -home_bias * 8.0,
+    );
+    (a_wins / (a_wins + b_wins).max(0.001)).clamp(0.12, 0.88)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn play_minute(
+    ra: &mut Rt,
+    rb: &mut Rt,
+    minute: u8,
+    home_bias_a: f32,
+    poss_a: &mut u16,
+    total_actions: &mut u16,
+    shots_a: &mut u16,
+    shots_b: &mut u16,
+    xg_a: &mut f32,
+    xg_b: &mut f32,
+    events: &mut Vec<Event>,
+    rng: &mut impl Rng,
+) {
+    // One to three live sequences per clock minute. The count is sampled, not
+    // fixed, so the match contains a real 90+stoppage-time clock rather than a
+    // deterministic 190-possession spreadsheet.
+    let actions = 1usize + usize::from(rng.gen_bool(0.62)) + usize::from(rng.gen_bool(0.14));
+    *total_actions = (*total_actions).saturating_add(actions as u16);
+    for _ in 0..actions {
+        let attacking_a = rng.gen::<f32>() < control_duel_probability(ra, rb, home_bias_a, rng);
+        if attacking_a {
+            *poss_a = poss_a.saturating_add(1);
+            drive(ra, rb, 0, 0, minute, true, shots_a, xg_a, events, rng);
+        } else {
+            drive(rb, ra, 0, 0, minute, false, shots_b, xg_b, events, rng);
+        }
+    }
+}
+
+fn set_match_minutes(rt: &mut Rt, duration: u8) {
+    for (i, s) in rt.st.iter_mut().enumerate() {
+        if !rt.out[i] {
+            s.minutes = duration;
+        } else if s.minutes == 0 {
+            s.minutes = duration.min(1);
+        }
+    }
+}
+
+/// Simulate a normal 90-minute match plus randomly sampled stoppage time.
+/// `agg` is retained for callers that share the same API across league and
+/// knockout fixtures; it does not alter ordinary match play.
 pub fn simulate(a: &Side, b: &Side, venue: Venue, agg: (u8, u8), rng: &mut impl Rng) -> MatchOutcome {
+    simulate_with_rules(a, b, venue, agg, false, rng)
+}
+
+/// Simulate a deciding knockout match. If the aggregate is level after
+/// regulation, the same player-v-player engine continues through 30 minutes of
+/// extra time before the caller resolves a still-level tie on penalties.
+pub fn simulate_deciding(
+    a: &Side,
+    b: &Side,
+    venue: Venue,
+    agg: (u8, u8),
+    rng: &mut impl Rng,
+) -> MatchOutcome {
+    simulate_with_rules(a, b, venue, agg, true, rng)
+}
+
+fn simulate_with_rules(
+    a: &Side,
+    b: &Side,
+    venue: Venue,
+    agg: (u8, u8),
+    deciding: bool,
+    rng: &mut impl Rng,
+) -> MatchOutcome {
     let mut ra = Rt::new(a, true);
     let mut rb = Rt::new(b, false);
-
+    // The only pre-match read kept is a player-to-player matchup: each side's
+    // best defender can naturally end up on the opponent's best finisher. No
+    // manager quality, reputation, or narrative bonus is attached to it.
+    ra.danger = ra.danger_man();
+    rb.danger = rb.danger_man();
+    ra.marker = ra.stopper();
+    rb.marker = rb.stopper();
     let home_bias_a = match venue {
         Venue::HomeA => 0.28,
         Venue::HomeB => -0.28,
         Venue::Neutral => 0.0,
     };
-
-    let total_drives: usize = 190;
+    let regulation_end = 90u8 + rng.gen_range(2..=7);
     let mut poss_a: u16 = 0;
+    let mut total_actions: u16 = 0;
     let (mut shots_a, mut shots_b) = (0u16, 0u16);
     let (mut xg_a, mut xg_b) = (0.0f32, 0.0f32);
     let mut events: Vec<Event> = Vec::new();
 
-    // Pre-match game-planning, read off the two XIs: each side identifies the
-    // opponent's danger man and assigns its best stopper to shadow him all
-    // game. And if the mismatch is stark (a monster against an overmatched
-    // back line), the exposed side starts a notch more cautious — managers
-    // game-plan around individuals, not just team strength.
-    ra.danger = ra.danger_man();
-    rb.danger = rb.danger_man();
-    ra.marker = ra.stopper();
-    rb.marker = rb.stopper();
-    let caution_a = match (rb.danger, ra.marker) {
-        (Some(m), Some(k)) => {
-            let gap = rb.eff(m, &rb.finish) - ra.eff(k, &ra.defend);
-            if gap > 30.0 {
-                -2
-            } else if gap > 18.0 {
-                -1
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
-    let caution_b = match (ra.danger, rb.marker) {
-        (Some(m), Some(k)) => {
-            let gap = ra.eff(m, &ra.finish) - rb.eff(k, &rb.defend);
-            if gap > 30.0 {
-                -2
-            } else if gap > 18.0 {
-                -1
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
-
-    let mut ment_a: i8 = (decide_mentality(ra.ambition, 0, 1, ra.quality, a.threat) + caution_a).clamp(-3, 3);
-    let mut ment_b: i8 = (decide_mentality(rb.ambition, 0, 1, rb.quality, b.threat) + caution_b).clamp(-3, 3);
-
-    for d in 0..total_drives {
-        let minute = ((d as f32) * 96.0 / total_drives as f32) as u8 + 1;
-
-        // Managers re-read the game every ~5 minutes, aggregate included. The
-        // pre-match caution for a mismatched danger man persists underneath.
-        if d % 10 == 0 {
-            let gd_a = (ra.goals as i32 + agg.0 as i32) - (rb.goals as i32 + agg.1 as i32);
-            ment_a = (decide_mentality(ra.ambition, gd_a, minute, ra.quality, a.threat) + caution_a).clamp(-3, 3);
-            ment_b = (decide_mentality(rb.ambition, -gd_a, minute, rb.quality, b.threat) + caution_b).clamp(-3, 3);
-        }
-
-        // Possession is decided by who is better on the ball *and* by overall
-        // squad quality — a stronger side sees more of the ball, so it takes
-        // more shots and wins more often (fewer coin-flip draws, fewer minnows
-        // lifting cups). Attributes are compressed in the data, so the quality
-        // gap is deliberately amplified to restore real separation; none of it
-        // is a per-team constant — it all comes off the eleven on the pitch.
-        // The total edge saturates: real possession caps around 75/25 no matter
-        // how vast the gulf (even Guardiola's sides rarely top 72%), so runaway
-        // 85%+ ball-hoarding — and the 30-shot games it manufactures — cannot
-        // happen.
-        let ctrl = ((ra.control() - rb.control()) / 37.0
-            + (ra.quality_index() - rb.quality_index()) / 38.0
-            + home_bias_a
-            + (ment_a - ment_b) as f32 * 0.05
-            + (ra.quality - rb.quality) * 0.7)
-            .clamp(-1.1, 1.1);
-        let attacking_a = rng.gen::<f32>() < logistic(ctrl);
-        if attacking_a {
-            poss_a += 1;
-            drive(&mut ra, &mut rb, ment_a, ment_b, minute, true, &mut shots_a, &mut xg_a, &mut events, rng);
-        } else {
-            drive(&mut rb, &mut ra, ment_b, ment_a, minute, false, &mut shots_b, &mut xg_b, &mut events, rng);
-        }
+    for minute in 1..=regulation_end {
+        play_minute(
+            &mut ra,
+            &mut rb,
+            minute,
+            home_bias_a,
+            &mut poss_a,
+            &mut total_actions,
+            &mut shots_a,
+            &mut shots_b,
+            &mut xg_a,
+            &mut xg_b,
+            &mut events,
+            rng,
+        );
     }
 
+    let mut duration = regulation_end;
+    let mut went_extra_time = false;
+    if deciding && ra.goals as u16 + agg.0 as u16 == rb.goals as u16 + agg.1 as u16 {
+        went_extra_time = true;
+        let extra_end = regulation_end + 30 + rng.gen_range(2..=5);
+        for minute in (regulation_end + 1)..=extra_end {
+            play_minute(
+                &mut ra,
+                &mut rb,
+                minute,
+                home_bias_a,
+                &mut poss_a,
+                &mut total_actions,
+                &mut shots_a,
+                &mut shots_b,
+                &mut xg_a,
+                &mut xg_b,
+                &mut events,
+                rng,
+            );
+        }
+        duration = extra_end;
+    }
+
+    set_match_minutes(&mut ra, duration);
+    set_match_minutes(&mut rb, duration);
     finalize_ratings(&mut ra, rb.goals);
     finalize_ratings(&mut rb, ra.goals);
 
-    let poss = ((poss_a as f32 / total_drives as f32) * 100.0).round() as u8;
+    let poss = ((poss_a as f32 / total_actions.max(1) as f32) * 100.0).round() as u8;
     let mut stats = ra.st;
     stats.extend(rb.st);
 
@@ -637,8 +710,10 @@ pub fn simulate(a: &Side, b: &Side, venue: Venue, agg: (u8, u8), rng: &mut impl 
         sp_goals_b: rb.sp_goals,
         stats,
         events,
-        end_mentality_a: ment_a,
-        end_mentality_b: ment_b,
+        duration,
+        went_extra_time,
+        end_mentality_a: 0,
+        end_mentality_b: 0,
     }
 }
 
@@ -909,44 +984,16 @@ fn drive(
     }
 
     let on_target;
-    // xG *is* the chance quality; a good keeper saves a slice. On top of that,
-    // *finishing quality* decides conversion: an elite finisher (Haaland-tier)
-    // buries chances a journeyman fluffs, so the golden boot goes to the best
-    // strikers on the best teams, not a mid-table forward who happens to be his
-    // club's focal point. Centred so a league-average forward is neutral.
+    // xG is the chance quality; the named finisher and keeper then contest the
+    // actual shot. There is no global superstar cap or marked-man quota here:
+    // an elite finisher earns a higher conversion through the same player-v-
+    // player math that created the chance.
     let gk_save = def.gk_index().map(|g| def.eff(g, &def.gk)).unwrap_or(70.0);
-    let gk_stop = logistic((gk_save - quality + 27.0) / 53.0);
-    // Finishing skill matters, but it cannot turn every attack from a dominant
-    // side into a goal: elite forwards still face goalkeeper quality, pressure
-    // and the randomness of the chance itself. A small league-wide lift keeps
-    // ordinary matches in the 2–3 goal band while the lower ceiling prevents a
-    // single wonderkid from converting a mismatch into 50+ goals.
-    let finish_factor = (quality / 79.0).powf(1.15).clamp(0.6, 1.10);
-    // Even a superteam faces diminishing returns when every attack is built
-    // against a collapsed opponent: the chance count rises, but conversion
-    // does not scale linearly with the mismatch. This keeps a generated
-    // wonderkid from turning one-sided fixtures into a 50-goal season while
-    // leaving ordinary and merely strong sides untouched.
-    let dominance_brake = if quality > 90.0 {
-        (1.0 - (quality - 90.0) * 0.045).clamp(0.72, 1.0)
-    } else {
-        1.0
-    };
-    let raw = xg * (1.0 - gk_stop * 0.35) * finish_factor * 1.15 * dominance_brake;
-    // No open-play shot exceeds ~26%: even the most gilt-edged chance needs
-    // the finish, and nobody sustains better than roughly a quarter across a
-    // season. And tired legs snatch at volume: past a normal workload, each
-    // further shot in a match converts progressively worse — the steeper bite
-    // falls on the gorging high-volume games (10+ shots) that build freak
-    // 55-goal seasons, while a normal 4-6 shot game is barely touched. Both
-    // bind almost only on chances farmed from overmatched defenses. Penalties
-    // (base 0.75) keep their real conversion.
-    let volume = 1.0 / (1.0 + 0.09 * (atk.st[sh].shots as f32 - 4.0).max(0.0));
-    let scored_p = if base >= 0.6 {
-        raw
-    } else {
-        (raw.min(0.26) * volume).min(0.26)
-    };
+    let keeper_edge = logistic((gk_save - quality) / 42.0);
+    let finisher_edge = logistic((quality - 70.0) / 34.0);
+    let fatigue = (1.0 - (atk.p[sh].start_fatigue + atk.fat[sh]) * 0.12).clamp(0.82, 1.0);
+    let scored_p = (xg * (0.72 + finisher_edge * 0.52) * (1.0 - keeper_edge * 0.24) * fatigue)
+        .clamp(0.005, 0.95);
     let scored = rng.gen::<f32>() < scored_p;
     if scored {
         on_target = true;

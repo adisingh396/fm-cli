@@ -1,0 +1,594 @@
+
+  ╔══════════════════════════════════════════╗
+  ║   ⚽  FOOTBALL MANAGER CLI  🏆          ║
+  ║   Built with Rust & FM 2023 Data        ║
+  ╚══════════════════════════════════════════╝
+[2J[H╔══════════════════════════════════════════════════════════════╗
+║          ⚽  FOOTBALL MANAGER CLI  🏆                       ║
+╚══════════════════════════════════════════════════════════════╝
+  MAIN MENU
+  ───────────────────────────────────────────────────────────
+
+  1.  New Game
+  2.  Load Game
+  3.  Simulate Season(s) — 1 season or up to 100 years (dynasty)
+  4.  Train AI — evolve parameters against real-world targets
+  5.  Observe / Spectate — watch matches live, browse a league
+  6.  Quit
+
+  Choose: [2J[H╔══════════════════════════════════════════════════════════════╗
+║          ⚽  FOOTBALL MANAGER CLI  🏆                       ║
+╚══════════════════════════════════════════════════════════════╝
+  SIMULATE SEASON(S)
+  ───────────────────────────────────────────────────────────
+
+  How many years to simulate? (1 = detailed single season,
+    up to 100 for a dynasty report) [default 10]: 
+  Loading database and simulating 10 season(s) (~21000 matches)...
+  Loaded 17849 players / 669 clubs from the 2026 players database.
+  (seed 424242)
+# 10-Year Simulation (2026–2035)
+
+## Champions by year
+
+| Year | Premier League | La Liga | Serie A | Bundesliga | Ligue 1 | UCL | Europa | International |
+|------|----------------|---------|--------|------------|---------|-----|--------|---------------|
+| 2026 | Manchester City | FC Barcelona | Lombardia FC | FC Bayern München | Paris SG | FC Porto | Arsenal | WC: Portugal |
+| 2027 | Chelsea | Atlético de Madr… | Juventus | FC Bayern München | Paris SG | Paris SG | Spurs | - |
+| 2028 | Everton | Real Madrid | Lombardia FC | FC Bayern München | Paris SG | Leverkusen | AS Roma | Euro: Germany |
+| 2029 | Liverpool | FC Barcelona | Lombardia FC | RB Leipzig | Paris SG | FC Barcelona | Crystal Palace | AFCON: Senegal |
+| 2030 | Man Utd | FC Barcelona | Milano FC | Leverkusen | Paris SG | PSV Eindhoven | Chelsea | WC: Portugal |
+| 2031 | Man Utd | FC Barcelona | SSC Napoli | FC Bayern München | Paris SG | FC Bayern München | Milano FC | - |
+| 2032 | Newcastle Utd | Real Madrid | Lombardia FC | TSG Hoffenheim | Paris SG | FC Bayern München | Man Utd | Euro: England |
+| 2033 | Arsenal | FC Barcelona | Lombardia FC | FC Bayern München | Paris SG | Paris SG | Chelsea | AFCON: Senegal |
+| 2034 | Liverpool | Atlético de Madr… | Juventus | RB Leipzig | Paris SG | Chelsea | Newcastle Utd | WC: Brazil |
+| 2035 | Spurs | Real Madrid | Lombardia FC | FC Bayern München | Paris SG | FC Barcelona | Man Utd | - |
+
+## Ballon d'Or by year
+
+Goals/assists shown as League | UCL | Overall (all competitions).
+
+### 2026 — Dani Olmo (FC Barcelona)
+
+League **20g 8a** · UCL **4g 0a** · International **8g 1a (14 apps)** · Overall **34g 9a** · Golden Boot (league): Khvicha Kvarats… (24g) · Top scorer (all comps): Dani Olmo (34g/9a)
+
+Why he won it:
+
+- Goals & assists (34g 9a (all tracked competitions)): +163 pts
+- Average rating (0.34 above 6.5 baseline): +24 pts
+- Availability (61 appearances): +23 pts
+- Build-up & creation (2130 passes, 70 dribbles, 61 key passes): +20 pts
+- Ball-winning (66 tackles+int × 0.08): +5 pts
+- League title (won): +10 pts
+- UCL production (4g 0a): +16 pts
+- International production (8g 1a): +34 pts
+- International run (tournament quarter-final): +2 pts
+
+Full vote:
+- 1. Dani Olmo (298 pts)
+- 2. Jamal Musiala (272 pts) (-26 behind)
+- 3. Lautaro Martínez (270 pts) (-28 behind)
+- 4. João Neves (266 pts) (-32 behind)
+- 5. Scott McTominay (257 pts) (-41 behind)
+
+### 2027 — Ademola Lookman (Atlético de Madrid)
+
+League **19g 4a** · UCL **8g 1a** · International **5g 1a (9 apps)** · Overall **32g 7a** · Golden Boot (league): Marcus Thuram (23g) · Top scorer (all comps): Ademola Lookman (32g/7a)
+
+Why he won it:
+
+- Goals & assists (32g 7a (all tracked competitions)): +149 pts
+- Average rating (0.32 above 6.5 baseline): +22 pts
+- Availability (56 appearances): +22 pts
+- Build-up & creation (2052 passes, 70 dribbles, 52 key passes): +23 pts
+- Ball-winning (30 tackles+int × 0.08): +2 pts
+- League title (won): +10 pts
+- UCL production (8g 1a): +34 pts
+- International production (5g 1a): +22 pts
+
+Full vote:
+- 1. Ademola Lookman (285 pts)
+- 2. Ousmane Dembélé (276 pts) (-10 behind)
+- 3. Ferran Torres (266 pts) (-20 behind)
+- 4. Khvicha Kvaratskhel… (263 pts) (-22 behind)
+- 5. Morten Hjulmand (250 pts) (-35 behind)
+
+### 2028 — Kylian Mbappé (Real Madrid)
+
+League **21g 9a** · UCL **3g 3a** · International **8g 1a (15 apps)** · Overall **35g 13a** · Golden Boot (league): Morgan Rogers & Gerard Moreno (24g each, tied) · Top scorer (all comps): Kylian Mbappé (35g/13a)
+
+Why he won it:
+
+- Goals & assists (35g 13a (all tracked competitions)): +179 pts
+- Average rating (0.48 above 6.5 baseline): +34 pts
+- Availability (65 appearances): +24 pts
+- Build-up & creation (2342 passes, 100 dribbles, 81 key passes): +38 pts
+- Ball-winning (58 tackles+int × 0.08): +5 pts
+- League title (won): +10 pts
+- UCL production (3g 3a): +18 pts
+- UCL run (UCL quarter-final): +2 pts
+- International production (8g 1a): +34 pts
+- International run (tournament semi-final): +5 pts
+
+Full vote:
+- 1. Kylian Mbappé (349 pts)
+- 2. Ferran Torres (283 pts) (-66 behind)
+- 3. Julián Alvarez (280 pts) (-69 behind)
+- 4. Jude Bellingham (277 pts) (-72 behind)
+- 5. João Neves (270 pts) (-79 behind)
+
+### 2029 — Lamine Yamal (FC Barcelona)
+
+League **17g 13a** · UCL **8g 2a** · International **2g 1a (9 apps)** · Overall **28g 16a** · Golden Boot (league): Christopher Nku… (26g) · Top scorer (all comps): Kylian Mbappé (32g/8a)
+
+Why he won it:
+
+- Goals & assists (28g 16a (all tracked competitions)): +160 pts
+- Average rating (0.42 above 6.5 baseline): +29 pts
+- Availability (62 appearances): +24 pts
+- Build-up & creation (2413 passes, 106 dribbles, 86 key passes): +34 pts
+- Ball-winning (64 tackles+int × 0.08): +5 pts
+- League title (won): +10 pts
+- UCL production (8g 2a): +36 pts
+- UCL run (won the UCL): +12 pts
+- International production (2g 1a): +10 pts
+
+Full vote:
+- 1. Lamine Yamal (321 pts)
+- 2. Elliot Anderson (271 pts) (-50 behind)
+- 3. Kylian Mbappé (262 pts) (-59 behind)
+- 4. Bryan Mbeumo (257 pts) (-63 behind)
+- 5. Christopher Nkunku (254 pts) (-66 behind)
+
+### 2030 — Lamine Yamal (FC Barcelona)
+
+League **16g 6a** · UCL **4g 2a** · International **6g 2a (14 apps)** · Overall **29g 10a** · Golden Boot (league): Benjamin Šeško (26g) · Top scorer (all comps): Erling Haaland (33g/5a)
+
+Why he won it:
+
+- Goals & assists (29g 10a (all tracked competitions)): +146 pts
+- Average rating (0.39 above 6.5 baseline): +27 pts
+- Availability (60 appearances): +23 pts
+- Build-up & creation (2281 passes, 84 dribbles, 87 key passes): +33 pts
+- Ball-winning (58 tackles+int × 0.08): +5 pts
+- League title (won): +10 pts
+- UCL production (4g 2a): +20 pts
+- International production (6g 2a): +28 pts
+- International run (tournament quarter-final): +2 pts
+
+Full vote:
+- 1. Lamine Yamal (294 pts)
+- 2. Désiré Doué (287 pts) (-7 behind)
+- 3. Declan Rice (285 pts) (-10 behind)
+- 4. João Neves (269 pts) (-25 behind)
+- 5. Morten Hjulmand (263 pts) (-31 behind)
+
+### 2031 — Rafael Santos (FC Barcelona)
+
+League **14g 14a** · UCL **4g 4a** · International **2g 1a (9 apps)** · Overall **20g 20a** · Golden Boot (league): Bryan Mbeumo & Jamal Musiala (24g each, tied) · Top scorer (all comps): Bryan Mbeumo (30g/5a)
+
+Why he won it:
+
+- Goals & assists (20g 20a (all tracked competitions)): +140 pts
+- Average rating (0.69 above 6.5 baseline): +49 pts
+- Availability (58 appearances): +23 pts
+- Build-up & creation (3304 passes, 123 dribbles, 101 key passes): +43 pts
+- Ball-winning (277 tackles+int × 0.08): +22 pts
+- League title (won): +10 pts
+- UCL production (4g 4a): +24 pts
+- UCL run (UCL semi-final): +5 pts
+- International production (2g 1a): +10 pts
+
+Full vote:
+- 1. Rafael Santos (326 pts)
+- 2. Jamal Musiala (268 pts) (-58 behind)
+- 3. Mason Kimura (262 pts) (-63 behind)
+- 4. Vedran Zivkovic (260 pts) (-66 behind)
+- 5. Toni Djordje Markov… (253 pts) (-72 behind)
+
+### 2032 — Rio Ngumoha (Liverpool)
+
+League **17g 4a** · UCL **5g 1a** · International **10g 1a (15 apps)** · Overall **33g 6a** · Golden Boot (league): Zavier Gozo (28g) · Top scorer (all comps): Rafael Leão (34g/7a)
+
+Why he won it:
+
+- Goals & assists (33g 6a (all tracked competitions)): +150 pts
+- Average rating (0.34 above 6.5 baseline): +24 pts
+- Availability (57 appearances): +23 pts
+- Build-up & creation (1618 passes, 89 dribbles, 47 key passes): +18 pts
+- Ball-winning (55 tackles+int × 0.08): +4 pts
+- UCL production (5g 1a): +22 pts
+- International production (10g 1a): +42 pts
+- International run (tournament finalist): +8 pts
+
+Full vote:
+- 1. Rio Ngumoha (291 pts)
+- 2. Dario Esteves (278 pts) (-13 behind)
+- 3. Lennart Karl (277 pts) (-14 behind)
+- 4. Yacine Saidi (276 pts) (-14 behind)
+- 5. Cole Palmer (275 pts) (-16 behind)
+
+### 2033 — Dario Esteves (Paris SG)
+
+League **8g 12a** · UCL **6g 2a** · International **3g 1a (9 apps)** · Overall **18g 15a** · Golden Boot (league): Christian Kofane (25g) · Top scorer (all comps): Bazoumana Touré (33g/9a)
+
+Why he won it:
+
+- Goals & assists (18g 15a (all tracked competitions)): +117 pts
+- Average rating (0.57 above 6.5 baseline): +40 pts
+- Availability (53 appearances): +22 pts
+- Build-up & creation (3011 passes, 85 dribbles, 120 key passes): +41 pts
+- Ball-winning (79 tackles+int × 0.08): +6 pts
+- League title (won): +10 pts
+- UCL production (6g 2a): +28 pts
+- UCL run (won the UCL): +12 pts
+- International production (3g 1a): +14 pts
+
+Full vote:
+- 1. Dario Esteves (289 pts)
+- 2. Arda Novak (282 pts) (-7 behind)
+- 3. Arda Güler (270 pts) (-19 behind)
+- 4. Vedran Zivkovic (270 pts) (-20 behind)
+- 5. Bradley Barcola (267 pts) (-22 behind)
+
+### 2034 — Juninho Araujo (Liverpool)
+
+League **15g 10a** · UCL **0g 0a** · International **5g 6a (16 apps)** · Overall **20g 19a** · Golden Boot (league): Raphael Guerin (27g) · Top scorer (all comps): Julián Alvarez (33g/8a), tied with Leny Mohamed Bl…
+
+Why he won it:
+
+- Goals & assists (20g 19a (all tracked competitions)): +137 pts
+- Average rating (0.45 above 6.5 baseline): +31 pts
+- Availability (60 appearances): +23 pts
+- Build-up & creation (3262 passes, 75 dribbles, 108 key passes): +37 pts
+- Ball-winning (93 tackles+int × 0.08): +7 pts
+- League title (won): +10 pts
+- International production (5g 6a): +32 pts
+- International run (won the tournament): +12 pts
+
+Full vote:
+- 1. Juninho Araujo (290 pts)
+- 2. Julián Alvarez (287 pts) (-3 behind)
+- 3. Magnus Lund (286 pts) (-4 behind)
+- 4. Yan Diomande (280 pts) (-10 behind)
+- 5. Jamal Musiala (280 pts) (-10 behind)
+
+### 2035 — Arda Novak (Paris SG)
+
+League **12g 16a** · UCL **1g 2a** · International **3g 5a (9 apps)** · Overall **17g 24a** · Golden Boot (league): Kacper Bakker (34g) · Top scorer (all comps): Julián Alvarez (37g/8a), tied with Kacper Bakker
+
+Why he won it:
+
+- Goals & assists (17g 24a (all tracked competitions)): +140 pts
+- Average rating (0.81 above 6.5 baseline): +56 pts
+- Availability (49 appearances): +21 pts
+- Build-up & creation (2862 passes, 88 dribbles, 120 key passes): +47 pts
+- Ball-winning (119 tackles+int × 0.08): +10 pts
+- League title (won): +10 pts
+- UCL production (1g 2a): +8 pts
+- International production (3g 5a): +22 pts
+
+Full vote:
+- 1. Arda Novak (314 pts)
+- 2. Julián Alvarez (313 pts) (-1 behind)
+- 3. Hugo Berg (297 pts) (-17 behind)
+- 4. Rafael Santos (284 pts) (-29 behind)
+- 5. Lennart Karl (268 pts) (-46 behind)
+
+## Domestic cups
+
+- **2026**: Crystal Palace · Real Sociedad · Milano FC · 1. FSV Mainz 05 · Paris SG
+- **2027**: Newcastle Utd · Real Madrid · Juventus · Frankfurt · Stade Rennais FC
+- **2028**: Everton · Valencia CF · SSC Napoli · RB Leipzig · Stade Rennais FC
+- **2029**: Chelsea · Real Madrid · SSC Napoli · 1. FSV Mainz 05 · Toulouse FC
+- **2030**: Chelsea · Celta · Lombardia FC · Borussia Dortmu… · RC Lens
+- **2031**: Coventry City · FC Barcelona · Udinese · Borussia Dortmu… · Paris SG
+- **2032**: Arsenal · FC Barcelona · Juventus · Leverkusen · RC Lens
+- **2033**: Sunderland · Real Madrid · Lombardia FC · FC Augsburg · Paris FC
+- **2034**: Manchester City · Atlético de Mad… · Lombardia FC · Frankfurt · Stade Rennais FC
+- **2035**: Liverpool · Real Madrid · AS Roma · SC Freiburg · Stade Rennais FC
+
+## Super cups (champion vs cup winner; Spain & Italy a Final Four)
+
+- **2026**: ENG: Manchester City · ESP: FC Barcelona · ITA: Lombardia FC · GER: FC Bayern Münch… · FRA: OL
+- **2027**: ENG: Newcastle Utd · ESP: Real Madrid · ITA: Lombardia FC · GER: FC Bayern Münch… · FRA: Paris SG
+- **2028**: ENG: Chelsea · ESP: Real Madrid · ITA: Lombardia FC · GER: RB Leipzig · FRA: Paris SG
+- **2029**: ENG: Chelsea · ESP: Real Madrid · ITA: Juventus · GER: RB Leipzig · FRA: Paris SG
+- **2030**: ENG: Man Utd · ESP: FC Barcelona · ITA: Milano FC · GER: Leverkusen · FRA: Paris SG
+- **2031**: ENG: Man Utd · ESP: Real Betis · ITA: SSC Napoli · GER: FC Bayern Münch… · FRA: Paris SG
+- **2032**: ENG: Newcastle Utd · ESP: Real Madrid · ITA: Juventus · GER: Leverkusen · FRA: RC Lens
+- **2033**: ENG: Sunderland · ESP: FC Barcelona · ITA: SSC Napoli · GER: FC Augsburg · FRA: Paris SG
+- **2034**: ENG: Liverpool · ESP: Villarreal CF · ITA: Milano FC · GER: Frankfurt · FRA: Stade Rennais FC
+- **2035**: ENG: Spurs · ESP: Villarreal CF · ITA: Juventus · GER: FC Bayern Münch… · FRA: Paris SG
+
+
+## Trebles (league + domestic cup + Champions League)
+
+- None — no club swept all three in one season.
+
+## Notable transfers (per summer window)
+
+- **2027**: Moussa Martin -> FC Barcelona (96m, +9m agent) · Enzo Boyomo -> Athletic Club (74m, +7m agent) · Abdukodir Khusanov -> Chelsea (68m) · Andrey Santos -> Villarreal CF (65m) · Djed Spence -> Real Betis (62m, +6m agent) · Bukayo Saka -> Spurs (60m) · Joao Marc Navarro -> Real Sociedad (57m, +5m agent) · Gerard Martín -> Chelsea (56m) · Leny Mohamed Blanc (16, FWD) -> TSG Hoffenheim (loan) · Myles Lewis-Skelly (21, DEF) -> Athletic Club (loan) · Hugo Faure (16, DEF) -> CA Osasuna (loan) · Yuki Muller (21, pot 86) -> Celta (38m, prospect)
+- **2028**: Myles Lewis-Skelly -> Liverpool (62m) · Jack Hinshelwood -> Nott'm Forest (56m) · Marco Palestra -> Athletic Club (52m) · Diego Moreira -> Nott'm Forest (51m) · Aleksandar Stanković -> Athletic Club (50m) · Patrick Dorgu -> Athletic Club (48m) · Andy Diouf -> Athletic Club (46m) · Peio Canales -> Bergamo Calcio (43m) · Leny Mohamed Blanc (17, FWD) -> SL Benfica (loan) · Pau Diaz (17, GK) -> Newcastle Utd (loan) · Jonas Lukas Hoffmann (16, GK) -> Aston Villa (loan)
+- **2029**: Lucas Bergvall -> Real Betis (63m) · Veljko Milosavljević -> OL (54m) · Aleksandar Stanković -> Bergamo Calcio (51m) · Patrick Dorgu -> Bergamo Calcio (49m) · Jérémy Jacquet -> SSC Napoli (48m) · Nidal Čelik -> Celta (46m) · Leny Yoro -> Real Betis (45m) · Leny Bertrand -> Paris FC (45m, +3m agent) · Leny Mohamed Blanc (18, FWD) -> SL Benfica (loan) · Hugo Faure (18, DEF) -> Rayo Vallecano (loan) · Pau Diaz (18, GK) -> Aston Villa (loan)
+- **2030**: Archie Gray -> Bergamo Calcio (61m) · Mikey Moore -> Celta (56m) · Christos Tzolis -> SSC Napoli (52m) · Yoan Bonny -> OM (49m) · Cristhian Mosquera -> Manchester City (48m) · Pablo García -> Stade Rennais FC (48m) · Aladji Bamba -> VfB Stuttgart (46m) · Leny Yoro -> OM (46m) · Leny Mohamed Blanc (19, FWD) -> SL Benfica (loan) · Hugo Faure (19, DEF) -> Levante UD (loan) · Pau Diaz (19, GK) -> Aston Villa (loan)
+- **2031**: Ibrahim Mbaye -> Lombardia FC (73m) · Sven Lars Marino -> VfB Stuttgart (70m) · Bakary Conde -> FC Bayern München (66m, +6m agent) · Jesse Eugen Bisiwu -> Lombardia FC (64m) · Kwame Ortega -> Paris FC (61m, +5m agent) · Johan Manzambi -> LOSC Lille (56m) · Moussa Martin -> Lombardia FC (56m) · Senny Mayulu -> Lombardia FC (56m) · Leny Mohamed Blanc (20, FWD) -> AFC Ajax (loan) · Felix Schulz (17, FWD) -> SL Benfica (loan) · Pau Diaz (20, GK) -> Fulham (loan)
+- **2032**: Jorge Salinas -> Paris FC (83m, +7m agent) · Magnus Lund -> Lombardia FC (78m, +7m agent) · Lucas Durand -> Lombardia FC (76m, +7m agent) · Marko Kovacevic -> Paris FC (73m, +7m agent) · Pape Conde -> AS Monaco (59m) · Dro Fernández -> FC Barcelona (58m) · Alejandro Unai Ramos -> Chelsea (57m) · Kerim Alajbegović -> Celta (53m) · Leny Mohamed Blanc (21, FWD) -> SL Benfica (loan) · Habib Camara-Niang (18, GK) -> AFC Bournemouth (loan) · Pau Diaz (21, GK) -> Fulham (loan)
+- **2033**: Aguibou Drame -> FC Bayern München (219m, +20m agent) · Rafa Ruiz -> Liverpool (98m, +9m agent) · Rafael Santos -> Arsenal (89m, +8m agent) · Leny Mohamed Blanc sold by Arsenal to Manchester City (89m) · Niklas Becker -> Arsenal (89m, +8m agent) · Leo Haddad -> Liverpool (82m, +8m agent) · Enzo Petit-Leroy -> Real Madrid (79m, +7m agent) · Oumar Diakhate -> Lombardia FC (79m, +7m agent) · Jens Holm-Petersen (16, DEF) -> Aston Villa (loan) · Sonny Wright (20, FWD) -> Getafe CF (loan) · Marc Vega (18, MID) -> AFC Bournemouth (loan)
+- **2034**: Malik Schmidt-Moreno -> Arsenal (158m, +15m agent) · Gabriel Nil Ramos -> Liverpool (93m, +9m agent) · Ivan Tomic Jr. -> Leverkusen (86m, +8m agent) · Mathias William Nilsson -> Spurs (83m, +7m agent) · Micky Dekker -> Crystal Palace (79m) · Samuele Sala -> Real Sociedad (71m) · Arthur Lucas Petit -> Atlético de Madrid (69m, +6m agent) · Aaron Wood-Young -> Real Madrid (67m, +6m agent) · Jens Holm-Petersen (17, DEF) -> Spurs (loan) · Liam Girard-Mercier (18, DEF) -> Fulham (loan) · Kyle Hughes (18, DEF) -> Fulham (loan)
+- **2035**: Kacper Bakker -> Lombardia FC (252m, +23m agent) · Dinis Oliveira -> SSC Napoli (95m, +9m agent) · Aleksandar Ristic -> Atlético de Madrid (89m, +8m agent) · George Aaron Walker -> Aston Villa (86m) · Nicolo Costa-Pellegrino -> Milano FC (81m, +8m agent) · Mason Kimura -> Liverpool (79m) · Mathis Faure -> 1. FSV Mainz 05 (79m, +7m agent) · Cesare Esposito -> Liverpool (67m, +6m agent) · Joel Leo Navarro (16, GK) -> FC Augsburg (loan) · Teddy Gordon (18, MID) -> Brentford (loan) · Jens Holm-Petersen (18, DEF) -> AFC Bournemouth (loan)
+
+## Club finances (why each club can spend what it spends)
+
+| Club | Wealth | Revenue | Cash | Will. | Budget | Reg | HG | Loans | Streak | Spend factor |
+|------|-------:|--------:|-----:|:-----:|-------:|----:|---:|:-----:|-------:|-------------:|
+| FC Barcelona | 98 | 1354m | 530m | 0.78 | 310m | 19 | 10 | 0+0 | 0 | 1.00 |
+| FC Bayern München | 99 | 1354m | 528m | 0.77 | 319m | 25 | 10 | 0+0 | 1 | 1.00 |
+| Real Madrid | 98 | 1229m | 554m | 0.83 | 312m | 19 | 13 | 0+0 | 1 | 1.00 |
+| Lombardia FC | 95 | 1109m | 543m | 0.81 | 287m | 25 | 15 | 0+0 | 1 | 1.00 |
+| Paris SG | 92 | 1109m | 535m | 0.79 | 216m | 23 | 14 | 0+0 | 10 | 0.70 |
+| Arsenal | 95 | 1086m | 552m | 0.83 | 276m | 22 | 9 | 3+0 | 0 | 1.00 |
+| Atlético de Madrid | 93 | 1039m | 528m | 0.77 | 248m | 25 | 14 | 0+0 | 0 | 1.00 |
+| Manchester City | 93 | 1034m | 524m | 0.76 | 280m | 25 | 6 | 10+0 | 0 | 1.00 |
+| Chelsea | 93 | 1019m | 539m | 0.80 | 287m | 25 | 10 | 5+0 | 0 | 1.00 |
+| Liverpool | 94 | 1004m | 524m | 0.76 | 278m | 25 | 9 | 3+0 | 0 | 1.00 |
+| Juventus | 93 | 1004m | 541m | 0.80 | 263m | 25 | 9 | 7+0 | 0 | 1.00 |
+| Spurs | 90 | 959m | 520m | 0.75 | 187m | 25 | 10 | 4+0 | 1 | 1.00 |
+| Borussia Dortmund | 91 | 944m | 553m | 0.83 | 267m | 25 | 13 | 0+0 | 0 | 1.00 |
+| Man Utd | 92 | 939m | 510m | 0.73 | 234m | 25 | 17 | 1+0 | 0 | 1.00 |
+| Milano FC | 88 | 874m | 511m | 0.73 | 224m | 25 | 12 | 3+0 | 0 | 1.00 |
+| Leverkusen | 89 | 874m | 515m | 0.74 | 224m | 25 | 11 | 0+0 | 0 | 1.00 |
+
+## Money flows, last season (base | league merit | Europe | preseason net spend)
+
+| Club | Base | Merit | Europe | Net spend |
+|------|-----:|------:|-------:|----------:|
+| FC Barcelona | 1129m | 64m | 159m | -89m |
+| FC Bayern München | 1169m | 139m | 44m | -84m |
+| Real Madrid | 1089m | 139m | 0m | -220m |
+| Lombardia FC | 969m | 139m | 0m | +142m |
+| Paris SG | 969m | 139m | 0m | +0m |
+| Arsenal | 969m | 94m | 21m | +8m |
+| Atlético de Madrid | 849m | 114m | 74m | +48m |
+| Manchester City | 969m | 64m | 0m | +27m |
+| Chelsea | 969m | 49m | 0m | -103m |
+| Liverpool | 969m | 34m | 0m | +185m |
+| Juventus | 889m | 114m | 0m | -32m |
+| Spurs | 709m | 139m | 109m | +174m |
+
+## Most league titles
+
+- Paris SG — 10 titles (2 UCL, 0 EL)
+- Lombardia FC — 6 titles (0 UCL, 0 EL)
+- FC Bayern München — 6 titles (2 UCL, 0 EL)
+- FC Barcelona — 5 titles (2 UCL, 0 EL)
+- Real Madrid — 3 titles (0 UCL, 0 EL)
+- Liverpool — 2 titles (0 UCL, 0 EL)
+- Man Utd — 2 titles (0 UCL, 2 EL)
+- Atlético de Madrid — 2 titles (0 UCL, 0 EL)
+- Juventus — 2 titles (0 UCL, 0 EL)
+- RB Leipzig — 2 titles (0 UCL, 0 EL)
+## Most Champions Leagues
+
+- FC Barcelona — 2
+- FC Bayern München — 2
+- Paris SG — 2
+- Chelsea — 1
+- Leverkusen — 1
+- FC Porto — 1
+- PSV Eindhoven — 1
+
+## Multiple Ballon d'Or winners
+
+- Lamine Yamal — 2 (Spain)
+
+## Managerial records (career trophies travel with the manager)
+
+- Lasse Nuno Cruz (Paris SG): 21 trophies in 10 seasons
+- Unai Kovac (RB Leipzig): 5 trophies in 10 seasons
+- Finn Keita (Lombardia FC): 5 trophies in 5 seasons
+- Ryo Timo Greco (Juventus): 4 trophies in 4 seasons
+- Gabriel Bakker (Spurs): 3 trophies in 10 seasons
+- Andre Herrera (RC Lens): 3 trophies in 10 seasons
+- Mario Markovic (Real Madrid): 3 trophies in 3 seasons
+- Filip Amir Becker (Sunderland): 2 trophies in 10 seasons
+
+## Managerial merry-go-round (latest season moves)
+
+- **2035**: VfB Stuttgart sacks Mateo Tiago Vega and appoints Dejan Kang (0 trophies)
+- **2035**: Brighton sacks Diego Kovac after a dismal campaign
+- **2035**: Newcastle Utd sacks Sacha Ricci after a dismal campaign
+- **2035**: Liverpool sacks Sven Nowak-Afolabi after a dismal campaign
+- **2035**: Manchester City sack Amir Alex Jovanovic for missing the title race (finished 5)
+- **2035**: Chelsea sack Andrea Almeida for missing the title race (finished 6)
+- **2035**: Milano FC sack Ryo Bruno for missing the title race (finished 5)
+- **2035**: Leverkusen sack Rafael Muller for missing the title race (finished 2)
+- **2035**: Nott'm Forest part ways with Elias Park Jr.
+- **2035**: Athletic Club part ways with Youssef Moreau
+- **2035**: Real Sociedad part ways with Mateo Lefevre
+- **2035**: Rayo Vallecano part ways with Sota Novak
+
+## Decade legends (career over the simulated era)
+
+### Biggest mark (career G + 0.8×A + 40×BdOr)
+
+| # | Player | Pos | Club | G / A / BdOr |
+|--:|--------|:--:|------|--:|
+| 1 | Lamine Yamal | SS | FC Barcelona | 211 / 126 / 2 |
+| 2 | Julián Alvarez | F9 | Atlético de Madrid | 263 / 78 / 0 |
+| 3 | Yan Diomande | SS | Real Madrid | 241 / 99 / 0 |
+| 4 | Jude Bellingham | F9 | Real Madrid | 226 / 93 / 0 |
+| 5 | Rio Ngumoha | ST | Liverpool | 219 / 47 / 1 |
+| 6 | Jamal Musiala | F9 | FC Bayern München | 219 / 93 / 0 |
+| 7 | Lennart Karl | ST | FC Bayern München | 228 / 69 / 0 |
+| 8 | Désiré Doué | ST | Paris SG | 217 / 76 / 0 |
+| 9 | Kylian Mbappé | ST | Real Madrid | 175 / 61 / 1 |
+| 10 | Michael Olise | F9 | FC Bayern München | 193 / 88 / 0 |
+
+### Career goals (all competitions + country)
+
+| # | Player | Pos | Club | G / Intl G |
+|--:|--------|:--:|------|--:|
+| 1 | Julián Alvarez | F9 | Atlético de Madrid | 263 / 40 |
+| 2 | Yan Diomande | SS | Real Madrid | 241 / 26 |
+| 3 | Lennart Karl | ST | FC Bayern München | 228 / 31 |
+| 4 | Jude Bellingham | F9 | Real Madrid | 226 / 30 |
+| 5 | Rio Ngumoha | ST | Liverpool | 219 / 26 |
+| 6 | Jamal Musiala | F9 | FC Bayern München | 219 / 5 |
+| 7 | Désiré Doué | ST | Paris SG | 217 / 6 |
+| 8 | Cole Palmer | F9 | Chelsea | 214 / 21 |
+| 9 | Lamine Yamal | SS | FC Barcelona | 211 / 33 |
+| 10 | Benjamin Šeško | TM | Man Utd | 210 / 0 |
+
+### Career international record
+
+| # | Player | Pos | Club | Intl G / A / Apps |
+|--:|--------|:--:|------|--:|
+| 1 | Julián Alvarez | F9 | Atlético de Madrid | 40 / 5 / 105 |
+| 2 | Lamine Yamal | SS | FC Barcelona | 33 / 22 / 117 |
+| 3 | Michael Olise | F9 | FC Bayern München | 31 / 16 / 103 |
+| 4 | Chemsdine Talbi | SS | Sunderland | 34 / 8 / 108 |
+| 5 | Lennart Karl | ST | FC Bayern München | 31 / 10 / 93 |
+| 6 | Bilal El Khannouss | F9 | AFC Bournemouth | 31 / 9 / 108 |
+| 7 | Leny Mohamed Blanc | TM | Manchester City | 32 / 4 / 95 |
+| 8 | Christoph Baumgartner | F9 | RB Leipzig | 27 / 15 / 100 |
+| 9 | Jude Bellingham | F9 | Real Madrid | 30 / 7 / 107 |
+| 10 | Martin Baturina | F9 | Fiorentina | 29 / 9 / 100 |
+
+### Career assists
+
+| # | Player | Pos | Club | A |
+|--:|--------|:--:|------|--:|
+| 1 | João Neves | DLP | Paris SG | 165 |
+| 2 | Warren Zaïre-Emery | CM | Paris SG | 165 |
+| 3 | Enzo Fernández | DLP | Chelsea | 160 |
+| 4 | Elliot Anderson | DLP | Manchester City | 155 |
+| 5 | Aleksandar Pavlović | DLP | FC Bayern München | 151 |
+| 6 | Dro Fernández | DLP | FC Barcelona | 150 |
+| 7 | Valentín Barco | AP | Chelsea | 143 |
+| 8 | Ayyoub Bouaddi | DLP | LOSC Lille | 142 |
+| 9 | Alassane Cheick Doumb… | AP | Atlético de Madrid | 142 |
+| 10 | Nico González | DLP | Manchester City | 137 |
+
+### Career big chances created
+
+| # | Player | Pos | Club | BCC |
+|--:|--------|:--:|------|--:|
+| 1 | Elliot Anderson | DLP | Manchester City | 198 |
+| 2 | João Neves | DLP | Paris SG | 198 |
+| 3 | Enzo Fernández | DLP | Chelsea | 193 |
+| 4 | Warren Zaïre-Emery | CM | Paris SG | 180 |
+| 5 | Alassane Cheick Doumb… | AP | Atlético de Madrid | 172 |
+| 6 | Lamine Yamal | SS | FC Barcelona | 164 |
+| 7 | Angelo Stiller | DLP | Rayo Vallecano | 163 |
+| 8 | Ayyoub Bouaddi | DLP | LOSC Lille | 163 |
+| 9 | Nathan De Cat | DLP | TSG Hoffenheim | 162 |
+| 10 | Valentín Barco | AP | Chelsea | 159 |
+
+### Career key passes
+
+| # | Player | Pos | Club | KP |
+|--:|--------|:--:|------|--:|
+| 1 | Elliot Anderson | DLP | Manchester City | 1202 |
+| 2 | Enzo Fernández | DLP | Chelsea | 1159 |
+| 3 | João Neves | DLP | Paris SG | 1154 |
+| 4 | Ayyoub Bouaddi | DLP | LOSC Lille | 1116 |
+| 5 | Warren Zaïre-Emery | CM | Paris SG | 1073 |
+| 6 | Ryan Gravenberch | DLP | Liverpool | 1041 |
+| 7 | Dro Fernández | DLP | FC Barcelona | 1037 |
+| 8 | Marc Bernal | AP | FC Barcelona | 1007 |
+| 9 | Valentín Barco | AP | Chelsea | 1003 |
+| 10 | Aleksandar Pavlović | DLP | FC Bayern München | 999 |
+
+### Career tackles + interceptions
+
+| # | Player | Pos | Club | T+I (apps, per game) |
+|--:|--------|:--:|------|--:|
+| 1 | Pau Cubarsí | CB | FC Barcelona | 3126 in 617 (5.1/g) |
+| 2 | Nico O'Reilly | CB | Manchester City | 2603 in 594 (4.4/g) |
+| 3 | Jaydee Canvot | CB | Crystal Palace | 2384 in 448 (5.3/g) |
+| 4 | António Silva | CB | AFC Bournemouth | 2343 in 468 (5.0/g) |
+| 5 | Jon Martín | CB | Real Sociedad | 2297 in 534 (4.3/g) |
+| 6 | Kaishū Sano | DM | 1. FSV Mainz 05 | 2296 in 508 (4.5/g) |
+| 7 | Okay Aydin | CB | Villarreal CF | 2221 in 368 (6.0/g) |
+| 8 | Joško Gvardiol | CB | Manchester City | 2219 in 592 (3.7/g) |
+| 9 | Marco Palestra | FB | Athletic Club | 2207 in 495 (4.5/g) |
+| 10 | Ryan Gravenberch | DLP | Liverpool | 2157 in 571 (3.8/g) |
+
+### Best centre-backs (career: clean sheets + rating + duels)
+
+| # | Player | Pos | Club | CS / avg / T+I·g / role |
+|--:|--------|:--:|------|--:|
+| 1 | Pau Cubarsí | CB | FC Barcelona | 248 CS, 6.82, 5.1/g, CB |
+| 2 | Nuno Mendes | BPD | Paris SG | 258 CS, 6.65, 3.3/g, BPD |
+| 3 | Dean Huijsen | CB | Real Madrid | 233 CS, 6.59, 3.5/g, CB |
+| 4 | Nico O'Reilly | CB | Manchester City | 214 CS, 6.73, 4.4/g, CB |
+| 5 | Ibrahima Konaté | CB | Real Madrid | 226 CS, 6.52, 3.0/g, CB |
+| 6 | Joško Gvardiol | CB | Manchester City | 211 CS, 6.63, 3.7/g, CB |
+| 7 | Willian Pacho | CB | Paris SG | 198 CS, 6.58, 3.3/g, CB |
+| 8 | Marc Guéhi | CB | Manchester City | 193 CS, 6.48, 3.1/g, CB |
+| 9 | Éder Militão | CB | Real Madrid | 192 CS, 6.53, 3.0/g, CB |
+| 10 | William Saliba | CB | Arsenal | 184 CS, 6.65, 3.9/g, CB |
+
+### Best full-backs & wing-backs (career: solidity + end product)
+
+| # | Player | Pos | Club | CS / avg / A+KP / role |
+|--:|--------|:--:|------|--:|
+| 1 | Marco Palestra | FB | Athletic Club | 164 CS, 6.65, 32A 292KP, FB |
+| 2 | Jorrel Hato | FB | Chelsea | 163 CS, 6.52, 29A 267KP, FB |
+| 3 | Michael Kayode | FB | Brentford | 139 CS, 6.60, 18A 247KP, FB |
+| 4 | Joel Ruiz | FB | Man Utd | 143 CS, 6.51, 26A 213KP, FB |
+| 5 | Mats Rots | FB | TSG Hoffenheim | 139 CS, 6.55, 24A 227KP, FB |
+| 6 | Lucas Leroy | FB | Chelsea | 133 CS, 6.58, 34A 229KP, FB |
+| 7 | Álex Jiménez | FB | Fiorentina | 126 CS, 6.61, 32A 247KP, FB |
+| 8 | Cheikhou Faye Jr. | FB | Lombardia FC | 132 CS, 6.44, 14A 102KP, FB |
+| 9 | Tomoki Abubakar | FB | Spurs | 121 CS, 6.57, 38A 216KP, FB |
+| 10 | Omar El Hilali | FB | RCD Espanyol | 122 CS, 6.45, 15A 208KP, FB |
+
+### Career average rating (≥100 apps)
+
+| # | Player | Pos | Club | Avg |
+|--:|--------|:--:|------|--:|
+| 1 | Arda Novak | AP | Paris SG | 7.16 |
+| 2 | Rafael Santos | AP | Arsenal | 7.10 |
+| 3 | Goran Stankovic | AP | Atlético de Madrid | 7.05 |
+| 4 | Juninho Araujo | AP | Liverpool | 7.00 |
+| 5 | Oumar Diakhate | W | Spurs | 6.99 |
+| 6 | Ivan Romero | AP | SSC Napoli | 6.98 |
+| 7 | Toni Djordje Markovic | W | Real Madrid | 6.97 |
+| 8 | Magnus Lund | AP | Juventus | 6.95 |
+| 9 | Timo Lehmann | DLP | Lombardia FC | 6.93 |
+| 10 | Federico Valverde | DLP | Real Madrid | 6.91 |
+
+## Why the era unfolded this way
+
+- **Paris SG** dominated with 10 league titles — the era's deepest resources (reputation ~100) let it keep reloading its squad through the market and regenerate through decline.
+- **Premier League** was wide open — 8 different champions across the era.
+- **La Liga** was top-heavy but contested — 3 different champions across the era.
+- **Serie A** was top-heavy but contested — 4 different champions across the era.
+- **Paris SG** ruled Europe with 2 Champions Leagues; continental success then fed its revenue and reputation, compounding the gap.
+- **Spain** produced the most Ballon d'Or winners (3) — a golden generation.
+
+## Detected realism glitches
+
+- Ligue 1 had a 10-season title run by Paris SG (competition warning).
+
+  (Full report saved to season_10yr.md)
+
+  Press Enter to continue...
+[2J[H╔══════════════════════════════════════════════════════════════╗
+║          ⚽  FOOTBALL MANAGER CLI  🏆                       ║
+╚══════════════════════════════════════════════════════════════╝
+  MAIN MENU
+  ───────────────────────────────────────────────────────────
+
+  1.  New Game
+  2.  Load Game
+  3.  Simulate Season(s) — 1 season or up to 100 years (dynasty)
+  4.  Train AI — evolve parameters against real-world targets
+  5.  Observe / Spectate — watch matches live, browse a league
+  6.  Quit
+
+  Choose: 
+  Thanks for playing Football Manager CLI! ⚽
+

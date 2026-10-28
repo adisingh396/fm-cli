@@ -51,19 +51,9 @@ pub fn role_suitability(role: Role, pos: Position) -> f32 {
             Position::FWD,
         ) => 1.0,
         // Competent cross-line picks.
+        (Role::Winger | Role::InsideForward, Position::FWD) => 0.9,
         (
-            Role::Winger | Role::InsideForward | Role::ShadowStriker | Role::FalseNine,
-            Position::FWD,
-        ) => 0.9,
-        (
-            Role::BoxToBox
-            | Role::AdvancedPlaymaker
-            | Role::TargetMan
-            | Role::Poacher
-            | Role::FullBack
-            | Role::WingBack
-            | Role::Anchor
-            | Role::DeepLyingPlaymaker,
+            Role::TargetMan | Role::Poacher | Role::FullBack | Role::WingBack,
             Position::MID,
         ) => 0.9,
         (Role::CentralDefender | Role::BallPlayingDefender, Position::MID) => 0.85,
@@ -170,7 +160,23 @@ pub fn line_of(pos: Position) -> usize {
 pub fn best_role_for(a: &Attributes, pos: Position, line: usize) -> (Role, f32) {
     let mut best = (roles_for_line(line)[0], 0.0f32);
     for &role in roles_for_line(line) {
-        let fit = role_fit(a, role, pos);
+        let mut fit = role_fit(a, role, pos);
+        if pos == Position::DEF && line == 1 {
+            // A full-back is not merely a shorter centre-back. Pace, stamina
+            // and carrying/crossing ability identify the wide defender profile;
+            // heading and strength identify the central profile. This keeps a
+            // real LB such as Nuno Mendes out of the centre-back leaderboard.
+            let wide_signal = (a.pace as f32 + a.stamina as f32 + a.dribbling as f32
+                - a.heading as f32 - a.strength as f32)
+                / 35.0;
+            match role {
+                Role::FullBack | Role::WingBack => fit += wide_signal.max(0.0),
+                Role::CentralDefender | Role::BallPlayingDefender => {
+                    fit -= wide_signal.max(0.0) * 0.35
+                }
+                _ => {}
+            }
+        }
         if fit > best.1 {
             best = (role, fit);
         }
