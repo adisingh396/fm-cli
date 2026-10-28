@@ -972,12 +972,14 @@ fn matchday_squad(
         // young high-potential players get a small development opening.
         let headroom = pool[s].pot.saturating_sub(pool[s].ovr).min(10) as f32;
         let youth_opening = if pool[s].age <= 21 { headroom * 0.012 } else { 0.0 };
-        let p_rest = if pool[s].fatigue > 60 {
-            ((rot + 0.45) * comp_factor + youth_opening).min(0.95)
-        } else if pool[s].fatigue > 35 {
-            ((rot * 0.55) * comp_factor + youth_opening).min(0.75)
+        // Key starters (especially elite forwards/playmakers) play through mild fatigue
+        let star_durability = if pool[s].ovr >= 85 { 0.20 } else if pool[s].ovr >= 80 { 0.10 } else { 0.0 };
+        let p_rest = if pool[s].fatigue > 65 {
+            ((rot + 0.40) * comp_factor + youth_opening - star_durability * 0.5).clamp(0.05, 0.95)
+        } else if pool[s].fatigue > 42 {
+            ((rot * 0.45) * comp_factor + youth_opening - star_durability).clamp(0.0, 0.65)
         } else {
-            (rot * 0.30 * comp_factor + youth_opening).min(0.55)
+            (rot * 0.18 * comp_factor + youth_opening - star_durability).clamp(0.0, 0.35)
         };
         if rng.gen::<f32>() < p_rest {
             // Best same-line alternative by selection score.
@@ -2673,35 +2675,35 @@ fn ballon_breakdown(_w: &WP, _club_rep: u8, _year: u16) -> (f32, Vec<(&'static s
         );
     }
 
-    let production = w.overall_goals() as f32 * 4.0 + w.overall_assists() as f32 * 3.0;
+    let production = w.overall_goals() as f32 * 5.5 + w.overall_assists() as f32 * 3.5;
     parts.push((
         "Goals & assists",
         format!("{}g {}a (all tracked competitions)", w.overall_goals(), w.overall_assists()),
         production,
     ));
-    let rating = (w.avg_rating() - 6.5).max(0.0) * 70.0;
+    let rating = (w.avg_rating() - 6.5).max(0.0) * 75.0;
     parts.push((
         "Average rating",
         format!("{:.2} above 6.5 baseline", (w.avg_rating() - 6.5).max(0.0)),
         rating,
     ));
-    let availability = (total_apps as f32).sqrt() * 3.0;
+    let availability = (total_apps as f32).sqrt() * 2.5;
     parts.push(("Availability", format!("{} appearances", total_apps), availability));
 
-    let creation = w.big_chances as f32 * 0.8
-        + w.key_passes as f32 * 0.10
-        + w.passes_cmp as f32 * 0.002
-        + w.dribbles_cmp as f32 * 0.04;
+    let creation = w.big_chances as f32 * 0.7
+        + w.key_passes as f32 * 0.08
+        + w.passes_cmp as f32 * 0.001
+        + w.dribbles_cmp as f32 * 0.05;
     parts.push((
         "Build-up & creation",
         format!("{} passes, {} dribbles, {} key passes", w.passes_cmp, w.dribbles_cmp, w.key_passes),
         creation,
     ));
 
-    let ball_winning = (w.tackles + w.interceptions) as f32 * 0.08;
+    let ball_winning = (w.tackles + w.interceptions) as f32 * 0.04;
     parts.push((
         "Ball-winning",
-        format!("{} tackles+int × 0.08", w.tackles + w.interceptions),
+        format!("{} tackles+int × 0.04", w.tackles + w.interceptions),
         ball_winning,
     ));
     let is_def = matches!(w.pos, Position::DEF | Position::GK);

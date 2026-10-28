@@ -424,14 +424,18 @@ impl Rt {
         (0..self.p.len())
             .filter(|&i| !self.out[i] && self.shoot_tend[i] > 0.0)
             .map(|i| {
-                let hot = 1.0 + 0.2 * (self.st[i].goals.min(2) as f32);
+                let hot = 1.0 + 0.20 * (self.st[i].goals.min(2) as f32);
                 let attention =
-                    1.0 / (1.0 + 0.42 * (self.st[i].shots.min(10) as f32 - 3.0).max(0.0));
+                    1.0 / (1.0 + 0.32 * (self.st[i].shots.min(10) as f32 - 3.0).max(0.0));
                 let shadowed = if Some(i) == marked { 0.92 } else { 1.0 };
+                // Modest non-linear finishing curve: elite finishers take more shots
+                // than midfield/defensive teammates without pathological runaway volume.
+                let fin = self.eff(i, &self.finish).max(1.0);
+                let fin_weight = (fin / 60.0).powf(1.30);
                 (
                     i,
-                    self.eff(i, &self.finish).max(1.0)
-                        * self.pos_w(i, 1.25, 0.95, 0.25, 0.0)
+                    fin_weight
+                        * self.pos_w(i, 1.35, 0.90, 0.20, 0.0)
                         * self.shoot_tend[i]
                         * hot
                         * attention
@@ -626,9 +630,11 @@ fn make_subs(rt: &mut Rt, minute: u8, rng: &mut impl Rng) {
                 // nobody hooks a fresh starter in the 60th minute.
                 let mins = (minute.saturating_sub(rt.on_at[i])) as f32 / 90.0;
                 let load = rt.p[i].start_fatigue + rt.fat[i] + 0.35 * mins.min(1.0);
-                (load + rng.gen::<f32>() * 0.05, i)
+                // World-class talismans have higher durability/game time expectation
+                let talisman_resist = if rt.eff(i, &rt.finish) >= 82.0 || rt.eff(i, &rt.creation) >= 84.0 { 0.08 } else { 0.0 };
+                (load - talisman_resist + rng.gen::<f32>() * 0.05, i)
             })
-            .filter(|&(load, _)| load > 0.55)
+            .filter(|&(load, _)| load > 0.57)
             .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(_, i)| i);
         let Some(old) = outgoing else { break };
