@@ -41,6 +41,9 @@ pub struct MatchPlayer {
 /// One side's team sheet plus the two manager dials the engine actually uses.
 pub struct Side<'a> {
     pub players: &'a [MatchPlayer],
+    /// Named substitutes. The engine brings them on itself when a starter is
+    /// gassed; the caller only supplies them. Empty means no bench.
+    pub bench: &'a [MatchPlayer],
     /// Manager ambition 0.6 (pragmatic) .. 1.5 (gung-ho): sets the resting
     /// mentality and how hard they chase a deficit.
     pub ambition: f32,
@@ -218,6 +221,12 @@ struct Rt {
     /// This side's designated stopper (set pre-match): shadows the
     /// opponent's danger man. Shadowing only works if he's good enough.
     marker: Option<usize>,
+    /// Index of the first bench player in every parallel vector.
+    bench_from: usize,
+    /// Minute each player entered the pitch (0 for starters).
+    on_at: Vec<u8>,
+    /// Substitutions used this match (limit 5).
+    subs_used: u8,
 }
 
 /// How much a role actually competes for the ball. The anchor and the
@@ -264,7 +273,8 @@ fn shoot_tendency(role: Role) -> f32 {
 
 impl Rt {
     fn new(side: &Side, side_a: bool) -> Rt {
-        let n = side.players.len();
+        let starters = side.players.len();
+        let n = starters + side.bench.len();
         let mut rt = Rt {
             p: side.players.to_vec(),
             st: Vec::with_capacity(n),
@@ -286,8 +296,13 @@ impl Rt {
             sp_goals: 0,
             danger: None,
             marker: None,
+            bench_from: starters,
+            on_at: vec![0; n],
+            subs_used: 0,
         };
-        for mp in side.players {
+        rt.out[starters..].fill(true);
+        rt.p.extend_from_slice(side.bench);
+        for mp in side.players.iter().chain(side.bench.iter()) {
             let a = &mp.attrs;
             rt.st.push(MatchStats {
                 id: mp.id,
@@ -587,12 +602,75 @@ fn play_minute(
     }
 }
 
+/// Manager's in-match changes: up to two per checkpoint, five per match.
+/// The only inputs are the players' own numbers — how much running they have
+/// already done, and how good the man waiting is. A fresh XI makes almost no
+/// substitutions; a tired one rotates, which is where appearance counts and
+/// minutes finally spread across a squad instead of every starter playing 90.
+fn make_subs(rt: &mut Rt, minute: u8, rng: &mut impl Rng) {
+    const MAX_SUBS: u8 = 5;
+    const MAX_PER_CHECKPOINT: u8 = 2;
+    if rt.bench_from >= rt.p.len() {
+        return;
+    }
+    let mut made = 0u8;
+    while made < MAX_PER_CHECKPOINT && rt.subs_used < MAX_SUBS {
+        // Who comes off: the most gassed outfield starter, with a little
+        // jitter so two similar players are not always the same man.
+        let outgoing = (0..rt.bench_from)
+            .filter(|&i| !rt.out[i] && !rt.is_gk(i))
+            .map(|i| {
+                // Load is what a manager actually reads: how tired he arrived,
+                // what this match has taken out of him, and how long he has
+                // been out there. The clock term is the planned-change part —
+                // nobody hooks a fresh starter in the 60th minute.
+                let mins = (minute.saturating_sub(rt.on_at[i])) as f32 / 90.0;
+                let load = rt.p[i].start_fatigue + rt.fat[i] + 0.35 * mins.min(1.0);
+                (load + rng.gen::<f32>() * 0.05, i)
+            })
+            .filter(|&(load, _)| load > 0.55)
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(_, i)| i);
+        let Some(old) = outgoing else { break };
+        // Who comes on: an unused bench player in the same line first, then
+        // any unused outfield substitute. Keepers only replace keepers.
+        let old_line = rt.p[old].pos;
+        fn pick(rt: &Rt, same_line: bool, old_line: Position) -> Option<usize> {
+            // Bench players are `out` (not on the pitch) until they come on, so
+            // the only test is that they have not already played.
+            (rt.bench_from..rt.p.len())
+                .filter(|&i| rt.st[i].minutes == 0)
+                .filter(|&i| {
+                    if same_line {
+                        rt.p[i].pos == old_line
+                    } else {
+                        !rt.is_gk(i)
+                    }
+                })
+                .max_by(|&a, &b| {
+                    rt.eff(a, &rt.passing)
+                        .partial_cmp(&rt.eff(b, &rt.passing))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        }
+        let new = pick(rt, true, old_line).or_else(|| pick(rt, false, old_line));
+        let Some(new) = new else { break };
+        rt.out[old] = true;
+        rt.st[old].minutes = minute;
+        rt.out[new] = false;
+        rt.on_at[new] = minute;
+        rt.subs_used += 1;
+        made += 1;
+    }
+}
+
 fn set_match_minutes(rt: &mut Rt, duration: u8) {
     for (i, s) in rt.st.iter_mut().enumerate() {
+        // A player who finished the match on the pitch gets the clock from the
+        // moment he came on; a substitute who came off keeps the minute he
+        // left; an unused substitute keeps zero and is not an appearance.
         if !rt.out[i] {
-            s.minutes = duration;
-        } else if s.minutes == 0 {
-            s.minutes = duration.min(1);
+            s.minutes = duration.saturating_sub(rt.on_at[i]);
         }
     }
 }
@@ -647,6 +725,10 @@ fn simulate_with_rules(
     let mut events: Vec<Event> = Vec::new();
 
     for minute in 1..=regulation_end {
+        if matches!(minute, 46 | 58 | 68 | 76 | 84) {
+            make_subs(&mut ra, minute, rng);
+            make_subs(&mut rb, minute, rng);
+        }
         play_minute(
             &mut ra,
             &mut rb,
@@ -669,6 +751,10 @@ fn simulate_with_rules(
         went_extra_time = true;
         let extra_end = regulation_end + 30 + rng.gen_range(2..=5);
         for minute in (regulation_end + 1)..=extra_end {
+            if minute == regulation_end + 1 || minute == regulation_end + 15 {
+                make_subs(&mut ra, minute, rng);
+                make_subs(&mut rb, minute, rng);
+            }
             play_minute(
                 &mut ra,
                 &mut rb,
@@ -693,8 +779,12 @@ fn simulate_with_rules(
     finalize_ratings(&mut rb, ra.goals);
 
     let poss = ((poss_a as f32 / total_actions.max(1) as f32) * 100.0).round() as u8;
-    let mut stats = ra.st;
-    stats.extend(rb.st);
+    let mut stats: Vec<MatchStats> = ra
+        .st
+        .into_iter()
+        .chain(rb.st)
+        .filter(|s| s.minutes > 0)
+        .collect();
 
     MatchOutcome {
         goals_a: ra.goals,
@@ -1281,6 +1371,9 @@ fn resolve_turnover(
 fn finalize_ratings(rt: &mut Rt, conceded: u8) {
     let clean = conceded == 0;
     for i in 0..rt.p.len() {
+        if rt.st[i].minutes == 0 {
+            continue; // never came on
+        }
         let s = &mut rt.st[i];
         let is_def = matches!(rt.p[i].pos, Position::DEF | Position::GK);
         let is_gk = rt.p[i].pos == Position::GK;
@@ -1366,6 +1459,7 @@ mod tests {
     fn side(players: &[MatchPlayer]) -> Side {
         Side {
             players,
+            bench: &[],
             ambition: 1.0,
             quality: 1.0,
             threat: 1.0,
@@ -1911,5 +2005,44 @@ mod tests {
         let max = ti.values().copied().max().unwrap_or(0);
         assert!(max < 320, "top ball-winner {} tackles+interceptions over 38 games is inflated", max);
         assert!(max > 15, "defensive actions vanished ({} max)", max);
+    }
+
+    #[test]
+    fn bench_players_get_real_minutes() {
+        let mut rng = Pcg64Mcg::new(2024);
+        let (mut used, mut max_minutes_seen) = (0u32, 0u8);
+        // Five substitutes each, one per line plus a spare forward.
+        let bench_a: Vec<MatchPlayer> = vec![
+            mp(40, Position::GK, Role::Goalkeeper, 65),
+            mp(41, Position::DEF, Role::CentralDefender, 65),
+            mp(42, Position::MID, Role::BoxToBox, 65),
+            mp(43, Position::FWD, Role::Poacher, 65),
+            mp(44, Position::MID, Role::Winger, 65),
+        ];
+        let bench_b: Vec<MatchPlayer> = bench_a.iter().map(|p| mp(p.id + 10, p.pos, p.role, 65)).collect();
+        for _ in 0..40 {
+            let mut a = team(0, 65);
+            let mut b = team(100, 65);
+            // Gassed starters force the manager's hand, as a real fixture pile-up does.
+            for p in a.iter_mut().chain(b.iter_mut()) {
+                p.start_fatigue = 0.4;
+            }
+            let sa = Side { players: &a, bench: &bench_a, ambition: 1.0, quality: 1.0, threat: 1.0 };
+            let sb = Side { players: &b, bench: &bench_b, ambition: 1.0, quality: 1.0, threat: 1.0 };
+            let o = simulate(&sa, &sb, Venue::HomeA, (0, 0), &mut rng);
+            let subs_a = o.stats.iter().filter(|s| (40..45).contains(&s.id) && s.minutes > 0).count();
+            let subs_b = o.stats.iter().filter(|s| (50..55).contains(&s.id) && s.minutes > 0).count();
+            assert!(subs_a <= 5 && subs_b <= 5, "more than five substitutes used");
+            assert!(o.stats.len() <= 2 * (11 + bench_a.len()));
+            for s in &o.stats {
+                assert!(s.minutes > 0);
+                max_minutes_seen = max_minutes_seen.max(s.minutes);
+            }
+            if subs_a + subs_b > 0 {
+                used += 1;
+            }
+        }
+        assert!(used > 0, "no substitute ever came on in 40 matches");
+        assert!(max_minutes_seen <= 120, "minutes exceed a match clock: {max_minutes_seen}");
     }
 }

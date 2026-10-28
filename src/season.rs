@@ -141,6 +141,9 @@ struct WP {
     retired: bool,
     morale: u8,  // 0-100, drifts to 65; results move it
     fatigue: u8, // 0-100, +22 per match involved, rests midweek
+    /// Days still to serve of an injury picked up in a match. While > 0 the
+    /// player is not selectable and cannot recover fatigue. Reset by 7 each week.
+    injury_days: u16,
     /// Seasons since a positional retraining; 0 = fully adapted. While > 0 the
     /// player plays slightly below their attributes in the new position.
     adapt: u8,
@@ -811,7 +814,8 @@ fn select_xi(
         let mut cands: Vec<(f32, usize)> = idxs
             .iter()
             .copied()
-            .filter(|&i| !pool[i].retired)
+            // An injured player is not selectable at all — no XI place to earn.
+            .filter(|&i| !pool[i].retired && pool[i].injury_days == 0)
             .map(|i| {
                 let eff = pool[i].effective();
                 // Prefer naturals for the line, but allow anyone at suitability cost.
@@ -825,7 +829,11 @@ fn select_xi(
                 } else {
                     1.0
                 };
-                (eff * line_bonus * youth_push, i)
+                // Selection leans on freshness a little harder than the rating
+                // does, so a gassed starter genuinely loses his place to a
+                // rested understudy instead of starting on reputation.
+                let freshness = 1.0 - pool[i].fatigue as f32 * 0.0015;
+                (eff * freshness * line_bonus * youth_push, i)
             })
             .collect();
         cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -843,7 +851,7 @@ fn select_xi(
         let mut rest: Vec<(f32, usize)> = idxs
             .iter()
             .copied()
-            .filter(|&i| !pool[i].retired && !used[i])
+            .filter(|&i| !pool[i].retired && pool[i].injury_days == 0 && !used[i])
             .map(|i| (pool[i].effective(), i))
             .collect();
         rest.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -935,7 +943,9 @@ fn matchday_squad(
     let mut bench: Vec<usize> = idxs
         .iter()
         .copied()
-        .filter(|&i| !pool[i].retired && !in_xi(i))
+        // Nobody injured is named among the substitutes: an unused sub cannot
+        // be healed by sitting on the bench he should not be on.
+        .filter(|&i| !pool[i].retired && pool[i].injury_days == 0 && !in_xi(i))
         .collect();
     bench.sort_by(|&a, &b| pool[b].ovr.cmp(&pool[a].ovr));
     let score = |i: usize| -> f32 {
@@ -1003,37 +1013,46 @@ fn matchday_squad(
     squad
 }
 
+/// Map one squad member into the engine's view of him, carried with his live
+/// fatigue, morale and adaptation so the pitch reflects the season, not a
+/// snapshot. Shared by the XI and the bench so both arrive equally "real".
+fn match_player(i: usize, role: Role, pool: &[WP]) -> MatchPlayer {
+    let m = 1.0 + (pool[i].morale as f32 - 65.0) * 0.002;
+    let a = 1.0 - pool[i].adapt as f32 * 0.05;
+    // Marked-man regression: a prolific scorer draws the whole league's
+    // attention as the season wears on — double-marked, man-marked,
+    // never given a yard — and legs tire from carrying the goal load.
+    // Past ~24 goals each further one is harder, docking his form (so
+    // finishing and everything else dip), which caps freak 60-goal
+    // seasons at a realistic ceiling while leaving normal 25-35 goal
+    // campaigns essentially untouched.
+    let sg = pool[i].overall_goals();
+    let marked = if sg > 22 {
+        (1.0 - 0.015 * (sg - 22) as f32).max(0.78)
+    } else {
+        1.0
+    };
+    MatchPlayer {
+        id: i,
+        pos: pool[i].pos,
+        role,
+        attrs: pool[i].attrs,
+        start_fatigue: (pool[i].fatigue as f32 / 100.0).clamp(0.0, 1.0),
+        form: (m * a * marked).max(0.5),
+    }
+}
+
 /// The 11 who actually start: the first eleven of the rotated matchday squad,
 /// each carried into the engine with their live fatigue and morale/adaptation.
 fn build_lineup(md: &[(usize, Role)], pool: &[WP]) -> Vec<MatchPlayer> {
-    md.iter()
-        .take(11)
-        .map(|&(i, role)| {
-            let m = 1.0 + (pool[i].morale as f32 - 65.0) * 0.002;
-            let a = 1.0 - pool[i].adapt as f32 * 0.05;
-            // Marked-man regression: a prolific scorer draws the whole league's
-            // attention as the season wears on — double-marked, man-marked,
-            // never given a yard — and legs tire from carrying the goal load.
-            // Past ~24 goals each further one is harder, docking his form (so
-            // finishing and everything else dip), which caps freak 60-goal
-            // seasons at a realistic ceiling while leaving normal 25-35 goal
-            // campaigns essentially untouched.
-            let sg = pool[i].overall_goals();
-            let marked = if sg > 22 {
-                (1.0 - 0.015 * (sg - 22) as f32).max(0.78)
-            } else {
-                1.0
-            };
-            MatchPlayer {
-                id: i,
-                pos: pool[i].pos,
-                role,
-                attrs: pool[i].attrs,
-                start_fatigue: (pool[i].fatigue as f32 / 100.0).clamp(0.0, 1.0),
-                form: (m * a * marked).max(0.5),
-            }
-        })
-        .collect()
+    md.iter().take(11).map(|&(i, role)| match_player(i, role, pool)).collect()
+}
+
+/// The named substitutes: everyone in the matchday squad after the XI,
+/// carried with the same live fatigue/form as the starters so a tired bench
+/// is a real bench — the engine can rotate without inventing fresh legs.
+fn build_bench(md: &[(usize, Role)], pool: &[WP]) -> Vec<MatchPlayer> {
+    md.iter().skip(11).map(|&(i, role)| match_player(i, role, pool)).collect()
 }
 
 /// Fold one match's per-player output back into the season pool: goals and
@@ -1043,6 +1062,11 @@ fn build_lineup(md: &[(usize, Role)], pool: &[WP]) -> Vec<MatchPlayer> {
 fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Params) {
     let base_fatigue = p.fatigue_match.round() as u8;
     for s in &o.stats {
+        // An unused substitute is not an appearance: only minutes on the pitch
+        // earn a cap, a rating, or a fatigue cost.
+        if s.minutes == 0 {
+            continue;
+        }
         let i = s.id;
         match comp {
             Comp::League => {
@@ -1099,8 +1123,8 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
         pool[i].rating_sum += s.rating;
         pool[i].rating_apps += 1;
 
-        // Result-driven morale swing + fatigue; an injury spikes fatigue (the
-        // sandbox has no separate sidelined list, so the cost is carried here).
+        // Result-driven morale swing + fatigue; an injury is persisted as real
+        // time out, so it outlives the match and costs the appearances it should.
         let (my, opp) = if s.side_a {
             (o.goals_a, o.goals_b)
         } else {
@@ -1115,6 +1139,9 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
         let mut fat = base_fatigue;
         if s.injury_days > 0 {
             fat = fat.saturating_add(30);
+            // Keep the longest absence rather than overwrite a shorter one:
+            // a knock picked up while already carrying a knock cannot heal him.
+            pool[i].injury_days = pool[i].injury_days.max(s.injury_days);
         }
         pool[i].fatigue = pool[i].fatigue.saturating_add(fat).min(100);
     }
@@ -1175,14 +1202,18 @@ fn play_with_rules(
     }
     let hxi = build_lineup(&hmd, pool);
     let axi = build_lineup(&amd, pool);
+    let hbench = build_bench(&hmd, pool);
+    let abench = build_bench(&amd, pool);
     let mut side_h = Side {
         players: &hxi,
+        bench: &hbench,
         ambition: teams[home].manager.ambition,
         quality: teams[home].manager.quality,
         threat: 1.0,
     };
     let mut side_a = Side {
         players: &axi,
+        bench: &abench,
         ambition: teams[away].manager.ambition,
         quality: teams[away].manager.quality,
         threat: 1.0,
@@ -1241,7 +1272,14 @@ fn weekly_recovery(
             if pool[i].retired {
                 continue;
             }
-            pool[i].fatigue = pool[i].fatigue.saturating_sub(p.fatigue_rest.round() as u8);
+            // A week of the calendar passes for everyone, injured or not; the
+            // absence ticks down and the man in the treatment room is not also
+            // resting his legs back to full — injury and recovery don't stack.
+            pool[i].injury_days = pool[i].injury_days.saturating_sub(7);
+            let injured = pool[i].injury_days > 0;
+            if !injured {
+                pool[i].fatigue = pool[i].fatigue.saturating_sub(p.fatigue_rest.round() as u8);
+            }
             let target = minds[i].morale_target();
             if pool[i].morale < target {
                 pool[i].morale += 1;
@@ -1645,6 +1683,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         retired: false,
                         morale: 70,
                         fatigue: 0,
+                        injury_days: 0,
                         adapt: 0,
                         on_loan: false,
                         // Database players arrive with unknown academy history:
@@ -1854,6 +1893,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     retired: false,
                     morale: 70,
                     fatigue: 0,
+                    injury_days: 0,
                     adapt: 0,
                     on_loan: false,
                     homegrown: false,
@@ -3224,6 +3264,7 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         retired: false,
         morale: 70,
         fatigue: 0,
+        injury_days: 0,
         adapt: 0,
         on_loan: false,
         // Fresh out of this club's own academy: club-trained by definition.
@@ -4591,7 +4632,9 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
     };
     for (line, count) in shape {
         let mut cands: Vec<(f32, usize)> = (0..players.len())
-            .filter(|&s| !used[s])
+            // An injured player cannot be called up mid-season: the national
+            // side picks from who is actually available, not who is best.
+            .filter(|&s| !used[s] && pool[players[s]].injury_days == 0)
             .map(|s| {
                 let w = &pool[players[s]];
                 (best_role_for(&w.attrs, w.pos, line).1, s)
@@ -4608,7 +4651,7 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
             if xi.len() >= 11 {
                 break;
             }
-            if !used[s] {
+            if !used[s] && pool[players[s]].injury_days == 0 {
                 used[s] = true;
                 xi.push(mk(s, pool));
             }
@@ -4643,8 +4686,8 @@ fn play_nation_with_rules(
     if axi.len() < 7 || bxi.len() < 7 {
         return (0, 0);
     }
-    let mut side_a = Side { players: &axi, ambition: 1.0, quality: 1.0, threat: 1.0 };
-    let mut side_b = Side { players: &bxi, ambition: 1.0, quality: 1.0, threat: 1.0 };
+    let mut side_a = Side { players: &axi, bench: &[], ambition: 1.0, quality: 1.0, threat: 1.0 };
+    let mut side_b = Side { players: &bxi, bench: &[], ambition: 1.0, quality: 1.0, threat: 1.0 };
     let o = if deciding {
         matchsim::simulate_deciding(&side_a, &side_b, Venue::Neutral, (0, 0), rng)
     } else {
@@ -6049,6 +6092,7 @@ mod tests {
             retired: false,
             morale: 70,
             fatigue: 0,
+            injury_days: 0,
             adapt: 0,
             on_loan: false,
             homegrown,
@@ -6780,5 +6824,65 @@ mod tests {
                 "registration overflow"
             );
         }
+    }
+
+    #[test]
+    fn zero_minutes_and_injuries_are_not_appearances() {
+        // A named substitute who never came on has no appearance, and a knock
+        // taken in the match has to outlive the match itself — otherwise the
+        // squad is always fully available and everyone plays every week.
+        let mut pool = vec![
+            mkp("Unused Sub", Position::MID, 70, 24, 80, 0, false),
+            mkp("Carried Off", Position::DEF, 70, 27, 78, 0, false),
+        ];
+        let o = matchsim::MatchOutcome {
+            goals_a: 1,
+            goals_b: 0,
+            poss_a: 50,
+            shots_a: 10,
+            shots_b: 8,
+            xg_a: 1.2,
+            xg_b: 0.8,
+            corners_a: 5,
+            corners_b: 3,
+            sp_goals_a: 0,
+            sp_goals_b: 0,
+            stats: vec![
+                matchsim::MatchStats { id: 0, minutes: 0, ..Default::default() },
+                matchsim::MatchStats {
+                    id: 1,
+                    minutes: 60,
+                    injury_days: 10,
+                    ..Default::default()
+                },
+            ],
+            events: Vec::new(),
+            duration: 94,
+            went_extra_time: false,
+            end_mentality_a: 0,
+            end_mentality_b: 0,
+        };
+        apply_match(&o, Comp::League, &mut pool, &Params::default());
+        assert_eq!(pool[0].apps, 0, "unused sub credited with an appearance");
+        assert_eq!(pool[0].minutes, 0);
+        assert_eq!(pool[1].apps, 1);
+        assert_eq!(pool[1].minutes, 60);
+        assert_eq!(pool[1].injury_days, 10);
+
+        // The absence decays a week at a time and blocks fatigue recovery
+        // while it lasts.
+        pool[1].fatigue = 80;
+        let mut minds = vec![PlayerMind::new(&mut Pcg64Mcg::new(1)); 2];
+        let teams = vec![mkteam(
+            &mut Pcg64Mcg::new(1),
+            "Test FC",
+            0,
+            70,
+            vec![0, 1],
+            100,
+        )];
+        weekly_recovery(&[0], &teams, &mut pool, &mut minds, &Params::default());
+        assert_eq!(pool[1].injury_days, 3);
+        assert_eq!(pool[1].fatigue, 80, "an injured player cannot recover fatigue");
     }
 }

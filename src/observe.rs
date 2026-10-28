@@ -195,8 +195,8 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
     let (axi, anames) = build_xi(&ap, 1000);
     let (h_amb, h_q) = club_dials(home.reputation);
     let (a_amb, a_q) = club_dials(away.reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0 };
+    let mut side_h = Side { players: &hxi, bench: &[], ambition: h_amb, quality: h_q, threat: 1.0 };
+    let mut side_a = Side { players: &axi, bench: &[], ambition: a_amb, quality: a_q, threat: 1.0 };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
@@ -465,8 +465,8 @@ fn play_and_record(
     }
     let (h_amb, h_q) = club_dials(clubs[home].reputation);
     let (a_amb, a_q) = club_dials(clubs[away].reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0 };
+    let mut side_h = Side { players: &hxi, bench: &[], ambition: h_amb, quality: h_q, threat: 1.0 };
+    let mut side_a = Side { players: &axi, bench: &[], ambition: a_amb, quality: a_q, threat: 1.0 };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
@@ -704,8 +704,8 @@ fn watch_from_season(clubs: &[Club], db: &Database, rng: &mut Pcg64Mcg) {
     let (axi, anames) = build_xi(&ap, 1000);
     let (h_amb, h_q) = club_dials(home.reputation);
     let (a_amb, a_q) = club_dials(away.reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0 };
+    let mut side_h = Side { players: &hxi, bench: &[], ambition: h_amb, quality: h_q, threat: 1.0 };
+    let mut side_a = Side { players: &axi, bench: &[], ambition: a_amb, quality: a_q, threat: 1.0 };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
