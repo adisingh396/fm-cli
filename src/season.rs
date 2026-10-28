@@ -2752,6 +2752,20 @@ fn ballon_breakdown(_w: &WP, _club_rep: u8, _year: u16) -> (f32, Vec<(&'static s
     let intl_label_tag = if is_wc_year { "World Cup" } else { "tournament" };
     parts.push(("International run", run_label(w.intl_result, intl_label_tag), intl_run));
 
+    // Decisive stage clutch value: goals and assists produced specifically by players
+    // reaching the semi-finals or final of the Champions League or major international finals
+    // carry subtle additional weighting reflecting real-world Ballon d'Or prestige.
+    if w.ucl_result >= 4 && (w.ucl_goals > 0 || w.ucl_assists > 0) {
+        let clutch_ucl = (w.ucl_goals as f32 * 2.0 + w.ucl_assists as f32 * 1.0).min(10.0);
+        parts.push(("UCL clutch impact", format!("Late-stage UCL production ({}g {}a)", w.ucl_goals, w.ucl_assists), clutch_ucl));
+    }
+    if w.intl_result >= 4 && (w.intl_goals > 0 || w.intl_assists > 0) {
+        let ko_mult = if is_wc_year { 3.0 } else { 2.0 };
+        let clutch_intl = (w.intl_goals as f32 * ko_mult + w.intl_assists as f32 * (ko_mult * 0.5)).min(15.0);
+        let tag = if is_wc_year { "World Cup final stages" } else { "Confederation final stages" };
+        parts.push(("International clutch impact", format!("{} ({}g {}a)", tag, w.intl_goals, w.intl_assists), clutch_intl));
+    }
+
     let total: f32 = parts.iter().map(|(_, _, score)| *score).sum();
     (total, parts)
 }
