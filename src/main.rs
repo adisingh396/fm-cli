@@ -278,12 +278,12 @@ fn run_season_sandbox() {
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
-                .as_secs()
+                .as_nanos() as u64
         }),
         _ => SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
-            .as_secs(),
+            .as_nanos() as u64,
     };
     println!("  (seed {})", seed);
     let report = if years == 1 {
