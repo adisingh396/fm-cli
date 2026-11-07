@@ -272,8 +272,12 @@ impl WP {
     }
 }
 
+/// A simulated club. Its `nation` names its footballing country (for the
+/// Club World Cup's two-clubs-per-country qualification cap, the equivalent
+/// of FIFA's confederation rankings note).
 struct Team {
     name: String,
+    nation: String,
     league_idx: usize,
     rep: u8,
     players: Vec<usize>,
@@ -429,6 +433,17 @@ enum IntlKind {
     None,
     WorldCup,
     Euros,
+    /// AFC Asian Cup — a full continental championship for the AFC world.
+    AsianCup,
+}
+
+/// A simulated domestic league's display label and confederation, parallel to
+/// `World::league_teams`. Indices 0..5 are the Big 5; 5 is the European
+/// outsider group (no league of their own, confed UEFA); extras from 6 are
+/// the AFC/CONMEBOL/CONCACAF top flights (their own tables and confed cups).
+struct LeagueMeta {
+    label: String,
+    confed: Option<crate::world_model::Confederation>,
 }
 
 struct World {
@@ -438,6 +453,7 @@ struct World {
     minds: Vec<PlayerMind>,
     teams: Vec<Team>,
     league_teams: Vec<Vec<usize>>,
+    league_meta: Vec<LeagueMeta>,
     nation_pool: Vec<String>,
     next_regen: u32,
     elite_cap: u8,
@@ -446,6 +462,10 @@ struct World {
     inflation: f32,
     /// Active season-long loans: (player, home club, away club).
     loans: Vec<SeasonLoan>,
+    /// Continental champions history for Club World Cup qualification:
+    /// (competition label — "UCL"/"AFC"/"CONCACAF"/"CONMEBOL", winning team).
+    /// The CWC hands out its 4-year-cycle slots to these winners.
+    continent_hist: Vec<(String, usize)>,
     /// Released players without a club; train alone and can be signed freely.
     free_agents: Vec<usize>,
     /// Names already used, to keep regen identities distinct.
@@ -476,6 +496,13 @@ struct SeasonOutcome {
     ucl_winner_rep: u8,
     ucl_top: (String, u16),
     europa_winner: String,
+    /// Confederation cup winners for the non-UEFA world (AFC Champions League,
+    /// CONCACAF Champions Cup, CONMEBOL Libertadores).
+    afc_winner: String,
+    concacaf_winner: String,
+    conmebol_winner: String,
+    /// FIFA Club World Cup winner (in CWC years; "-" otherwise).
+    club_world_cup_winner: String,
     intl_kind: IntlKind,
     intl_winner: String,
     // Ballon d'Or: name, club, league g, league a, UCL g, UCL a, overall g, overall a
@@ -1369,7 +1396,7 @@ fn super_cup_winner(field: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64
 fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     let mut pool: Vec<WP> = Vec::new();
     let mut teams: Vec<Team> = Vec::new();
-    let mut league_teams: Vec<Vec<usize>> = vec![Vec::new(); BIG5.len() + 1];
+    // league_teams is allocated later, once the extra-league count is known.
     // A single 2026 dump can still list the same man twice — at two clubs,
     // under subtly different spellings ("Kylian Mbappe" vs "Kylian Mbappe
     // Lottin"), or as a duplicate row. Group every candidate by first name +
@@ -1473,6 +1500,37 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         .collect();
     oc.sort_by(|a, b| b.reputation.cmp(&a.reputation));
     let outsider_clubs: Vec<ClubId> = oc.iter().take(8).map(|c| c.id).collect();
+
+    // Non-UEFA world (Track 5 / world expansion): every other tier-1 men's
+    // league in the database, grouped by the catalogue — AFC (ISL, Saudi,
+    // K League, CSL…), CONMEBOL (Argentina, Brazil, Colombia) and CONCACAF
+    // (MLS, Mexico). Each becomes a *simulated* domestic league (tables,
+    // champions, domestic cup, and a confederation cup), not just a one-off
+    // club injection. Up to 20 strongest clubs per league.
+    let mut extra_groups: Vec<(Vec<ClubId>, crate::world_model::Confederation, String)> =
+        Vec::new();
+    for l in crate::world_model::catalogue() {
+        if l.confed == crate::world_model::Confederation::UEFA || l.tier != 1 {
+            continue;
+        }
+        let mut clubs: Vec<&Club> = db
+            .clubs()
+            .iter()
+            .filter(|x| crate::world_model::lookup(&x.league).map(|y| y.id) == Some(l.id))
+            .collect();
+        clubs.sort_by(|a, b| b.reputation.cmp(&a.reputation));
+        clubs.truncate(20);
+        if clubs.len() >= 8 {
+            extra_groups.push((
+                clubs.iter().map(|c| c.id).collect(),
+                l.confed,
+                l.name.clone(),
+            ));
+        }
+    }
+    let extra_count = extra_groups.len();
+
+    let mut league_teams: Vec<Vec<usize>> = vec![Vec::new(); BIG5.len() + 1 + extra_count];
     // Every candidate row (generous top-30 per club; dedupe losses follow).
     struct Cand {
         pid: PlayerId,
@@ -1482,7 +1540,11 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     }
     let mut by_first: std::collections::HashMap<(String, u8), Vec<Cand>> =
         std::collections::HashMap::new();
-    for ids in league_clubs.iter().chain(std::iter::once(&outsider_clubs)) {
+    for ids in league_clubs
+        .iter()
+        .chain(std::iter::once(&outsider_clubs))
+        .chain(extra_groups.iter().map(|(ids, _, _)| ids))
+    {
         for cid in ids {
             let Some(c) = db.clubs().iter().find(|c| c.id == *cid) else { continue };
             let mut ranked: Vec<(u8, PlayerId)> = c
@@ -1533,13 +1595,17 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     }
 
     // Build groups: the five Big-5 leagues (indices 0..5) plus the real
-    // outsider clubs as group 5 (league_idx 5 = "no domestic league here").
+    // outsider clubs as group 5 (league_idx 5 = "no domestic league here"),
+    // then every non-UEFA top flight at indices 6+.
     let mut groups: Vec<(&Vec<ClubId>, usize)> = league_clubs
         .iter()
         .enumerate()
         .map(|(i, ids)| (ids, i))
         .collect();
     groups.push((&outsider_clubs, 5));
+    for (k, (ids, _, _)) in extra_groups.iter().enumerate() {
+        groups.push((ids, 6 + k));
+    }
     for (ids, li) in groups {
         let mut clubs: Vec<&Club> = ids
             .iter()
@@ -1682,6 +1748,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             let revenue_last = revenue(wealth) as i64;
             teams.push(Team {
                 name: c.name.clone(),
+                nation: crate::world_model::lookup(&c.league)
+                    .map(|l| l.nation.clone())
+                    .unwrap_or_else(|| c.league.clone()),
                 league_idx: li,
                 rep: c.reputation,
                 players: pidx,
@@ -1846,6 +1915,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         let revenue_last = revenue(wealth) as i64;
         teams.push(Team {
             name: fname.to_string(),
+            nation: "Europe".to_string(), // procedural fallback outsiders
             league_idx: 5,
             rep: frep,
             players: pidx,
@@ -1880,6 +1950,25 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     }
     }
 
+    // League metadata (labels + confederations), parallel to league_teams.
+    let mut league_meta: Vec<LeagueMeta> = BIG5
+        .iter()
+        .map(|l| LeagueMeta {
+            label: l.to_string(),
+            confed: Some(crate::world_model::Confederation::UEFA),
+        })
+        .collect();
+    league_meta.push(LeagueMeta {
+        label: "European Outsiders".to_string(),
+        confed: Some(crate::world_model::Confederation::UEFA),
+    });
+    for (_, confed, label) in &extra_groups {
+        league_meta.push(LeagueMeta {
+            label: label.clone(),
+            confed: Some(*confed),
+        });
+    }
+
     let used_names: std::collections::HashSet<String> =
         pool.iter().map(|w| w.name.clone()).collect();
 
@@ -1910,12 +1999,14 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         minds: Vec::new(), // filled just below, one mind per player
         teams,
         league_teams,
+        league_meta,
         nation_pool,
         next_regen: 1,
         elite_cap,
         inflation: 1.0,
         params,
         loans: Vec::new(),
+        continent_hist: Vec::new(),
         free_agents: Vec::new(),
         used_names,
     }
@@ -2001,17 +2092,21 @@ fn reset_season(w: &mut World) {
 }
 
 fn intl_kind_for(year: u16) -> IntlKind {
-    // World Cup 2026/2030/2034…, Euros 2028/2032…, nothing in odd years.
+    // World Cup 2026/2030/2034…, Euros 2028/2032…, AFC Asian Cup 2027/2031/2035
+    // (midway between World Cups, the real calendar), nothing relevant in
+    // CWC years (Club World Cup 2029, 2033).
     if year % 4 == 2 {
         IntlKind::WorldCup
     } else if year % 4 == 0 {
         IntlKind::Euros
+    } else if year % 4 == 3 {
+        IntlKind::AsianCup
     } else {
         IntlKind::None
     }
 }
 
-fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome {
+fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome {
     reset_season(w);
 
     for li in 0..BIG5.len() {
@@ -2039,6 +2134,29 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         }
         tables.push(table);
     }
+    // Non-UEFA top flights (indices 6+): their own domestic league — tables,
+    // champions and later a confederation cup. Kept entirely separate from
+    // `tables` so UCL/Europa qualification stays Big-5-only, as in reality.
+    for li in (BIG5.len() + 1)..w.league_teams.len() {
+        let ids = w.league_teams[li].clone();
+        if ids.len() >= 4 {
+            run_league(&ids, &mut w.teams, &mut w.pool, &mut w.minds, &w.params, rng);
+        }
+    }
+    let mut extra_tables: Vec<Vec<usize>> = Vec::new();
+    for li in (BIG5.len() + 1)..w.league_teams.len() {
+        let table = rank(&w.league_teams[li], &w.teams);
+        if let Some(&champ) = table.first() {
+            w.teams[champ].league_titles += 1;
+            let cname = w.teams[champ].name.clone();
+            for &pi in &w.teams[champ].players {
+                w.pool[pi].league_won = true;
+            }
+            champions.push((w.league_meta[li].label.clone(), cname));
+        }
+        extra_tables.push(table);
+    }
+
     // Title droughts tick for every Big5 club that didn't win its league.
     // Outsider clubs (no domestic league here) are judged on Europe instead.
     // Both the club and the current manager's drought advance together, so a
@@ -2056,13 +2174,17 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     // Domestic cups (one knockout per league). The winning manager's career
     // record credits it like any other trophy — a cup is a cup.
     let mut cup_winners: Vec<(String, String)> = Vec::new();
-    let mut cup_result: Vec<Option<(usize, usize)>> = vec![None; BIG5.len()];
-    for li in 0..BIG5.len() {
+    let mut cup_result: Vec<Option<(usize, usize)>> =
+        vec![None; w.league_teams.len()];
+    for li in 0..w.league_teams.len() {
+        if li == 5 {
+            continue; // European Outsiders contest Europe, not a domestic cup
+        }
         let ids = w.league_teams[li].clone();
         if ids.len() >= 4 {
             if let Some((win, finalist)) = run_domestic_cup(&ids, &w.teams, &w.params, rng) {
                 w.teams[win].manager.trophies += 1;
-                cup_winners.push((BIG5[li].to_string(), w.teams[win].name.clone()));
+                cup_winners.push((w.league_meta[li].label.clone(), w.teams[win].name.clone()));
                 cup_result[li] = Some((win, finalist));
             }
         }
@@ -2193,6 +2315,170 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         "-".to_string()
     };
 
+    // Confederation cups for the non-UEFA world: AFC Champions League, the
+    // CONCACAF Champions Cup and CONMEBOL Libertadores. The top four finishers
+    // of each extra league in that confederation form the field; the winner
+    // banks a manager's trophy like any other continental honour.
+    let confed_cup = |confed: crate::world_model::Confederation,
+                      w: &mut World,
+                      rng: &mut Pcg64Mcg|
+     -> Option<usize> {
+        let mut field: Vec<usize> = Vec::new();
+        for (k, table) in extra_tables.iter().enumerate() {
+            let li = BIG5.len() + 1 + k;
+            if w.league_meta[li].confed != Some(confed) {
+                continue;
+            }
+            for &t in table.iter().take(4) {
+                if !field.contains(&t) {
+                    field.push(t);
+                }
+            }
+        }
+        if field.len() < 4 {
+            return None;
+        }
+        let win = run_cup(&field, Comp::League, &mut w.teams, &mut w.pool, &w.params, rng)?;
+        w.teams[win].manager.trophies += 1;
+        Some(win)
+    };
+    let afc_winner_idx = confed_cup(crate::world_model::Confederation::AFC, &mut w, rng);
+    let concacaf_winner_idx =
+        confed_cup(crate::world_model::Confederation::CONCACAF, &mut w, rng);
+    let conmebol_winner_idx =
+        confed_cup(crate::world_model::Confederation::CONMEBOL, &mut w, rng);
+    let afc_winner = afc_winner_idx.map(|t| w.teams[t].name.clone()).unwrap_or_else(|| "-".to_string());
+    let concacaf_winner = concacaf_winner_idx.map(|t| w.teams[t].name.clone()).unwrap_or_else(|| "-".to_string());
+    let conmebol_winner = conmebol_winner_idx.map(|t| w.teams[t].name.clone()).unwrap_or_else(|| "-".to_string());
+
+    // Register this season's continental champions for CWC qualification.
+    if let Some(t) = ucl_winner_idx {
+        w.continent_hist.push(("UCL".to_string(), t));
+    }
+    if let Some(t) = afc_winner_idx {
+        w.continent_hist.push(("AFC".to_string(), t));
+    }
+    if let Some(t) = concacaf_winner_idx {
+        w.continent_hist.push(("CONCACAF".to_string(), t));
+    }
+    if let Some(t) = conmebol_winner_idx {
+        w.continent_hist.push(("CONMEBOL".to_string(), t));
+    }
+
+    // FIFA Club World Cup (2029, 2033, 2037…): 32 teams — UEFA 12, CONMEBOL 6,
+    // AFC 4, CAF 4 (none simulated), CONCACAF 4, OFC 1 + the host. Qualification
+    // runs off the 4-year cycle of continental champions (the `continent_hist`
+    // winners above) plus a coefficient fill: continental silverware first,
+    // then strength, at most two clubs per country unless that country has
+    // produced multiple continental champions this cycle.
+    fn cwc_quota_field(
+        w: &World,
+        confed: crate::world_model::Confederation,
+        quota: usize,
+        tag: &str,
+    ) -> Vec<usize> {
+        let mut field: Vec<usize> = Vec::new();
+        let mut push = |field: &mut Vec<usize>, t: usize| {
+            if !field.contains(&t) {
+                field.push(t);
+            }
+        };
+        // Continental champions of the cycle — direct qualifiers.
+        let winners: Vec<usize> = w
+            .continent_hist
+            .iter()
+            .rev()
+            .filter(|(l, _)| l == tag)
+            .take(4)
+            .map(|(_, t)| *t)
+            .collect();
+        for &t in &winners {
+            push(&mut field, t);
+        }
+        // Coefficient fill: continental record first, then strength.
+        let mut cands: Vec<usize> = (0..w.teams.len())
+            .filter(|&t| {
+                !field.contains(&t)
+                    && w.league_meta[w.teams[t].league_idx].confed == Some(confed)
+            })
+            .collect();
+        cands.sort_by(|&a, &b| {
+            let (ta, tb) = (&w.teams[a], &w.teams[b]);
+            (tb.ucl_titles + tb.el_titles)
+                .cmp(&(ta.ucl_titles + ta.el_titles))
+                .then(tb.strength.partial_cmp(&ta.strength).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        for &t in &cands {
+            if field.len() >= quota {
+                break;
+            }
+            let nation = &w.teams[t].nation;
+            let nation_champs = winners
+                .iter()
+                .filter(|&&x| &w.teams[x].nation == nation)
+                .count();
+            let nation_total = field
+                .iter()
+                .filter(|&&x| &w.teams[x].nation == nation)
+                .count();
+            // More than two national champions exempt a country; otherwise
+            // two clubs per country.
+            if nation_champs <= 2 && nation_total >= 2 {
+                continue;
+            }
+            push(&mut field, t);
+        }
+        field
+    }
+    let club_world_cup_winner = if year % 4 == 1 {
+        let mut field = Vec::new();
+        let mut add = |f: &mut Vec<usize>, extra: Vec<usize>| {
+            for t in extra {
+                if !f.contains(&t) {
+                    f.push(t);
+                }
+            }
+        };
+        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::UEFA, 12, "UCL"));
+        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::CONMEBOL, 6, "CONMEBOL"));
+        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::AFC, 4, "AFC"));
+        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::CONCACAF, 4, "CONCACAF"));
+        // OFC: Auckland FC when present (New Zealand's flagship now plays in
+        // the A-League block, and would take the Oceania slot by the real rules).
+        if let Some(t) = w.teams.iter().position(|t| t.name.starts_with("Auckland")) {
+            if !field.contains(&t) {
+                field.push(t);
+            }
+        }
+        // Host nation: USA lifts an MLS slot, Mexico a Liga MX one — rotating
+        // (2029 USA, 2033 Mexico, 2037 USA… if hosts have enough teams left).
+        let host_label = if (year / 4) % 2 == 0 { "MLS" } else { "Liga MX" };
+        if let Some(li) = w.league_meta.iter().position(|m| m.label == host_label) {
+            for (k, table) in extra_tables.iter().enumerate() {
+                let li2 = BIG5.len() + 1 + k;
+                if li2 == li {
+                    if let Some(&t) = table.first() {
+                        if !field.contains(&t) {
+                            field.push(t);
+                        }
+                    }
+                }
+            }
+        }
+        if field.len() >= 8 {
+            run_cup(&field, Comp::League, &mut w.teams, &mut w.pool, &w.params, rng)
+                .map(|t| {
+                    w.teams[t].manager.trophies += 1;
+                    w.teams[t].name.clone()
+                })
+                .unwrap_or_else(|| "-".to_string())
+        } else {
+            "-".to_string()
+        }
+    } else {
+        "-".to_string()
+    };
+
     // International tournament (calendar-driven). Squads get a summer break
     // first — nobody plays a World Cup at 100 fatigue after league + Europe.
     let intl_kind = intl_kind_for(year);
@@ -2206,6 +2492,30 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
             run_international(&mut nations, &mut w.pool, &w.params, rng).unwrap_or_else(|| "-".to_string())
         }
     };
+
+    // Friendlies (every non-World-Cup year): a one-round international window
+    // so the whole world's footballers get real top-level minutes, caps and
+    // goals — the mechanism that actually develops outsider-league players
+    // and gives their Ballon scores genuine international volume. Every built
+    // nation (up to 16 pairs) plays one friendly; caps and goals land, but no
+    // "result" is recorded (friendlies don't move the resume the way majors
+    // do).
+    if intl_kind != IntlKind::WorldCup {
+        let mut nations = build_nations(&w.pool, IntlKind::None);
+        nations.sort_by(|a, b| {
+            b.strength
+                .partial_cmp(&a.strength)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        let n = nations.len().min(32);
+        for i in 0..n / 2 {
+            pairs.push((i, n - 1 - i));
+        }
+        for (a, b) in pairs {
+            play_nation(a, b, &nations, &mut w.pool, &w.params, rng);
+        }
+    }
 
     // Golden boot.
     let mut boot_idx: Vec<usize> = (0..w.pool.len()).collect();
@@ -2247,12 +2557,21 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
     // now carries media/reputation bias and a per-player narrative swing, so
     // the vote behaves like journalists', not a pure stat formula.
     let mut bd: Vec<(usize, f32)> = (0..w.pool.len())
-        .map(|i| (i, ballon_score(&w.pool[i], w.teams[w.pool[i].team].rep, year)))
+        .map(|i| {
+            let team = &w.teams[w.pool[i].team];
+            let lf = league_factor_for(team.league_idx, &w.league_meta);
+            (i, ballon_score(&w.pool[i], team.rep, year, lf))
+        })
         .collect();
     bd.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let bwin = bd[0].0;
     w.pool[bwin].ballons += 1;
-    let (_, why_parts) = ballon_breakdown(&w.pool[bwin], w.teams[w.pool[bwin].team].rep, year);
+    let (_, why_parts) = ballon_breakdown(
+        &w.pool[bwin],
+        w.teams[w.pool[bwin].team].rep,
+        year,
+        league_factor_for(w.teams[w.pool[bwin].team].league_idx, &w.league_meta),
+    );
     let ballon_why: Vec<(String, String, f32)> = why_parts
         .into_iter()
         .map(|(label, detail, pts)| (label.to_string(), detail, pts))
@@ -2316,6 +2635,10 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
         ucl_winner_rep,
         ucl_top,
         europa_winner,
+        afc_winner,
+        concacaf_winner,
+        conmebol_winner,
+        club_world_cup_winner,
         intl_kind,
         intl_winner,
         ballon,
@@ -2331,7 +2654,7 @@ fn run_one_season(w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome
 
 /// Ballon d'Or score broken into named components so the report can justify
 /// the award bullet by bullet. Returns (total, components in display order).
-fn ballon_breakdown(w: &WP, club_rep: u8, year: u16) -> (f32, Vec<(&'static str, String, f32)>) {
+fn ballon_breakdown(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> (f32, Vec<(&'static str, String, f32)>) {
     let mut parts: Vec<(&'static str, String, f32)> = Vec::new();
     let g = w.goals as f32 * 6.0;
     parts.push(("League goals", format!("{} × 6", w.goals), g));
@@ -2452,6 +2775,21 @@ fn ballon_breakdown(w: &WP, club_rep: u8, year: u16) -> (f32, Vec<(&'static str,
     // Ballon controversy, instead of a purely robotic formula.
     let swing = ballon_narrative(&w.name, year);
     parts.push(("Narrative & recency", "journalists' mood".to_string(), swing));
+    // Top-5-league bias: Ballon voters only watch the big leagues week in,
+    // week out, so a player in a top-5 league gets full credit while a star in
+    // an outsider league is judged at a discount. The multiplier is merciless
+    // on ordinary good seasons but a truly dominant year (a 40-goal season)
+    // still blasts through it — the rare genuine outsider winner (a Bardghji
+    // or an Oh) survives on numbers nobody else can match, not on generosity.
+    let base: f32 = parts.iter().map(|(_, _, s)| s).sum();
+    if (league_factor - 1.0).abs() > 0.01 {
+        let bias = (league_factor - 1.0) * base;
+        parts.push((
+            "League prestige bias",
+            format!("×{:.2} for league", league_factor),
+            bias,
+        ));
+    }
     let total: f32 = parts.iter().map(|(_, _, s)| s).sum();
     (total, parts)
 }
@@ -2483,8 +2821,30 @@ fn run_label(result: u8, comp: &str) -> String {
     }
 }
 
-fn ballon_score(w: &WP, club_rep: u8, year: u16) -> f32 {
-    ballon_breakdown(w, club_rep, year).0
+/// Ballon d'Or league-prestige multiplier for a player, from the league he's
+/// playing in. Callers resolve `league_idx` against `World::league_meta` and
+/// pass this into the breakdown. Top-5 leagues keep full credit; UEFA
+/// outsiders (Porto/Ajax-tier) a small discount; CONMEBOL/CONCACAF/AFC a
+/// steeper one — so a world-class year elsewhere still competes only when
+/// it's undeniably historic (35+ goals, a continental title run). Rare true
+/// outsiders who blast through everything are still reachable.
+fn league_factor_for(league_idx: usize, meta: &[LeagueMeta]) -> f32 {
+    if league_idx < BIG5.len() {
+        return 1.0;
+    }
+    if league_idx == BIG5.len() {
+        return 0.90; // UEFA outsiders: Porto/Ajax-tier clubs
+    }
+    match meta.get(league_idx).and_then(|m| m.confed) {
+        Some(crate::world_model::Confederation::CONMEBOL) => 0.84,
+        Some(crate::world_model::Confederation::CONCACAF) => 0.78,
+        Some(crate::world_model::Confederation::AFC) => 0.72,
+        _ => 0.85,
+    }
+}
+
+fn ballon_score(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> f32 {
+    ballon_breakdown(w, club_rep, year, league_factor).0
 }
 
 /// End-of-season reputation drift + manager merry-go-round. Keeps the world
@@ -4172,6 +4532,7 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
 
 fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
     let euro_only = kind == IntlKind::Euros;
+    let asian_only = kind == IntlKind::AsianCup;
     let mut by_nation: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, w) in pool.iter().enumerate() {
         if w.retired {
@@ -4183,6 +4544,15 @@ fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
         }
         if euro_only && !EUROPE.iter().any(|e| e.eq_ignore_ascii_case(n)) {
             continue;
+        }
+        if asian_only {
+            // AFC Asian Cup: only AFC confederation nations (2nd leg of the
+            // international calendar for the non-European world — qualification
+            // is by pool depth, so any AFC nation with 15+ active players).
+            let c = crate::world_model::confed_of(n);
+            if c != crate::world_model::Confederation::AFC {
+                continue;
+            }
         }
         by_nation.entry(n.to_string()).or_default().push(i);
     }
@@ -4284,7 +4654,7 @@ fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Para
 
 fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<String> {
     let n = nations.len();
-    if n < 8 {
+    if n < 4 {
         return None;
     }
     let groups_n = (n / 4).max(2);
@@ -4564,7 +4934,45 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     lines.push(String::new());
     lines.push(format!("- Champions League: **{}** (top scorer {} {}g)", out.ucl_winner, out.ucl_top.0, out.ucl_top.1));
     lines.push(format!("- Europa League: **{}**", out.europa_winner));
+    lines.push(format!("- AFC Champions League: **{}**", out.afc_winner));
+    lines.push(format!("- CONCACAF Champions Cup: **{}**", out.concacaf_winner));
+    lines.push(format!("- CONMEBOL Libertadores: **{}**", out.conmebol_winner));
+    if out.club_world_cup_winner != "-" {
+        lines.push(format!(
+            "- FIFA Club World Cup: **{}**",
+            out.club_world_cup_winner
+        ));
+    }
     lines.push(String::new());
+
+    // Non-UEFA top flights: their own tables, printed right after the Big 5.
+    for li in (BIG5.len() + 1)..w.league_teams.len() {
+        let table = rank(&w.league_teams[li], &w.teams);
+        if table.is_empty() {
+            continue;
+        }
+        lines.push(format!("## {}", w.league_meta[li].label));
+        lines.push(String::new());
+        lines.push("| # | Club | P | W | D | L | GF | GA | GD | Pts |".to_string());
+        lines.push("|---|------|---|---|---|---|----|----|----|-----|".to_string());
+        for (i, &t) in table.iter().enumerate().take(6) {
+            let tm = &w.teams[t];
+            lines.push(format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                i + 1,
+                trunc(&tm.name, 22),
+                tm.p,
+                tm.w,
+                tm.d,
+                tm.l,
+                tm.gf,
+                tm.ga,
+                tm.gd(),
+                tm.pts()
+            ));
+        }
+        lines.push(String::new());
+    }
 
     // UCL scoring chart with appearances, so a 6-goal tally over 15 games reads
     // differently from 6 in 8 — the rate is the story, not just the total.
@@ -4625,6 +5033,7 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     let intl_label = match out.intl_kind {
         IntlKind::WorldCup => "World Cup",
         IntlKind::Euros => "European Championship",
+        IntlKind::AsianCup => "AFC Asian Cup",
         IntlKind::None => "No major tournament",
     };
     lines.push(format!("## International: {}", intl_label));
@@ -4635,7 +5044,11 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     lines.push("## Ballon d'Or".to_string());
     lines.push(String::new());
     let mut bd: Vec<(usize, f32)> = (0..w.pool.len())
-        .map(|i| (i, ballon_score(&w.pool[i], w.teams[w.pool[i].team].rep, BASE_YEAR)))
+        .map(|i| {
+            let team = &w.teams[w.pool[i].team];
+            let lf = league_factor_for(team.league_idx, &w.league_meta);
+            (i, ballon_score(&w.pool[i], team.rep, BASE_YEAR, lf))
+        })
         .collect();
     bd.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     for (r, (i, sc)) in bd.iter().take(5).enumerate() {
@@ -4648,10 +5061,15 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
             ));
             lines.push(String::new());
             lines.push("Why he won it:".to_string());
-            let (_, parts) = ballon_breakdown(p, w.teams[p.team].rep, BASE_YEAR);
+            let (_, parts) = ballon_breakdown(
+                p,
+                w.teams[p.team].rep,
+                BASE_YEAR,
+                league_factor_for(w.teams[p.team].league_idx, &w.league_meta),
+            );
             for (label, detail, pts) in parts {
-                if pts > 0.0 {
-                    lines.push(format!("- {} ({}): +{} pts", label, detail, pts.round() as i32));
+                if pts.abs() > 0.001 {
+                    lines.push(format!("- {} ({}): {:+} pts", label, detail, pts.round() as i32));
                 }
             }
             lines.push(String::new());
@@ -4729,8 +5147,8 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
 
     lines.push("## Champions by year".to_string());
     lines.push(String::new());
-    lines.push("| Year | Premier League | La Liga | Serie A | Bundesliga | Ligue 1 | UCL | Europa | International |".to_string());
-    lines.push("|------|----------------|---------|--------|------------|---------|-----|--------|---------------|".to_string());
+    lines.push("| Year | Premier League | La Liga | Serie A | Bundesliga | Ligue 1 | UCL | Europa | Intl | AFC CL | CONCACAF | Libertadores | CWC |".to_string());
+    lines.push("|------|----------------|---------|--------|------------|---------|-----|--------|------|--------|----------|--------------|-----|".to_string());
     for o in &history {
         let ch = |name: &str| -> String {
             o.champions
@@ -4742,10 +5160,16 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         let intl = match o.intl_kind {
             IntlKind::WorldCup => format!("WC: {}", trunc(&o.intl_winner, 13)),
             IntlKind::Euros => format!("Euro: {}", trunc(&o.intl_winner, 11)),
+            IntlKind::AsianCup => format!("AC: {}", trunc(&o.intl_winner, 13)),
             IntlKind::None => "-".to_string(),
         };
+        let cwc = if o.club_world_cup_winner != "-" {
+            trunc(&o.club_world_cup_winner, 13)
+        } else {
+            "-".to_string()
+        };
         lines.push(format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             o.year,
             ch("Premier League"),
             ch("La Liga"),
@@ -4755,6 +5179,10 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             trunc(&o.ucl_winner, 17),
             trunc(&o.europa_winner, 17),
             intl,
+            trunc(&o.afc_winner, 17),
+            trunc(&o.concacaf_winner, 17),
+            trunc(&o.conmebol_winner, 17),
+            cwc,
         ));
     }
     lines.push(String::new());
@@ -4801,8 +5229,8 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         lines.push("Why he won it:".to_string());
         lines.push(String::new());
         for (label, detail, pts) in &o.ballon_why {
-            if *pts > 0.0 {
-                lines.push(format!("- {} ({}): +{} pts", label, detail, pts.round() as i32));
+            if pts.abs() > 0.001 {
+                lines.push(format!("- {} ({}): {:+} pts", label, detail, pts.round() as i32));
             }
         }
         lines.push(String::new());
@@ -5585,6 +6013,7 @@ mod tests {
     ) -> Team {
         Team {
             name: name.to_string(),
+            nation: "Testland".to_string(),
             league_idx,
             rep,
             players,
@@ -5662,11 +6091,22 @@ mod tests {
             minds,
             teams,
             league_teams: vec![vec![0], vec![1]],
+            league_meta: vec![
+                LeagueMeta {
+                    label: "Premier League".into(),
+                    confed: Some(crate::world_model::Confederation::UEFA),
+                },
+                LeagueMeta {
+                    label: "La Liga".into(),
+                    confed: Some(crate::world_model::Confederation::UEFA),
+                },
+            ],
             nation_pool: Vec::new(),
             next_regen: 1,
             elite_cap: 90,
             inflation: 1.0,
             loans: Vec::new(),
+            continent_hist: Vec::new(),
             free_agents: Vec::new(),
             used_names: HashSet::new(),
             params: Params::default(),
@@ -5791,9 +6231,9 @@ mod tests {
         elite.ucl_goals = 7;
         elite.ucl_apps = 12;
 
-        let s_dm = ballon_score(&dm, rep, year);
-        let s_modest = ballon_score(&modest, rep, year);
-        let s_elite = ballon_score(&elite, rep, year);
+        let s_dm = ballon_score(&dm, rep, year, 1.0);
+        let s_modest = ballon_score(&modest, rep, year, 1.0);
+        let s_elite = ballon_score(&elite, rep, year, 1.0);
         assert!(s_dm > s_modest, "all-round DM {:.0} should beat a modest forward {:.0}", s_dm, s_modest);
         assert!(s_elite > s_dm, "a prolific forward {:.0} should still edge the DM {:.0}", s_elite, s_dm);
     }

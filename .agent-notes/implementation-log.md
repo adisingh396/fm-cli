@@ -72,6 +72,40 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
   transfer market. The 8 procedural fillers remain only as a fallback if the
   database has no real outsiders.
 
+## T5b — Non-UEFA world + Club World Cup + Ballon bias (`season.rs`, `world_model.rs`)
+- `build_world` now loads every other tier-1 men's league in the database as a
+  *simulated* domestic league: AFC (ISL, Saudi, K League, CSL, A-League),
+  CONMEBOL (Liga Profesional + the pooled `CONMEBOL Libertadores` clubs — the
+  dump files non-Argentine SA clubs under the competition label, including
+  Peñarol, Nacional, Sporting Cristal, Cerro Porteño, LDU Quito…), CONCACAF
+  (MLS, Liga MX). Registered in `world_model.rs` as a CONMEBOL top flight.
+- Each extra league gets `LeagueMeta` (label + confederation), its own table,
+  champions, domestic cup, and a **confederation cup** (AFC CL, CONCACAF
+  Champions Cup, CONMEBOL Libertadores) from the top-4 finishers per league.
+- **Ballon d'Or league-prestige bias**: `ballon_breakdown` takes a
+  `league_factor` (Big-5 1.00, UEFA outsiders 0.90, CONMEBOL 0.84, CONCACAF
+  0.78, AFC 0.72) and ends with a printed bias line (e.g. −85 pts) so the
+  totals reconcile. Genuine outsider winners remain reachable but only via
+  undeniable numbers — Driussi won the 2028 Ballon from River Plate through
+  the 0.84 discount; the Saudi-era stars (Oh, Bardghji) still barely survive
+  it via historic goal volumes.
+- **FIFA Club World Cup** (2029, 2033, every 4y): qualification from
+  `World::continent_hist` (each season's UCL/AFC/CONCACAF/CONMEBOL winners).
+  UEFA 12, CONMEBOL 6, AFC 4, CONCACAF 4, OFC 1 (Auckland FC) + rotating host
+  (MLS/Liga MX of the year) = 28 teams. Continental champions qualify
+  directly; the ladder fills on European silverware then strength; cap is
+  2 per `Team.nation` unless that country produced 3+ continental champions
+  in the cycle. Verified winners: Real Madrid (2029), Spurs (2033).
+- **AFC Asian Cup** (2027, 2031, 2035): `IntlKind::AsianCup`, `build_nations`
+  filters `world_model::confed_of(nation) == AFC`. `run_international`
+  threshold lowered to 4 (only 6 AFC nations clear the 15-player pool filter:
+  Japan, Korea, Saudi, Australia, China, India).
+- **Friendlies**: every non-World-Cup year a one-round friendly window over all
+  built nations (16 pairs) so every outsider-league footballer gets real caps
+  and goals — feeding Ballon international components.
+- `Team` gained `nation: String` (for the CWC cap); `World` gained
+  `league_meta: Vec<LeagueMeta>` and `continent_hist`.
+
 ## Not done (ROADMAP tracks deferred)
 - T5b: full multi-tier league simulation (promotion/relegation across
   England's 4 tiers Spain/Germany/Italy/France's 2–3 tiers) and extra

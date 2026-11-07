@@ -67,6 +67,11 @@ pub fn normalize_league(csv_league: &str) -> Option<&'static str> {
         "Bundesliga" => Some("Bundesliga"),
         "Bundesliga 2" => Some("Bundesliga 2"),
         "CSL" => Some("Chinese Super League"),
+        // The 2026 dump files the non-Argentine South American clubs under the
+        // continent's flagship competition label rather than a domestic league;
+        // it loads as a CONMEBOL top-flight group so the Libertadores field
+        // has real clubs in it (Peñarol, Cerro Porteño, Sporting Cristal…).
+        "CONMEBOL Libertadores" => Some("CONMEBOL Libertadores"),
         "EFL Championship" => Some("EFL Championship"),
         "EFL League One" => Some("EFL League One"),
         "EFL League Two" => Some("EFL League Two"),
@@ -119,6 +124,7 @@ pub fn normalize_league(csv_league: &str) -> Option<&'static str> {
         "La Liga" => Some("La Liga"),
         "Segunda División" => Some("Segunda División"),
         "Liga Profesional" => Some("Liga Profesional"),
+        "CONMEBOL Libertadores" => Some("CONMEBOL Libertadores"),
         "Liga MX" => Some("Liga MX"),
         "Liga BetPlay" => Some("Liga BetPlay"),
         "Cypriot First Division" => Some("Cypriot First Division"),
@@ -171,6 +177,7 @@ fn build_catalogue() -> Vec<LeagueDef> {
         ("La Liga", "Spain", Confederation::UEFA, 1, 1.00),
         ("Segunda División", "Spain", Confederation::UEFA, 2, 1.00),
         ("Liga Profesional", "Argentina", Confederation::CONMEBOL, 1, 0.0),
+        ("CONMEBOL Libertadores", "South America", Confederation::CONMEBOL, 1, 0.0),
         ("Azerbaijan Premier League", "Azerbaijan", Confederation::UEFA, 1, 0.25),
         ("Liga MX", "Mexico", Confederation::CONCACAF, 1, 0.0),
         ("Bulgarian First League", "Bulgaria", Confederation::UEFA, 1, 0.28),

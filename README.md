@@ -20,10 +20,11 @@ same-schema dump at `data/players.csv` to upgrade ratings.
   formations are modelled as real 11-slot pitch geometry (`tactics.rs`): a
   narrow diamond genuinely concedes the flanks, a high line invites through
   balls a pacey runner exploits, wing-backs create genuine wide overloads.
-- **Player traits & body** — The 2026 dump's FC playstyles (Finesse Shot,
-  Rapid, Dead Ball, Incisive Pass…) are parsed into internal traits that bias
-  finishing, creation, dribbling and set pieces, and preferred foot / weak foot
-  penalise finishing on the wrong side — all emerging from duels, not dice.
+- **Ballon d'Or with a Big-5 bias factor** — voters only really watch the top-5 leagues, so a player outside them is graded at a discount: UEFA outsiders ×0.90, CONMEBOL ×0.84, CONCACAF ×0.78, AFC ×0.72. Only a genuinely historic season (a 40-goal Port-city masterclass, a Saudi-era blasting) still breaks through — ordinary fine seasons elsewhere don't edge out Europe's monsters the way they used to. The world also produces the occasional true outsider winner when numbers are undeniable.
+- **Full international calendar** — World Cup + Euros (unchanged), an **AFC Asian Cup** every 4 years (2027, 2031, 2035…) with its own winner, plus **annual friendlies** for every built nation (ISL, Saudi, MLS players eat caps and goals on the top-level stage continuously, so outsider stars actually develop as internationals worth voting for via `International goals/assists/run` components in the Ballon).
+- **Player traits & body** — The 2026 dump's FC playstyles (Finesse Shot, Rapid, Dead Ball, Incisive Pass…) are parsed into internal traits that bias finishing, creation, dribbling and set pieces, and preferred foot / weak foot penalise finishing on the wrong side — all emerging from duels, not dice.
+- **The non-UEFA world** — The sandbox now simulates AFC (ISL, Saudi, K League, CSL, A-League), CONMEBOL (Argentina + the pooled south-american Libertadores clubs) and CONCACAF (MLS, Liga MX) top flights with their own tables, domestic cups and **confederation cups** (AFC Champions League, CONCACAF Champions Cup, CONMEBOL Libertadores).
+- **FIFA Club World Cup (every 4 years)** — 32-team tournament (2029, 2033…): UEFA 12, CONMEBOL 6, AFC 4, CONCACAF 4, OFC (Auckland FC) 1 + a rotating host (USA/Mexico). Slots earned like the real thing: the 4-year cycle of continental champions qualify directly, with a coefficient ladder (titles, then strength) and a two-clubs-per-country cap (champion-rich nations exempt).
 - **Full match realism** — Real substitutions (bench of 7, exhaustion/chasing/
   cover triggers), cards with second-yellow and straight-red sendings-off (a
   team can finish a man down), stoppage time derived from fouls/injuries/subs,
