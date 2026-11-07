@@ -113,6 +113,12 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
   England also won both Euros of the decade; no more mid-tier-heavy champions.
 - The European Championship (24) and AFC Asian Cup (6 AFC nations) reuse the
   same group+seeded-knockout machinery.
+- **Actual overall for national teams**: `Nation.strength` is the best-XI
+  actual overall (mean of the eleven strongest FC overalls) — no blended
+  "adjusted" measures — and `nation_xi` now picks the actual highest-overall
+  players per line (role-fit only ties). Measured run: WC winners
+  Belgium/Argentina/Denmark (strong natural squads, not flukes), Euro kings
+  Denmark, and India winning the 2035 Asian Cup as a legit regional favorite.
 - **AFC Asian Cup** (2027, 2031, 2035): `IntlKind::AsianCup`, `build_nations`
   filters `world_model::confed_of(nation) == AFC`. `run_international`
   threshold lowered to 4 (only 6 AFC nations clear the 15-player pool filter:

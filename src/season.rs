@@ -4721,15 +4721,16 @@ fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Na
         }
         let mut ov: Vec<f32> = idxs.iter().map(|&i| pool[i].ovr as f32).collect();
         ov.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        // Squad depth matters as much as the fancy XI: the top-11 mean measured
-        // the tip of the squad, which compresses minnow nations and giants to
-        // near-identical profiles (a Senegal Xerox of France). A depth-weighted
-        // mean (55% stars, 45% the rest of the 23) lets big nations — whose
-        // benches are 78s, not 60s — actually separate from small pools.
-        let top = ov.iter().take(11).sum::<f32>() / 11.0;
-        let depth = ov.iter().sum::<f32>() / ov.len().max(1) as f32;
-        let strength = top * 0.55 + depth * 0.45;
-        nations.push(Nation { name, players: idxs, strength });
+        // Two numbers that actually matter for a national side:
+        //   actual XI overall — the mean of the eleven strongest FC overalls
+        //     (the real, match-day strength of the nation), and
+        //   squad depth signal — the rest of the 23, which is where real
+        //     giants separate from minnow pools.
+        // Qualifying/ranking uses `xi_overall` (the actual Eleven) directly;
+        // the XI overall is then used for draw math, so a France with a
+        // killer genuine XI behaves like one.
+        let xi_overall = ov.iter().take(11).sum::<f32>() / 11.0;
+        nations.push(Nation { name, players: idxs, strength: xi_overall });
     }
     nations.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
     if wc_field {
@@ -4748,7 +4749,12 @@ fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Na
 
 fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
     // Best available XI for the national side: a keeper, four defenders, three
-    // midfielders and three forwards, each in the role that best fits them.
+    // midfielders and three forwards. Line quotas are respected, but inside
+    // each line the player with the highest *actual overall* goes in (role fit
+    // only nudges ties) — a national team fields its best eleven, it doesn't
+    // average functionalism over natural quality. This is why deep-elite
+    // nations look elite: France's actual XI is a killer eleven, not a
+    // statistical blend.
     let shape: [(usize, usize); 4] = [(0, 1), (1, 4), (2, 3), (3, 3)];
     let mut used = vec![false; players.len()];
     let mut xi: Vec<MatchPlayer> = Vec::with_capacity(11);
@@ -4773,9 +4779,15 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
     for (line, count) in shape {
         let mut cands: Vec<(f32, usize)> = (0..players.len())
             .filter(|&s| !used[s])
+            .filter(|&s| !(line == 0 && pool[players[s]].pos != Position::GK))
             .map(|s| {
                 let w = &pool[players[s]];
-                (best_role_for(&w.attrs, w.pos, line).1, s)
+                // Actual overall drives national-team selection; matching the
+                // line is a strong nudge, role fit only breaks ties — a
+                // national team fields its best eleven, not its most
+                // functional one.
+                let line_bonus = if line_of(w.pos) == line { 15.0 } else { 0.0 };
+                (w.ovr as f32 + line_bonus + best_role_for(&w.attrs, w.pos, line).1 * 0.02, s)
             })
             .collect();
         cands.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
