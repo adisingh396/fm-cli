@@ -125,6 +125,9 @@ fn build_xi(players: &[&Player], id_base: usize) -> (Vec<MatchPlayer>, Vec<Strin
             attrs: p.attrs,
             start_fatigue: 0.0,
             form: 1.0,
+            traits: Vec::new(),
+            weak_foot: 3,
+            foot: crate::model::Foot::Right,
         });
     };
     for (line, count) in lines {
@@ -195,8 +198,8 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
     let (axi, anames) = build_xi(&ap, 1000);
     let (h_amb, h_q) = club_dials(home.reputation);
     let (a_amb, a_q) = club_dials(away.reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0 };
+    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
@@ -244,6 +247,13 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
                 let side = if e.side_a { &home.name } else { &away.name };
                 println!(
                     "  {:>2}'  \u{1fa79} Injury — {} ({}) forced off",
+                    e.minute, clip(&name_of(e.actor), 18), clip(side, 14)
+                );
+            }
+            EventKind::RedCard => {
+                let side = if e.side_a { &home.name } else { &away.name };
+                println!(
+                    "  {:>2}'  \u{1f7e5} RED CARD — {} ({}) is sent off",
                     e.minute, clip(&name_of(e.actor), 18), clip(side, 14)
                 );
             }
@@ -465,8 +475,8 @@ fn play_and_record(
     }
     let (h_amb, h_q) = club_dials(clubs[home].reputation);
     let (a_amb, a_q) = club_dials(clubs[away].reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0 };
+    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
@@ -536,8 +546,7 @@ fn local_xi(
         let (role, _) = engine::best_role_for(&a, pos, line);
         let id = id_base + xi.len();
         map.insert(id, li);
-        xi.push(MatchPlayer { id, pos, role, attrs: a, start_fatigue: 0.0, form: 1.0 });
-    };
+        xi.push(MatchPlayer { id, pos, role, attrs: a, start_fatigue: 0.0, form: 1.0, traits: Vec::new(), weak_foot: 3, foot: crate::model::Foot::Right });    };
     for (line, count) in shape {
         let mut cands: Vec<(f32, usize)> = (0..club_line_idxs.len())
             .filter(|&s| !used[s])
@@ -704,8 +713,8 @@ fn watch_from_season(clubs: &[Club], db: &Database, rng: &mut Pcg64Mcg) {
     let (axi, anames) = build_xi(&ap, 1000);
     let (h_amb, h_q) = club_dials(home.reputation);
     let (a_amb, a_q) = club_dials(away.reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0 };
+    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;

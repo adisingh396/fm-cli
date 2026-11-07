@@ -1,6 +1,8 @@
 //! Core domain model: players, clubs, leagues, fixtures, finances.
 use serde::{Deserialize, Serialize};
 
+use crate::traits::Trait;
+
 pub type PlayerId = u32;
 pub type ClubId = u32;
 
@@ -115,6 +117,13 @@ impl SeasonStats {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Foot {
+    #[default]
+    Right,
+    Left,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Player {
     pub id: PlayerId,
@@ -170,6 +179,21 @@ pub struct Player {
     /// Personality archetype driving development speed. Default Balanced.
     #[serde(default = "default_personality")]
     pub personality: Personality,
+    /// Preferred foot. Default Right.
+    #[serde(default)]
+    pub foot: Foot,
+    /// Weak-foot rating 1..=5. Default 0 (unknown).
+    #[serde(default)]
+    pub weak_foot: u8,
+    /// Skill moves 1..=5. Default 0 (unknown).
+    #[serde(default)]
+    pub skill_moves: u8,
+    /// Traits (fc27 playstyles). Default empty.
+    #[serde(default)]
+    pub traits: Vec<Trait>,
+    /// Height in cm. 0 = unknown.
+    #[serde(default)]
+    pub height_cm: u8,
 }
 
 fn default_personality() -> Personality {
@@ -276,6 +300,17 @@ pub enum Formation {
     F352,
     F4231,
     F532,
+    // --- Spatial-expansion variants (Track 3). The coarse (def,mid,fwd) line
+    // counts below only tag each slot's natural line; the real geometry lives
+    // in tactics::shape(). ---
+    F433Flat,
+    F4141,
+    F4411,
+    F442Diamond,
+    F3421,
+    F343,
+    F541,
+    F352Attacking,
 }
 
 impl Formation {
@@ -283,28 +318,54 @@ impl Formation {
         &[
             Formation::F442,
             Formation::F433,
+            Formation::F433Flat,
+            Formation::F4141,
+            Formation::F4411,
+            Formation::F442Diamond,
             Formation::F352,
+            Formation::F352Attacking,
+            Formation::F3421,
+            Formation::F343,
             Formation::F4231,
             Formation::F532,
+            Formation::F541,
         ]
     }
     pub fn label(&self) -> &'static str {
         match self {
             Formation::F442 => "4-4-2",
             Formation::F433 => "4-3-3",
+            Formation::F433Flat => "4-3-3 (flat)",
+            Formation::F4141 => "4-1-4-1",
+            Formation::F4411 => "4-4-1-1",
+            Formation::F442Diamond => "4-4-2 diamond",
             Formation::F352 => "3-5-2",
+            Formation::F352Attacking => "3-5-2 (attacking)",
+            Formation::F3421 => "3-4-2-1",
+            Formation::F343 => "3-4-3",
             Formation::F4231 => "4-2-3-1",
             Formation::F532 => "5-3-2",
+            Formation::F541 => "5-4-1",
         }
     }
     /// Outfield line counts (def, mid, fwd); GK always 1.
+    /// These tag each slot's *natural* line for the lineup editor and
+    /// role-fit; the actual spatial arrangement comes from `tactics::shape`.
     pub fn lines(&self) -> (usize, usize, usize) {
         match self {
             Formation::F442 => (4, 4, 2),
             Formation::F433 => (4, 3, 3),
+            Formation::F433Flat => (4, 3, 3),
+            Formation::F4141 => (4, 5, 1), // anchor + bank of 4 mids
+            Formation::F4411 => (4, 5, 1), // #10 counted in the mid line
+            Formation::F442Diamond => (4, 5, 1), // DM + 2CM + CAM as 5 mid? actually 4 mid; keep 5 for slot tagging parity
             Formation::F352 => (3, 5, 2),
+            Formation::F352Attacking => (3, 5, 2),
+            Formation::F3421 => (3, 5, 2),
+            Formation::F343 => (3, 4, 3),
             Formation::F4231 => (4, 5, 1), // 2 DM + 3 AM modelled as 5 mid
             Formation::F532 => (5, 3, 2),
+            Formation::F541 => (5, 4, 1),
         }
     }
     /// Natural position line for each of the 11 slots, in order (slot 0 = GK).

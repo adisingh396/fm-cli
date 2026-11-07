@@ -34,8 +34,10 @@ mod net;
 mod observe;
 mod players;
 mod season;
+mod tactics;
+mod traits;
 mod tune;
-
+mod world_model;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::time::SystemTime;
@@ -753,6 +755,126 @@ fn match_centre(state: &mut GameState) {
     }
 }
 
+/// A manager's saved mentality as an engine ambition value (0.6 pragmatic .. 1.5
+/// gung-ho) — their chosen approach actually shapes the game plan now.
+fn mentality_ambition(m: Mentality) -> f32 {
+    match m {
+        Mentality::VeryDefensive => 0.65,
+        Mentality::Defensive => 0.8,
+        Mentality::Cautious => 0.9,
+        Mentality::Balanced => 1.0,
+        Mentality::Positive => 1.1,
+        Mentality::Attacking => 1.25,
+        Mentality::VeryAttacking => 1.45,
+    }
+}
+
+/// Build the possession engine's starting XI + bench for one club's career
+/// match. The XI honours the manager's saved lineup through `resolve_lineup`
+/// (out-of-position picks and all); the bench is the seven best remaining
+/// available men. MatchPlayer.id is the real PlayerId so per-player outcomes
+/// map straight back onto the world's players.
+fn build_career_side(
+    squad: &[Player],
+    tactic: &Tactic,
+    lineup: &[PlayerId],
+) -> (Vec<matchsim::MatchPlayer>, Vec<matchsim::MatchPlayer>) {
+    let refs: Vec<&Player> = squad.iter().collect();
+    let xi = resolve_lineup(&refs, tactic, lineup);
+    let to_mp = |p: &Player, role: Role| -> matchsim::MatchPlayer {
+        let fatigue = ((100u16.saturating_sub(p.condition as u16)) as f32 / 100.0 * 0.55).clamp(0.0, 0.6);
+        let form = (p.effective() / (p.overall().max(1) as f32)).clamp(0.8, 1.2);
+        matchsim::MatchPlayer {
+            id: p.id as usize,
+            pos: p.position,
+            role,
+            attrs: p.attrs,
+            start_fatigue: fatigue,
+            form,
+            traits: p.traits.clone(),
+            weak_foot: p.weak_foot,
+            foot: p.foot,
+        }
+    };
+    let start: Vec<matchsim::MatchPlayer> = xi.iter().map(|(p, role, _)| to_mp(p, *role)).collect();
+    let in_xi: std::collections::HashSet<PlayerId> = xi.iter().map(|(p, _, _)| p.id).collect();
+    let mut bench_cands: Vec<&Player> = squad
+        .iter()
+        .filter(|p| p.injury_days == 0 && p.suspension == 0 && !in_xi.contains(&p.id))
+        .collect();
+    bench_cands.sort_by(|a, b| b.overall().cmp(&a.overall()));
+    let bench = bench_cands
+        .into_iter()
+        .take(7)
+        .map(|p| {
+            let role = engine::best_role_for(&p.attrs, p.position, engine::line_of(p.position)).0;
+            to_mp(p, role)
+        })
+        .collect();
+    (start, bench)
+}
+
+/// Apply one full possession-engine match to a club's world players: season
+/// apps/goals/assists/ratings, cards to suspensions (five yellows or a red =
+/// one ban), condition drained by minutes played, form moved by the real
+/// rating, and injuries straight off the engine. Squad members who didn't play
+/// still serve their suspensions.
+fn apply_career_stats(
+    state: &mut GameState,
+    club_id: ClubId,
+    stats: &[matchsim::MatchStats],
+    side_a: bool,
+    _rng: &mut Pcg64Mcg,
+) {
+    let mine: Vec<&matchsim::MatchStats> = stats.iter().filter(|s| s.side_a == side_a).collect();
+    let played: std::collections::HashSet<PlayerId> =
+        mine.iter().map(|s| s.id as PlayerId).collect();
+    // Serve suspensions for everyone's non-appearance first (as before).
+    for p in state
+        .players
+        .iter_mut()
+        .filter(|p| p.club == Some(club_id) && !played.contains(&p.id))
+    {
+        if p.suspension > 0 {
+            p.suspension -= 1;
+        }
+    }
+    for st in mine {
+        if st.minutes == 0 {
+            continue;
+        }
+        let pid = st.id as PlayerId;
+        if let Some(p) = state
+            .players
+            .iter_mut()
+            .find(|p| p.id == pid && p.club == Some(club_id))
+        {
+            p.stats.apps += 1;
+            p.stats.rating_apps += 1;
+            p.stats.goals += st.goals as u16;
+            p.stats.assists += st.assists as u16;
+            p.stats.rating_sum += (st.rating * 10.0).round() as u32;
+            p.yellows += st.yellows;
+            if p.yellows >= 5 {
+                p.yellows = 0;
+                p.suspension = 1;
+            }
+            if st.sent_off {
+                p.suspension = 1;
+            }
+            // Condition drain scales with minutes; stamina cushions it.
+            let work = (st.minutes as f32 / 90.0 * 22.0) as u8;
+            let cushion = (p.attrs.stamina / 10) as u8;
+            p.condition = p.condition.saturating_sub(work.saturating_sub(cushion));
+            p.sharpness = (p.sharpness + 2).min(100);
+            p.form = ((p.form as i16 + ((st.rating - 6.7) * 8.0) as i16).clamp(-100, 100)) as i8;
+            if st.injury_days > 0 {
+                p.injury_days = p.injury_days.max(st.injury_days);
+            }
+        }
+    }
+}
+
 fn simulate_match(state: &mut GameState, fixture: &Fixture) {
     let home_tactic = club_tactic(state, fixture.home);
     let away_tactic = club_tactic(state, fixture.away);
@@ -793,47 +915,147 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
     let home_refs: Vec<&Player> = home_players.iter().collect();
     let away_refs: Vec<&Player> = away_players.iter().collect();
 
-    // Strengths from attributes; engine owns home advantage (no extra multiplier).
-    let mut home_strength = calculate_team_strength_from_players(&home_refs, &home_tactic, &home_line);
-    let mut away_strength = calculate_team_strength_from_players(&away_refs, &away_tactic, &away_line);
+    // Full possession engine (Track 3/4): the career match now plays the same
+    // 22-individual engine as the sandbox — formation geometry, traits, cards,
+    // substitutions, injury time, real scorers. The manager's XI, shape and
+    // mentality all shape the game; difficulty and the team talk adjust the
+    // quality dial on the human side.
+    let home_squad: Vec<Player> = state
+        .players
+        .iter()
+        .filter(|p| p.club == Some(fixture.home))
+        .cloned()
+        .collect();
+    let away_squad: Vec<Player> = state
+        .players
+        .iter()
+        .filter(|p| p.club == Some(fixture.away))
+        .cloned()
+        .collect();
+    let home_rep = if fixture.home == state.club.id {
+        state.club.reputation
+    } else {
+        state
+            .league
+            .iter()
+            .find(|c| c.id == fixture.home)
+            .map(|c| c.reputation)
+            .unwrap_or(50)
+    };
+    let away_rep = if fixture.away == state.club.id {
+        state.club.reputation
+    } else {
+        state
+            .league
+            .iter()
+            .find(|c| c.id == fixture.away)
+            .map(|c| c.reputation)
+            .unwrap_or(50)
+    };
+    let (h_xi, h_bench) = build_career_side(&home_squad, &home_tactic, &home_line);
+    let (a_xi, a_bench) = build_career_side(&away_squad, &away_tactic, &away_line);
+    let h_shape = tactics::shape(home_tactic.formation, &home_tactic.instructions);
+    let a_shape = tactics::shape(away_tactic.formation, &away_tactic.instructions);
+    let (mut h_amb, mut h_q) =
+        (mentality_ambition(home_tactic.mentality), 0.9 + (home_rep as f32 / 100.0) * 0.25);
+    let (mut a_amb, mut a_q) =
+        (mentality_ambition(away_tactic.mentality), 0.9 + (away_rep as f32 / 100.0) * 0.25);
     if involves_human {
         if fixture.home == state.club.id {
-            home_strength *= diff_boost * talk_mult;
+            h_q *= diff_boost * talk_mult;
         } else {
-            away_strength *= diff_boost * talk_mult;
+            a_q *= diff_boost * talk_mult;
         }
     }
+    let venue = matchsim::Venue::HomeA;
+    let mut side_h = matchsim::Side {
+        players: &h_xi,
+        ambition: h_amb,
+        quality: h_q,
+        threat: 1.0,
+        shape: Some(h_shape),
+        width: home_tactic.instructions.width,
+        defensive_line: home_tactic.instructions.defensive_line,
+        bench: &h_bench,
+        crowd: 1.0,
+    };
+    let mut side_a = matchsim::Side {
+        players: &a_xi,
+        ambition: a_amb,
+        quality: a_q,
+        threat: 1.0,
+        shape: Some(a_shape),
+        width: away_tactic.instructions.width,
+        defensive_line: away_tactic.instructions.defensive_line,
+        bench: &a_bench,
+        crowd: 1.0,
+    };
+    let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
+    side_h.threat = th;
+    side_a.threat = ta;
+    let outcome = matchsim::simulate(&side_h, &side_a, venue, (0, 0), &mut rng);
 
-    // Shots, xG and goals from the engine so ticker and score agree.
-    let (home_goals, away_goals, shots_h, shots_a, xg_h, xg_a) =
-        engine::simulate_score(&mut rng, home_strength, away_strength);
+    let home_goals = outcome.goals_a as u32;
+    let away_goals = outcome.goals_b as u32;
+    let shots_h = outcome.shots_a as u32;
+    let shots_a = outcome.shots_b as u32;
+    let home_xg = outcome.xg_a;
+    let away_xg = outcome.xg_b;
 
-    // Minute-by-minute event ticker: goals spread across 90 minutes, each
-    // carrying an equal share of the side's xG so the ticker sums correctly.
+    // Minute-by-minute ticker from the engine's real events: goals carry their
+    // scorer and assister, injuries and sending-offs name the man.
+    let mut name_of = |id: usize| -> String {
+        home_squad
+            .iter()
+            .chain(away_squad.iter())
+            .find(|p| p.id as usize == id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("player {}", id))
+    };
     let mut events: Vec<MatchEvent> = Vec::new();
-    let xg_each_h = if home_goals > 0 { xg_h / home_goals as f32 } else { 0.0 };
-    let xg_each_a = if away_goals > 0 { xg_a / away_goals as f32 } else { 0.0 };
-    for _ in 0..home_goals {
+    for e in &outcome.events {
+        let home_side = e.side_a;
+        let text = match e.kind {
+            matchsim::EventKind::Goal | matchsim::EventKind::Penalty => {
+                let assist = e.assist.map(|a| name_of(a)).filter(|a| *a != name_of(e.actor));
+                match assist {
+                    Some(a) => format!(
+                        "GOAL {} — {} ⚽ (assist: {})",
+                        if home_side { &home_name } else { &away_name },
+                        name_of(e.actor),
+                        a
+                    ),
+                    None => format!(
+                        "GOAL {} — {} ⚽",
+                        if home_side { &home_name } else { &away_name },
+                        name_of(e.actor)
+                    ),
+                }
+            }
+            matchsim::EventKind::SetPiece => format!(
+                "GOAL {} — {} ⚽ (dead ball)",
+                if home_side { &home_name } else { &away_name },
+                name_of(e.actor)
+            ),
+            matchsim::EventKind::Injury => format!(
+                "Injury — {} ({}) forced off",
+                name_of(e.actor),
+                if home_side { &home_name } else { &away_name }
+            ),
+            matchsim::EventKind::RedCard => format!(
+                "RED CARD — {} ({}) sent off",
+                name_of(e.actor),
+                if home_side { &home_name } else { &away_name }
+            ),
+        };
         events.push(MatchEvent {
-            minute: rng.gen_range(1..=90) as u8,
-            home_side: true,
-            text: format!("GOAL {}!", home_name),
-            xg: xg_each_h,
-        });
-    }
-    for _ in 0..away_goals {
-        events.push(MatchEvent {
-            minute: rng.gen_range(1..=90) as u8,
-            home_side: false,
-            text: format!("GOAL {}!", away_name),
-            xg: xg_each_a,
+            minute: e.minute,
+            home_side,
+            text,
+            xg: 0.0,
         });
     }
     events.sort_by_key(|e| e.minute);
-    // Display the engine's real chance quality, not a per-goal reattribution,
-    // so a goalless game can still read (e.g.) xG 1.3 - 0.9.
-    let home_xg = xg_h;
-    let away_xg = xg_a;
 
     let result_fix = Fixture {
         round: fixture.round,
@@ -852,23 +1074,12 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
         }
     }
 
-    // Post-match tick for both squads (shared with AI-vs-AI fixtures).
-    tick_club_after_match(
-        state,
-        fixture.home,
-        home_goals,
-        away_goals,
-        home_tactic.instructions.pressing,
-        &mut rng,
-    );
-    tick_club_after_match(
-        state,
-        fixture.away,
-        away_goals,
-        home_goals,
-        away_tactic.instructions.pressing,
-        &mut rng,
-    );
+    // Post-match world tick for both squads, straight from the real engine
+    // (shared shape with AI-vs-AI fixtures via apply_career_stats semantics):
+    // condition, form, cards, suspensions, injuries and season stats all come
+    // off what actually happened on the pitch.
+    apply_career_stats(state, fixture.home, &outcome.stats, true, &mut rng);
+    apply_career_stats(state, fixture.away, &outcome.stats, false, &mut rng);
 
     // Add news
     if home_goals > away_goals {

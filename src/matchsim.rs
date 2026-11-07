@@ -22,7 +22,8 @@
 
 use rand::Rng;
 
-use crate::model::{Attributes, Position, Role};
+use crate::model::{Attributes, Foot, Position, Role};
+use crate::traits::{self, Trait};
 
 /// A player as the match engine sees them. `id` is the caller's own index
 /// (e.g. into the season pool); the engine only reports it back.
@@ -36,11 +37,18 @@ pub struct MatchPlayer {
     pub start_fatigue: f32,
     /// Morale/adaptation multiplier on ability, ~0.8 .. 1.15.
     pub form: f32,
+    pub traits: Vec<Trait>,
+    pub weak_foot: u8,
+    pub foot: Foot,
 }
 
 /// One side's team sheet plus the two manager dials the engine actually uses.
 pub struct Side<'a> {
     pub players: &'a [MatchPlayer],
+    /// Bench (substitutes) available to this side. Empty for legacy callers.
+    pub bench: &'a [MatchPlayer],
+    /// Crowd/attendance multiplier scaling home bias (default 1.0).
+    pub crowd: f32,
     /// Manager ambition 0.6 (pragmatic) .. 1.5 (gung-ho): sets the resting
     /// mentality and how hard they chase a deficit.
     pub ambition: f32,
@@ -50,6 +58,23 @@ pub struct Side<'a> {
     /// lineups' attributes — never reputation. Drives the pre-match tactical
     /// read (underdogs sit off, favourites press on).
     pub threat: f32,
+    /// Spatial formation (Track 3): the 11 slot coordinates the shape asks each
+    /// starter to occupy. `None` falls back to a neutral 4-4-2 so legacy call
+    /// sites still compile and behave exactly as before.
+    pub shape: Option<crate::tactics::Shape>,
+    /// Team width dial (0..100) and defensive-line dial (0..100) the shape was
+    /// warped by — kept separately so the duel layer can read the *intent*
+    /// (exposed flanks, high line) not just the resulting coordinates.
+    pub width: u8,
+    pub defensive_line: u8,
+}
+
+impl<'a> Side<'a> {
+    /// The effective shape for this side, defaulting to a neutral 4-4-2 when a
+    /// caller didn't supply one (tests, observers, the co-op fixture sims).
+    pub fn shape(&self) -> crate::tactics::Shape {
+        self.shape.unwrap_or(crate::tactics::SHAPE_DEFAULT)
+    }
 }
 
 pub enum Venue {
@@ -80,6 +105,10 @@ pub struct MatchStats {
     pub tackles: u8,
     pub interceptions: u8,
     pub fouls: u8,
+    /// Yellow cards received.
+    pub yellows: u8,
+    /// Sent off (red card).
+    pub sent_off: bool,
     /// Goalkeeper saves (on-target shots kept out).
     pub saves: u8,
     /// Kept a clean sheet (GK/defenders of a side that conceded nothing).
@@ -96,6 +125,7 @@ pub enum EventKind {
     SetPiece,
     Injury,
     Penalty,
+    RedCard,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +210,28 @@ struct Rt {
     st: Vec<MatchStats>,
     fat: Vec<f32>,
     out: Vec<bool>,
+    /// Bench players available for substitution.
+    bench: Vec<MatchPlayer>,
+    bench_used: Vec<bool>,
+    /// Stats of players who have been substituted off (to be merged into final).
+    departed: Vec<MatchStats>,
+    /// Minute each current slot entered the pitch (1 = kick-off).
+    entry: Vec<u8>,
+    subs_made: u8,
+    side_a: bool,
+    /// Set when the side is short a player (red card or injury) and the bench
+    /// should be raided at the next substitution window.
+    subs_pending_cover: bool,
+    /// Spatial slot each player occupies (Track 3). Index-aligned with `p`.
+    /// Derived from the side's `Shape`; when a caller supplies no shape this is
+    /// the neutral 4-4-2 coordinates, so geometry always exists.
+    slot: Vec<crate::tactics::Slot>,
+    /// The full formation shape (for flank-coverage reads on the defending side).
+    shape: crate::tactics::Shape,
+    /// Width dial the shape was warped by (0..100); reads flank exposure.
+    width: u8,
+    /// Defensive-line dial (0..100); reads how high the block sits.
+    def_line: u8,
     passing: Vec<f32>,
     dribble: Vec<f32>,
     creation: Vec<f32>,
@@ -229,11 +281,23 @@ fn shoot_tendency(role: Role) -> f32 {
 impl Rt {
     fn new(side: &Side, side_a: bool) -> Rt {
         let n = side.players.len();
+        let shape = side.shape();
         let mut rt = Rt {
             p: side.players.to_vec(),
             st: Vec::with_capacity(n),
             fat: vec![0.0; n],
             out: vec![false; n],
+            bench: side.bench.to_vec(),
+            bench_used: vec![false; side.bench.len()],
+            departed: Vec::new(),
+            entry: vec![1; n],
+            subs_made: 0,
+            side_a,
+            subs_pending_cover: false,
+            slot: Vec::with_capacity(n),
+            shape,
+            width: side.width,
+            def_line: side.defensive_line,
             passing: Vec::with_capacity(n),
             dribble: Vec::with_capacity(n),
             creation: Vec::with_capacity(n),
@@ -260,23 +324,73 @@ impl Rt {
                 rating: 6.0,
                 ..Default::default()
             });
-            rt.passing.push(
-                wv(a.passing) * 0.42 + wv(a.vision) * 0.24 + wv(a.composure) * 0.14 + wv(a.first_touch) * 0.20,
-            );
-            rt.dribble
-                .push(wv(a.dribbling) * 0.46 + wv(a.pace) * 0.30 + wv(a.first_touch) * 0.24);
-            rt.creation
-                .push(wv(a.vision) * 0.40 + wv(a.passing) * 0.35 + wv(a.dribbling) * 0.25);
-            rt.finish
-                .push(wv(a.shooting) * 0.55 + wv(a.composure) * 0.25 + wv(a.pace) * 0.20);
-            rt.defend.push(
-                wv(a.tackling) * 0.40 + wv(a.strength) * 0.20 + wv(a.pace) * 0.15 + wv(a.vision) * 0.25,
-            );
-            rt.press
-                .push(wv(a.stamina) * 0.40 + wv(a.tackling) * 0.35 + wv(a.pace) * 0.25);
-            rt.aerial.push(wv(a.heading) * 0.6 + wv(a.strength) * 0.4);
-            rt.gk.push(wv(a.goalkeeping) * 0.82 + wv(a.composure) * 0.18);
+            // Trait multipliers (light, surgical).
+            let tr = &mp.traits;
+            let has = |t: Trait| traits::has(tr, t);
+
+            let mut passing = wv(a.passing) * 0.42 + wv(a.vision) * 0.24 + wv(a.composure) * 0.14 + wv(a.first_touch) * 0.20;
+            if has(Trait::TikiTaka) {
+                passing *= 1.03;
+            }
+
+            let mut dribble = wv(a.dribbling) * 0.46 + wv(a.pace) * 0.30 + wv(a.first_touch) * 0.24;
+            if has(Trait::Rapid) || has(Trait::QuickStep) || has(Trait::Trickster) {
+                dribble *= 1.05;
+            }
+
+            let mut creation = wv(a.vision) * 0.40 + wv(a.passing) * 0.35 + wv(a.dribbling) * 0.25;
+            if has(Trait::IncisivePass) || has(Trait::Inventive) {
+                creation *= 1.05;
+            }
+
+            let mut finish = wv(a.shooting) * 0.55 + wv(a.composure) * 0.25 + wv(a.pace) * 0.20;
+            if has(Trait::FinesseShot) || has(Trait::LowDrivenShot) || has(Trait::Gamechanger) {
+                finish *= 1.04;
+            }
+            if has(Trait::Acrobatic) {
+                finish *= 1.03;
+            }
+
+            let defend = wv(a.tackling) * 0.40 + wv(a.strength) * 0.20 + wv(a.pace) * 0.15 + wv(a.vision) * 0.25;
+
+            let press = wv(a.stamina) * 0.40 + wv(a.tackling) * 0.35 + wv(a.pace) * 0.25;
+
+            let mut aerial = wv(a.heading) * 0.6 + wv(a.strength) * 0.4;
+            if has(Trait::PowerHeader) || has(Trait::PrecisionHeader) {
+                aerial *= 1.05;
+            }
+
+            let mut gk = wv(a.goalkeeping) * 0.82 + wv(a.composure) * 0.18;
+            if has(Trait::KeeperSweep) || has(Trait::KeeperRush) {
+                gk *= 1.04;
+            }
+
+            rt.passing.push(passing);
+            rt.dribble.push(dribble);
+            rt.creation.push(creation);
+            rt.finish.push(finish);
+            rt.defend.push(defend);
+            rt.press.push(press);
+            rt.aerial.push(aerial);
+            rt.gk.push(gk);
             rt.shoot_tend.push(shoot_tendency(mp.role));
+        }
+        // Geometry: slot i takes the i-th formation coordinate. Fewer than 11
+        // starters (tests) reuse the leading slots; extra players fall back to
+        // their line's zone so every participant always has a coordinate.
+        for (i, mp) in side.players.iter().enumerate() {
+            let s = if i < shape.slots.len() {
+                shape.slots[i]
+            } else {
+                let z = match mp.pos {
+                    Position::GK => crate::tactics::Slot::new(50, 6),
+                    Position::DEF => crate::tactics::Slot::new(50, 22),
+                    Position::MID => crate::tactics::Slot::new(50, 48),
+                    Position::FWD => crate::tactics::Slot::new(50, 74),
+                };
+                z
+            };
+            rt.slot.push(s);
         }
         rt
     }
@@ -307,6 +421,36 @@ impl Rt {
         (0..self.p.len())
             .filter(|&i| !self.out[i])
             .map(|i| (i, self.eff(i, base).max(1.0) * self.pos_w(i, fwd, mid, def, gkw)))
+            .filter(|&(_, w)| w > 0.0)
+            .collect()
+    }
+
+    /// Geometry-aware phase candidates (Track 3). Same as `group`, but each
+    /// player's weight is additionally scaled by how close his *slot* sits to
+    /// the zone the phase is contested in — so the man picked to build up is a
+    /// deep-lying body, the progressor is a midfielder, and the creator lives
+    /// between the lines, exactly as the shape places them. `phase_y` is the
+    /// phase's centre band (BUILDUP_Y / PROGRESSION_Y / FINAL_THIRD_Y).
+    fn phase_group(
+        &self,
+        base: &[f32],
+        fwd: f32,
+        mid: f32,
+        def: f32,
+        gkw: f32,
+        phase_y: u8,
+    ) -> Vec<(usize, f32)> {
+        (0..self.p.len())
+            .filter(|&i| !self.out[i])
+            .map(|i| {
+                let pw = crate::tactics::phase_weight(self.slot[i].y, phase_y);
+                (
+                    i,
+                    self.eff(i, base).max(1.0)
+                        * self.pos_w(i, fwd, mid, def, gkw)
+                        * (0.4 + 0.6 * pw),
+                )
+            })
             .filter(|&(_, w)| w > 0.0)
             .collect()
     }
@@ -479,13 +623,22 @@ pub fn simulate(a: &Side, b: &Side, venue: Venue, agg: (u8, u8), rng: &mut impl 
     let mut ra = Rt::new(a, true);
     let mut rb = Rt::new(b, false);
 
-    let home_bias_a = match venue {
+    let home_bias_base = match venue {
         Venue::HomeA => 0.28,
         Venue::HomeB => -0.28,
         Venue::Neutral => 0.0,
     };
+    // --- Track 4: the crowd. The home lift scales with the `crowd` factor a
+    // caller supplies (season layer can later feed real attendance), so a
+    // packed stadium genuinely lifts its side and an empty one doesn't.
+    let home_bias_a = home_bias_base
+        * (a.crowd * 0.75 + b.crowd * -0.25).clamp(0.4, 1.4);
 
-    let total_drives: usize = 190;
+    // --- Track 4: injury time. Added minutes emerge from what actually
+    // happened: fouls, injuries and stoppages (subs) all eat the clock, and
+    // time-wasting managers drag it out. Base 2-5 min per the whole match.
+    let mut total_drives: usize = 190;
+
     let mut poss_a: u16 = 0;
     let (mut shots_a, mut shots_b) = (0u16, 0u16);
     let (mut xg_a, mut xg_b) = (0.0f32, 0.0f32);
@@ -564,14 +717,50 @@ pub fn simulate(a: &Side, b: &Side, venue: Venue, agg: (u8, u8), rng: &mut impl 
         } else {
             drive(&mut rb, &mut ra, ment_b, ment_a, minute, false, &mut shots_b, &mut xg_b, &mut events, rng);
         }
+
+        // --- Track 4: substitutions. Checked every ~9 drives (≈5 match
+        // minutes) at natural breaks in play.
+        if d % 9 == 8 {
+            maybe_substitute(&mut ra, minute, ment_a, rng);
+            maybe_substitute(&mut rb, minute, ment_b, rng);
+        }
     }
+
+    // Injury time: extend the match with extra drives past the 90', derived
+    // from accumulated fouls/injuries — late drama has somewhere to live.
+    let base_drives: usize = 190;
+    let extra = added_minutes(&ra, &rb, rng) as usize * base_drives / 95;
+    for d in base_drives..base_drives + extra {
+        let minute = ((d as f32) * 96.0 / base_drives as f32) as u8 + 1;
+        let gd_a = (ra.goals as i32 + agg.0 as i32) - (rb.goals as i32 + agg.1 as i32);
+        let ment_a2 = (decide_mentality(ra.ambition, gd_a, minute, ra.quality, a.threat) + caution_a).clamp(-3, 3);
+        let ment_b2 = (decide_mentality(rb.ambition, -gd_a, minute, rb.quality, b.threat) + caution_b).clamp(-3, 3);
+        let ctrl = ((ra.control() - rb.control()) / 37.0
+            + (ra.quality_index() - rb.quality_index()) / 38.0
+            + home_bias_a
+            + (ment_a2 - ment_b2) as f32 * 0.05
+            + (ra.quality - rb.quality) * 0.7)
+            .clamp(-1.1, 1.1);
+        let attacking_a = rng.gen::<f32>() < logistic(ctrl);
+        if attacking_a {
+            poss_a += 1;
+            drive(&mut ra, &mut rb, ment_a2, ment_b2, minute, true, &mut shots_a, &mut xg_a, &mut events, rng);
+        } else {
+            drive(&mut rb, &mut ra, ment_b2, ment_a2, minute, false, &mut shots_b, &mut xg_b, &mut events, rng);
+        }
+    }
+    let total_drives = base_drives + extra;
 
     finalize_ratings(&mut ra, rb.goals);
     finalize_ratings(&mut rb, ra.goals);
 
     let poss = ((poss_a as f32 / total_drives as f32) * 100.0).round() as u8;
-    let mut stats = ra.st;
-    stats.extend(rb.st);
+    // Merge the starting sheets with the banked lines of everyone substituted
+    // off, so a sub who scored keeps his goal in the final report.
+    let mut stats = ra.st.clone();
+    stats.extend(ra.departed.iter().cloned());
+    stats.extend(rb.st.iter().cloned());
+    stats.extend(rb.departed.iter().cloned());
 
     MatchOutcome {
         goals_a: ra.goals,
@@ -590,6 +779,118 @@ pub fn simulate(a: &Side, b: &Side, venue: Venue, agg: (u8, u8), rng: &mut impl 
         end_mentality_a: ment_a,
         end_mentality_b: ment_b,
     }
+}
+
+/// Track 4: stoppage time, derived from what the match actually consumed —
+/// fouls, injuries, subs. 2..7 minutes.
+fn added_minutes(ra: &Rt, rb: &Rt, rng: &mut impl Rng) -> u8 {
+    let fouls: u16 = ra.st.iter().map(|s| s.fouls as u16).sum::<u16>()
+        + rb.st.iter().map(|s| s.fouls as u16).sum::<u16>();
+    let injuries: u16 = ra
+        .st
+        .iter()
+        .chain(rb.st.iter())
+        .filter(|s| s.injury_days > 0)
+        .count() as u16;
+    let subs = ra.subs_made as u16 + rb.subs_made as u16;
+    let base = 2u16 + rng.gen_range(0..3);
+    let from_events = (fouls / 8) + injuries + (subs / 2);
+    (base + from_events.min(4)) as u8
+}
+
+/// Track 4: AI substitutions at a natural break. Three triggers, all emergent
+/// from the match state — never a fixed minute:
+///   1. exhaustion: a spent starter replaced by a fresher same-line bench body;
+///   2. chasing: a losing side after the hour throws its best remaining
+///      attacker on, line permitting;
+///   3. cover: the side is a man short (red card / injury) and the bench
+///      plugs the gap in the vacated line.
+fn maybe_substitute(rt: &mut Rt, minute: u8, ment: i8, rng: &mut impl Rng) {
+    if rt.subs_made >= 5 || rt.bench.is_empty() || minute < 46 {
+        return;
+    }
+    let chasing = ment >= 2 && minute >= 60;
+
+    // Outgoing: the most-spent outfield starter (stars are protected a little
+    // because their effective quality raises the bar for going off).
+    let mut pick_out: Option<usize> = None;
+    let mut worst = -1.0f32;
+    for i in 0..rt.p.len() {
+        if rt.out[i] || rt.is_gk(i) {
+            continue;
+        }
+        let spent = rt.p[i].start_fatigue + rt.fat[i];
+        if spent < 0.45 {
+            continue; // nobody worth taking off yet
+        }
+        let quality = rt.eff(i, &rt.passing) + rt.eff(i, &rt.dribble);
+        let score = spent * 120.0 - quality * 0.5 + rng.gen::<f32>() * 8.0;
+        if score > worst {
+            worst = score;
+            pick_out = Some(i);
+        }
+    }
+    let Some(out_i) = pick_out else { return };
+
+    // Incoming: freshest unused bench player in the same line (or any attacker
+    // when chasing; or anyone when covering a red card).
+    let out_line = match rt.p[out_i].pos {
+        Position::GK => 0,
+        Position::DEF => 1,
+        Position::MID => 2,
+        Position::FWD => 3,
+    };
+    let mut best_in: Option<usize> = None;
+    let mut best_fresh = -1.0f32;
+    for (b, mp) in rt.bench.iter().enumerate() {
+        if rt.bench_used[b] {
+            continue;
+        }
+        let line = match mp.pos {
+            Position::GK => 0,
+            Position::DEF => 1,
+            Position::MID => 2,
+            Position::FWD => 3,
+        };
+        let fits = line == out_line || (chasing && mp.pos == Position::FWD) || rt.subs_pending_cover;
+        if !fits {
+            continue;
+        }
+        let fresh = 100.0 - mp.start_fatigue * 100.0;
+        if fresh > best_fresh {
+            best_fresh = fresh;
+            best_in = Some(b);
+        }
+    }
+    let Some(b) = best_in else {
+        rt.subs_pending_cover = false;
+        return;
+    };
+
+    // Execute the swap: the bench body takes the slot; his freshness resets
+    // most of the slot's fatigue; the departed man's sheet is banked so his
+    // minutes/goals survive in the merged final stats.
+    let incoming = rt.bench[b].clone();
+    let incoming_fat = incoming.start_fatigue;
+    let incoming_id = incoming.id;
+    rt.bench_used[b] = true;
+    let mut dep = std::mem::take(&mut rt.st[out_i]);
+    dep.minutes = minute.saturating_sub(rt.entry[out_i]);
+    rt.departed.push(dep);
+    rt.p[out_i] = incoming;
+    // Fresh stats line for the incoming player — attributed to HIS id so a
+    // sub who scores keeps the goal (the departed man's line is banked above).
+    rt.st[out_i] = MatchStats {
+        id: incoming_id,
+        side_a: rt.side_a,
+        minutes: 90,
+        rating: 6.0,
+        ..Default::default()
+    };
+    rt.fat[out_i] = incoming_fat * 0.35;
+    rt.entry[out_i] = minute;
+    rt.subs_made += 1;
+    rt.subs_pending_cover = false;
 }
 
 /// One attacking possession by `atk` against `def`. Progresses through three
@@ -632,9 +933,10 @@ fn drive(
         }
     }
 
-    // Phase 1 — build-up.
-    let Some(ba) = wpick(&atk.group(&atk.passing, 0.7, 1.0, 1.0, 0.2), rng) else { return };
-    let Some(bd) = wpick(&def.group(&def.press, 1.0, 1.0, 0.5, 0.0), rng) else { return };
+    // Phase 1 — build-up. Participants are drawn from the deep zone: the shape
+    // decides who receives out of defence (a back three's CBs, a pivot's DM).
+    let Some(ba) = wpick(&atk.phase_group(&atk.passing, 0.7, 1.0, 1.0, 0.2, crate::tactics::BUILDUP_Y), rng) else { return };
+    let Some(bd) = wpick(&def.phase_group(&def.press, 1.0, 1.0, 0.5, 0.0, crate::tactics::PROGRESSION_Y), rng) else { return };
     atk.st[ba].passes_att += 1;
     atk.add_fatigue(ba, 0.004);
     def.add_fatigue(bd, 0.005 + (press.max(0.0)) * 0.001);
@@ -647,9 +949,11 @@ fn drive(
         return;
     }
 
-    // Phase 2 — progression through midfield (pass or carry).
-    let Some(pa) = wpick(&atk.group(&atk.passing, 0.9, 1.2, 0.5, 0.0), rng) else { return };
-    let Some(mut pd) = wpick(&def.group(&def.defend, 0.5, 1.0, 1.0, 0.0), rng) else { return };
+    // Phase 2 — progression through midfield (pass or carry). The carrier is
+    // the man the shape parks in the middle third; the challenger is the
+    // defender whose zone he's entering.
+    let Some(pa) = wpick(&atk.phase_group(&atk.passing, 0.9, 1.2, 0.5, 0.0, crate::tactics::PROGRESSION_Y), rng) else { return };
+    let Some(mut pd) = wpick(&def.phase_group(&def.defend, 0.5, 1.0, 1.0, 0.0, crate::tactics::PROGRESSION_Y), rng) else { return };
     // Man-marking: the danger man gets no zonal duel — his shadow takes him
     // one-on-one instead of the picked defender, and all downstream credits,
     // fouls and turnovers follow the marker naturally. Shadowing tires him.
@@ -667,13 +971,35 @@ fn drive(
     // Isolated duels resolve steeply on the raw gap (no help to hide behind);
     // zonal duels stay saturated.
     let carry = atk.eff(pa, &atk.dribble) > atk.eff(pa, &atk.passing) && rng.gen::<f32>() < 0.5;
+    // --- Track 3 physics: exposed flanks & the high line. -------------------
+    // (a) A carrier operating in a wide channel the *opponent's shape* doesn't
+    //     cover gets a real edge — a narrow diamond or back three concedes the
+    //     touchline, so a winger or wing-back beats his man more often there.
+    //     Bonus is geometric (uncovered width / 100), capped modestly.
+    let flank_bonus = if carry {
+        let cov = crate::tactics::flank_coverage(&def.shape, atk.slot[pa].x);
+        if cov > 6 {
+            (cov as f32 / 100.0 * 0.18).min(0.18)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    // (b) A through-ball in behind is a foot race the defending side invites by
+    //     holding a high line: the higher the block, the more attacker's pace
+    //     matters on the progression duel. Modelled as a bias added to the
+    //     pass-carry contest when the carrier/runner is quicker than the marker.
+    let pace_edge = (atk.eff(pa, &atk.dribble) - pres) / 100.0;
+    let line_bonus = (def.def_line as f32 - 50.0) / 50.0 * pace_edge.clamp(0.0, 0.5);
+    let shape_bias = (flank_bonus + line_bonus) * 20.0; // convert to contest bias points
     if carry {
         atk.st[pa].dribbles_att += 1;
         atk.add_fatigue(pa, 0.006);
         let p = if man_marked {
-            contest_iso(atk.eff(pa, &atk.dribble), pres, direct)
+            contest_iso(atk.eff(pa, &atk.dribble), pres, direct + shape_bias)
         } else {
-            contest(atk.eff(pa, &atk.dribble), pres, direct)
+            contest(atk.eff(pa, &atk.dribble), pres, direct + shape_bias)
         };
         if rng.gen::<f32>() < p {
             atk.st[pa].dribbles_cmp += 1;
@@ -685,9 +1011,9 @@ fn drive(
         atk.st[pa].passes_att += 1;
         atk.add_fatigue(pa, 0.004);
         let p = if man_marked {
-            contest_iso(atk.eff(pa, &atk.passing), pres, direct)
+            contest_iso(atk.eff(pa, &atk.passing), pres, direct + shape_bias)
         } else {
-            contest(atk.eff(pa, &atk.passing), pres, direct)
+            contest(atk.eff(pa, &atk.passing), pres, direct + shape_bias)
         };
         if rng.gen::<f32>() < p {
             atk.st[pa].passes_cmp += 1;
@@ -701,8 +1027,8 @@ fn drive(
     // is chiefly a midfield/wide job (playmakers, wingers, overlapping
     // full-backs), so those roles — not just the striker — rack up the key
     // passes, assists and big chances, exactly as real chance-creation charts.
-    let Some(ca) = wpick(&atk.group(&atk.creation, 0.95, 1.35, 0.45, 0.0), rng) else { return };
-    let Some(mut cd) = wpick(&def.group(&def.defend, 0.3, 0.7, 1.2, 0.0), rng) else { return };
+    let Some(ca) = wpick(&atk.phase_group(&atk.creation, 0.95, 1.35, 0.45, 0.0, crate::tactics::FINAL_THIRD_Y), rng) else { return };
+    let Some(mut cd) = wpick(&def.phase_group(&def.defend, 0.3, 0.7, 1.2, 0.0, crate::tactics::BUILDUP_Y), rng) else { return };
     atk.st[ca].passes_att += 1;
     atk.add_fatigue(ca, 0.005);
     // Numbers in the final third emerge from mentalities: a side pouring
@@ -778,6 +1104,63 @@ fn drive(
         logistic((intensity - wv(def.p[cd].attrs.composure) - 10.0) / 14.0).clamp(0.02, 0.22);
     if rng.gen::<f32>() < foul_p {
         def.st[cd].fouls += 1;
+        // --- Track 4: cards. A booking emerges from the challenge: high-
+        // intensity tackles (tackling × strength vs the fouler's composure)
+        // risk a yellow; a cynical foul that denies a clear chance (the beaten
+        // creator was through on goal, no one behind) is a straight red.
+        let card_p = logistic(
+            (intensity - wv(def.p[cd].attrs.composure) - 24.0) / 12.0,
+        )
+        .clamp(0.03, 0.45);
+        let beaten_man_through = atk.p[ca].pos == Position::FWD
+            || (atk.st[ca].big_chances_missed + atk.st[ca].big_chances_created) > 0;
+        let last_man = def
+            .p
+            .iter()
+            .filter(|p| p.pos == Position::DEF)
+            .count()
+            <= 2
+            && def.p[cd].pos != Position::GK;
+        let roll = rng.gen::<f32>();
+        if roll < card_p * 0.55 {
+            def.st[cd].yellows += 1;
+            if def.st[cd].yellows >= 2 {
+                // Second yellow: off he goes.
+                def.st[cd].sent_off = true;
+                def.out[cd] = true;
+                def.subs_pending_cover = true;
+                events.push(Event {
+                    minute,
+                    side_a: !atk_is_a,
+                    kind: EventKind::RedCard,
+                    actor: def.st[cd].id,
+                    assist: None,
+                });
+                // Covering a man down tires the ten remaining teammates.
+                for j in 0..def.p.len() {
+                    if !def.out[j] {
+                        def.add_fatigue(j, 0.02);
+                    }
+                }
+            }
+        } else if last_man && beaten_man_through && roll < card_p * 0.55 + 0.05 {
+            // Denying a clear goal-scoring opportunity: straight red.
+            def.st[cd].sent_off = true;
+            def.out[cd] = true;
+            def.subs_pending_cover = true;
+            events.push(Event {
+                minute,
+                side_a: !atk_is_a,
+                kind: EventKind::RedCard,
+                actor: def.st[cd].id,
+                assist: None,
+            });
+            for j in 0..def.p.len() {
+                if !def.out[j] {
+                    def.add_fatigue(j, 0.02);
+                }
+            }
+        }
         take_free_kick(atk, def, minute, atk_is_a, shots, events, rng);
         return;
     }
@@ -855,11 +1238,29 @@ fn drive(
     // bind almost only on chances farmed from overmatched defenses. Penalties
     // (base 0.75) keep their real conversion.
     let volume = 1.0 / (1.0 + 0.09 * (atk.st[sh].shots as f32 - 4.0).max(0.0));
-    let scored_p = if base >= 0.6 {
+    let mut scored_p = if base >= 0.6 {
         raw
     } else {
         (raw.min(0.26) * volume).min(0.26)
     };
+    // Weak-foot approximation: a shot is taken on the weak foot when the shooter
+    // is a winger/inside-forward cutting inside, or randomly ~25% of shots
+    // otherwise. Conversion is scaled by (0.55 + 0.09*weak_foot).
+    let weak_shot = (matches!(atk.p[sh].role, Role::Winger | Role::InsideForward)
+        && rng.gen::<f32>() < 0.5)
+        || rng.gen::<f32>() < 0.25;
+    if weak_shot {
+        let wf = atk.p[sh].weak_foot.clamp(1, 5) as f32;
+        if wf == 0.0 {
+            // unknown -> treat as 3
+        }
+        let factor = if atk.p[sh].weak_foot == 0 {
+            0.55 + 0.09 * 3.0
+        } else {
+            0.55 + 0.09 * wf
+        };
+        scored_p *= factor;
+    }
     let scored = rng.gen::<f32>() < scored_p;
     if scored {
         on_target = true;
@@ -931,7 +1332,10 @@ fn header_attempt(
         .map(|i| def.eff(i, &def.aerial) * def.pos_w(i, 0.3, 0.6, 1.2, 0.0))
         .fold(0.0f32, f32::max);
     let keeper = def.gk_index().map(|g| def.eff(g, &def.gk)).unwrap_or(70.0);
-    let threat = hq(atk, target);
+    let mut threat = hq(atk, target);
+    if traits::has(&atk.p[target].traits, Trait::Acrobatic) {
+        threat *= 1.03;
+    }
     atk.st[taker].passes_att += 1;
     atk.st[taker].passes_cmp += 1;
     atk.add_fatigue(taker, 0.003);
@@ -1183,6 +1587,9 @@ mod tests {
             attrs: base_attrs(v),
             start_fatigue: 0.0,
             form: 1.0,
+            traits: Vec::new(),
+            weak_foot: 3,
+            foot: Foot::Right,
         }
     }
 
@@ -1207,6 +1614,11 @@ mod tests {
             ambition: 1.0,
             quality: 1.0,
             threat: 1.0,
+            shape: None,
+            width: 50,
+            defensive_line: 50,
+            bench: &[],
+            crowd: 1.0,
         }
     }
 
@@ -1555,7 +1967,7 @@ mod tests {
                 a.passing = craft;
                 a.vision = craft;
             }
-            MatchPlayer { id, pos, role, attrs: a, start_fatigue: 0.0, form: 1.0 }
+            MatchPlayer { id, pos, role, attrs: a, start_fatigue: 0.0, form: 1.0, traits: Vec::new(), weak_foot: 3, foot: Foot::Right }
         }
         let mut home = vec![star(0, Position::GK, Role::Goalkeeper, 78, 78)];
         for k in 0..4 {
@@ -1598,7 +2010,7 @@ mod tests {
     #[test]
     fn wonderkid_environments_probe() {
         fn mk(id: usize, pos: Position, role: Role, v: u8) -> MatchPlayer {
-            MatchPlayer { id, pos, role, attrs: base_attrs(v), start_fatigue: 0.0, form: 1.0 }
+            MatchPlayer { id, pos, role, attrs: base_attrs(v), start_fatigue: 0.0, form: 1.0, traits: Vec::new(), weak_foot: 3, foot: Foot::Right }
         }
         fn star9() -> MatchPlayer {
             let mut a = base_attrs(78);
@@ -1608,7 +2020,7 @@ mod tests {
             a.dribbling = 90;
             a.passing = 72;
             a.vision = 72;
-            MatchPlayer { id: 8, pos: Position::FWD, role: Role::Poacher, attrs: a, start_fatigue: 0.0, form: 1.0 }
+            MatchPlayer { id: 8, pos: Position::FWD, role: Role::Poacher, attrs: a, start_fatigue: 0.0, form: 1.0, traits: Vec::new(), weak_foot: 3, foot: Foot::Right }
         }
         // Dominant: 88 teammates vs 65 opposition.
         let mut dom = vec![mk(0, Position::GK, Role::Goalkeeper, 86)];
@@ -1637,7 +2049,7 @@ mod tests {
         // heading, so he also hogs every dead ball), morale-pinned team vs a
         // demoralized weak league — the late-decade perfect storm.
         fn maxed(id: usize, pos: Position, role: Role, form: f32) -> MatchPlayer {
-            MatchPlayer { id, pos, role, attrs: base_attrs(99), start_fatigue: 0.0, form }
+            MatchPlayer { id, pos, role, attrs: base_attrs(99), start_fatigue: 0.0, form, traits: Vec::new(), weak_foot: 3, foot: Foot::Right }
         }
         let mut storm = vec![maxed(0, Position::GK, Role::Goalkeeper, 1.05)];
         for k in 0..4 {

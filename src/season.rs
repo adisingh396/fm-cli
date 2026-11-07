@@ -342,8 +342,67 @@ struct Team {
     shape: (usize, usize, usize),
 }
 
+/// Pick the spatial `tactics::Shape` that best matches this AI team's (d,m,f)
+/// line shape. Ambition nudges toward the more expansive variants (a brave
+/// 3-5-2 pushes the wing-backs higher; a nervous 4-3-3 sits flatter), so two
+/// clubs fielding the same numbers don't necessarily occupy the same pitch.
+fn team_shape(t: &Team) -> crate::tactics::Shape {
+    let (d, m, f) = t.shape;
+    let ambitious = t.manager.ambition > 1.1;
+    let f_ = match (d, m, f) {
+        (4, 3, 3) => {
+            if ambitious {
+                Formation::F433
+            } else {
+                Formation::F433Flat
+            }
+        }
+        (4, 5, 1) => Formation::F4141,
+        (4, 4, 2) => Formation::F442,
+        (3, 5, 2) => {
+            if ambitious {
+                Formation::F352Attacking
+            } else {
+                Formation::F352
+            }
+        }
+        (3, 4, 3) => Formation::F343,
+        (4, 2, 3) => Formation::F4411, // (4,2,3,1 collapsed) → 4-4-1-1 family
+        (5, 3, 2) => Formation::F532,
+        (5, 4, 1) => Formation::F541,
+        _ => Formation::F442,
+    };
+    // Build the shape through tactics::shape so the AI's width/defensive-line
+    // dials warp the base coordinates the same way the human's do.
+    let instr = crate::model::TeamInstructions {
+        width: 50,
+        tempo: 50,
+        directness: 50,
+        pressing: 50,
+        defensive_line: def_line(t),
+        time_wasting: 50,
+    };
+    crate::tactics::shape(f_, &instr)
+}
+
+/// Effective defensive line (0..100) for an AI team, derived from manager
+/// ambition: gung-ho coaches hold a higher line, pragmatists sit deeper.
+fn def_line(t: &Team) -> u8 {
+    (50.0 + (t.manager.ambition - 1.0) * 40.0)
+        .round()
+        .clamp(30.0, 78.0) as u8
+}
+
 impl Team {
     fn pts(&self) -> u16 {
+
+/// Effective defensive line (0..100) for an AI team, derived from manager
+/// ambition: gung-ho coaches hold a higher line, pragmatists sit deeper.
+fn def_line(t: &Team) -> u8 {
+    (50.0 + (t.manager.ambition - 1.0) * 40.0)
+        .round()
+        .clamp(30.0, 78.0) as u8
+}
         self.w * 3 + self.d
     }
     fn gd(&self) -> i32 {
@@ -944,6 +1003,9 @@ fn build_lineup(md: &[(usize, Role)], pool: &[WP]) -> Vec<MatchPlayer> {
                 attrs: pool[i].attrs,
                 start_fatigue: (pool[i].fatigue as f32 / 100.0).clamp(0.0, 1.0),
                 form: (m * a * marked).max(0.5),
+                traits: Vec::new(),
+                weak_foot: 3,
+                foot: crate::model::Foot::Right,
             }
         })
         .collect()
@@ -1051,12 +1113,22 @@ fn play(
         ambition: teams[home].manager.ambition,
         quality: teams[home].manager.quality,
         threat: 1.0,
+        shape: Some(team_shape(&teams[home])),
+        width: 50,
+        defensive_line: def_line(&teams[home]),
+        bench: &[],
+        crowd: 1.0,
     };
     let mut side_a = Side {
         players: &axi,
         ambition: teams[away].manager.ambition,
         quality: teams[away].manager.quality,
         threat: 1.0,
+        shape: Some(team_shape(&teams[away])),
+        width: 50,
+        defensive_line: def_line(&teams[away]),
+        bench: &[],
+        crowd: 1.0,
     };
     // Both dugouts scout the matchup off the two XIs (never reputation):
     // underdogs start cagier, favourites start on the front foot.
@@ -1297,7 +1369,7 @@ fn super_cup_winner(field: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64
 fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     let mut pool: Vec<WP> = Vec::new();
     let mut teams: Vec<Team> = Vec::new();
-    let mut league_teams: Vec<Vec<usize>> = vec![Vec::new(); BIG5.len()];
+    let mut league_teams: Vec<Vec<usize>> = vec![Vec::new(); BIG5.len() + 1];
     // A single 2026 dump can still list the same man twice — at two clubs,
     // under subtly different spellings ("Kylian Mbappe" vs "Kylian Mbappe
     // Lottin"), or as a duplicate row. Group every candidate by first name +
@@ -1379,6 +1451,28 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         clubs.truncate(20);
         league_clubs[li] = clubs.iter().map(|c| c.id).collect();
     }
+    // Real European outsiders (Track 5 / world expansion): the top 8 clubs by
+    // reputation from the other UEFA tier-1 leagues in the database — Porto,
+    // Benfica, Ajax, Celtic, Brugge, Galatasaray… — loaded with their real
+    // squads instead of procedural farmers. They play no domestic league in
+    // the sandbox (league_idx 5) but contest the UCL, Europa and the market.
+    let mut oc: Vec<&Club> = db
+        .clubs()
+        .iter()
+        .filter(|c| {
+            if BIG5.iter().any(|b| c.league.eq_ignore_ascii_case(b)) {
+                return false;
+            }
+            match crate::world_model::lookup(&c.league) {
+                Some(l) => {
+                    l.confed == crate::world_model::Confederation::UEFA && l.tier == 1
+                }
+                None => false,
+            }
+        })
+        .collect();
+    oc.sort_by(|a, b| b.reputation.cmp(&a.reputation));
+    let outsider_clubs: Vec<ClubId> = oc.iter().take(8).map(|c| c.id).collect();
     // Every candidate row (generous top-30 per club; dedupe losses follow).
     struct Cand {
         pid: PlayerId,
@@ -1388,7 +1482,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     }
     let mut by_first: std::collections::HashMap<(String, u8), Vec<Cand>> =
         std::collections::HashMap::new();
-    for ids in &league_clubs {
+    for ids in league_clubs.iter().chain(std::iter::once(&outsider_clubs)) {
         for cid in ids {
             let Some(c) = db.clubs().iter().find(|c| c.id == *cid) else { continue };
             let mut ranked: Vec<(u8, PlayerId)> = c
@@ -1438,8 +1532,15 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
 
-    for (li, _lname) in BIG5.iter().enumerate() {
-        let ids = league_clubs[li].clone();
+    // Build groups: the five Big-5 leagues (indices 0..5) plus the real
+    // outsider clubs as group 5 (league_idx 5 = "no domestic league here").
+    let mut groups: Vec<(&Vec<ClubId>, usize)> = league_clubs
+        .iter()
+        .enumerate()
+        .map(|(i, ids)| (ids, i))
+        .collect();
+    groups.push((&outsider_clubs, 5));
+    for (ids, li) in groups {
         let mut clubs: Vec<&Club> = ids
             .iter()
             .filter_map(|cid| db.clubs().iter().find(|c| c.id == *cid))
@@ -1615,11 +1716,11 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
 
-    // Europe's second tier (Porto, Ajax, Celtic…): real UCL fields are full of
-    // them, and without farmers every group game is elite-vs-elite — which is
-    // exactly why star UCL rates sat at half their league level. They play no
-    // domestic league here (league_idx 5 = outside the Big 5) but contest the
-    // UCL, trade in the window, and can grow into genuine powers over decades.
+    // Fallback only: if the database offered no real European outsiders
+    // (e.g. a dataset-free run), build the classic eight procedural ones so
+    // the UCL field still has its farmers. When real outsider squads loaded
+    // above (league_idx 5), this block is skipped entirely.
+    if outsider_clubs.is_empty() {
     let fillers = [
         ("FC Porto", 66u8),
         ("SL Benfica", 65),
@@ -1776,6 +1877,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             manager: Manager::new_random(rng, &params),
             shape,
         });
+    }
     }
 
     let used_names: std::collections::HashSet<String> =
@@ -4023,8 +4125,8 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
         } else {
             let axi = build_lineup(&hmd, pool);
             let bxi = build_lineup(&amd, pool);
-            let mut side_a = Side { players: &axi, ambition: teams[a].manager.ambition, quality: teams[a].manager.quality, threat: 1.0 };
-            let mut side_b = Side { players: &bxi, ambition: teams[b].manager.ambition, quality: teams[b].manager.quality, threat: 1.0 };
+            let mut side_a = Side { players: &axi, ambition: teams[a].manager.ambition, quality: teams[a].manager.quality, threat: 1.0, shape: Some(team_shape(&teams[a])), width: 50, defensive_line: def_line(&teams[a]), bench: &[], crowd: 1.0 };
+            let mut side_b = Side { players: &bxi, ambition: teams[b].manager.ambition, quality: teams[b].manager.quality, threat: 1.0, shape: Some(team_shape(&teams[b])), width: 50, defensive_line: def_line(&teams[b]), bench: &[], crowd: 1.0 };
             let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
             side_a.threat = ta;
             side_b.threat = tb;
@@ -4121,6 +4223,9 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
             attrs: w.attrs,
             start_fatigue: (w.fatigue as f32 / 100.0).clamp(0.0, 1.0),
             form: m.max(0.6),
+            traits: Vec::new(),
+            weak_foot: 3,
+            foot: crate::model::Foot::Right,
         }
     };
     for (line, count) in shape {
@@ -4161,8 +4266,8 @@ fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Para
     if axi.len() < 7 || bxi.len() < 7 {
         return (0, 0);
     }
-    let mut side_a = Side { players: &axi, ambition: 1.0, quality: 1.0, threat: 1.0 };
-    let mut side_b = Side { players: &bxi, ambition: 1.0, quality: 1.0, threat: 1.0 };
+    let mut side_a = Side { players: &axi, ambition: 1.0, quality: 1.0, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_b = Side { players: &bxi, ambition: 1.0, quality: 1.0, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
     let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
     side_a.threat = ta;
     side_b.threat = tb;

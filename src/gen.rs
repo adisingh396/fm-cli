@@ -424,6 +424,11 @@ impl Gen {
             transfer_status: 0,
             scout_knowledge: 0,
             personality,
+            foot: Foot::Right,
+            weak_foot: self.rng.gen_range(2..=4),
+            skill_moves: self.rng.gen_range(2..=4),
+            traits: Vec::new(),
+            height_cm: 0,
         };
         p.recompute_value();
         p

@@ -16,7 +16,20 @@ same-schema dump at `data/players.csv` to upgrade ratings.
   drop a striker into a False Nine, push a midfielder to centre-back, invert a
   full-back. Each slot shows a live role-fit rating (per-attribute, with an
   out-of-position penalty) so the trade-off is visible, and the choice feeds
-  straight into match strength. Auto-pick fills the best-fitting XI.
+  straight into match strength. Auto-pick fills the best-fitting XI. Thirteen
+  formations are modelled as real 11-slot pitch geometry (`tactics.rs`): a
+  narrow diamond genuinely concedes the flanks, a high line invites through
+  balls a pacey runner exploits, wing-backs create genuine wide overloads.
+- **Player traits & body** — The 2026 dump's FC playstyles (Finesse Shot,
+  Rapid, Dead Ball, Incisive Pass…) are parsed into internal traits that bias
+  finishing, creation, dribbling and set pieces, and preferred foot / weak foot
+  penalise finishing on the wrong side — all emerging from duels, not dice.
+- **Full match realism** — Real substitutions (bench of 7, exhaustion/chasing/
+  cover triggers), cards with second-yellow and straight-red sendings-off (a
+  team can finish a man down), stoppage time derived from fouls/injuries/subs,
+  crowd lift scaled by the `crowd` dial, and — for your own career — the full
+  possession engine runs *your* matches, so your XI, shape and mentality shape
+  the game and scorers/assists/cards come off real events.
 - **Squad Management** — View squads, inspect details (condition/sharpness/cards/injury, best-fit roles), sell players
 - **Transfer Market** — Buy players from the 2026 database using real market values
 - **Loans** — Loan out/in with fees, wage split, monthly countdown, recall clauses, buy options
@@ -36,21 +49,27 @@ same-schema dump at `data/players.csv` to upgrade ratings.
   scoreline changes), then read full per-player rating sheets. Or spectate a
   whole league season and browse the final table, top scorers/assisters, top
   ratings, chances created, and any club's full squad stat lines.
-- **Simulate Season(s) (sandbox)** — Headless sim of the Big 5 leagues + Champions
-  League + Europa League + domestic cups + international tournaments (World Cup every
-  4 years, Euros in between), for one season (detailed) or up to 100 years (dynasty).
-  Every club match is played by a **possession engine** (`matchsim`): ~190 possessions
-  where 22 individuals contest build-up, progression and the final third from their own
-  attributes, so passes, dribbles, key passes, big chances, shots, tackles, saves,
-  goals, assists, ratings and even injuries all emerge from real play (no flat
-  per-event chances). Shot-taking follows role tendency (finishers hunt, holders
-  recycle) with a hot hand when a man scores and defensive attention when he shoots
-  all game; chance quality emerges from the creative duel. Corners and dangerous
-  free kicks are full aerial contests decided by heading × strength, and deep-sitting
-  sides genuinely double up while gung-ho sides overload. Managers read the scoreline
-  — including a two-legged tie's aggregate — and shift mentality mid-match, and the
-  opponent reacts. The UCL runs the real Swiss format (8 games, top 16 through,
-  single-leg neutral final) with outsiders (Porto, Ajax, Celtic…) in the field.
+- **Headless season sim (sandbox)** — Headless sim of the Big 5 leagues + the
+  top non-Big-5 UEFA clubs (Porto, Benfica, Ajax, Celtic, Brugge, Galatasaray,
+  PSV…) fielded with their *real* squads from the database as the "outsider"
+  group contesting the Champions League (league_idx 5), plus Europa League,
+  domestic cups + international tournaments (World Cup every 4 years, Euros in
+  between), for one season (detailed) or up to 100 years (dynasty). Every club
+  match is played by a **possession engine** (`matchsim`): ~190 possessions
+  where 22 individuals contest build-up, progression and the final third from
+  their own attributes *and their formation coordinates* — inverted
+  full-backs add midfield control, full-backs create width overloads, deep
+  blocks double up — so passes, dribbles, key passes, big chances, shots,
+  tackles, saves, goals, assists, ratings and even injuries all emerge from
+  real play (no flat per-event chances). Shot-taking follows role tendency
+  (finishers hunt, holders recycle) with a hot hand when a man scores and
+  defensive attention when he shoots all game; chance quality emerges from the
+  creative duel. Corners and dangerous free kicks are full aerial contests
+  decided by heading × strength, and deep-sitting sides genuinely double up
+  while gung-ho sides overload. Managers read the scoreline — including a
+  two-legged tie's aggregate — and shift mentality mid-match, and the opponent
+  reacts. The UCL runs the real Swiss format (8 games, top 16 through,
+  single-leg neutral final).
   Each nation also contests a **domestic super cup** curtain-raiser: Spain and Italy
   as the modern Final Four (champion, league runner-up, cup winner and cup runner-up
   across two semis and a final), England, Germany and France as a single champion-vs-
@@ -175,21 +194,30 @@ cargo run --release
 
 ```
 src/
-  main.rs     — CLI game loop, all screens, interactive match
-  model.rs    — Core domain: Player, Club, Attributes, Formation, Tactic, Fixture
-  matchsim.rs — Possession-phase match engine (22 individuals, per-player stats)
-  observe.rs  — Spectator mode: live match ticker + league-season browser
-  season.rs   — Season/dynasty sandbox (drives matches through matchsim)
-  gen.rs      — Procedural world generation (names, squads, fallback data)
-  data.rs     — CSV loader (BOM-aware, quote-aware parser) + procedural fallback
-  cup.rs      — Domestic cups, European competitions, super cups
-  engine.rs   — Shared simulation engine helpers
-  tune.rs     — Evolutionary calibration of sim parameters
-  deals.rs    — Transfers, loans, contracts
-  managers.rs — AI manager lifecycle (hire/sack/retire)
-  players.rs  — Player development, aging, regens
-  net.rs      — Savegame persistence helpers
-  dev.rs      — Dev/debug utilities
+  main.rs       — CLI game loop, all screens, interactive match
+  model.rs      — Core domain: Player, Club, Attributes, Formation, Tactic, Fixture
+  matchsim.rs   — Possession-phase match engine (22 individuals, per-player stats)
+  tactics.rs    — Spatial formation geometry: 11 slot coordinates per shape; width &
+                  defensive-line warp the shape, flank coverage + high-line physics
+                  feed the duel engine
+  traits.rs     — Player traits parsed from the FC dump's playstyles (Finesse Shot,
+                  Rapid, Dead Ball…) plus weak-foot physics
+  world_model.rs— World registry: ~49 real leagues + 164 nations with confid
+                  erations, tiers and UEFA-style coefficients
+  observe.rs    — Spectator mode: live match ticker + league-season browser
+  season.rs     — Season/dynasty sandbox (drives matches through matchsim);
+                  loads real squads for the Big 5 **and** top non-Big-5 UEFA
+                  clubs (Porto, Ajax, Celtic, Galatasaray…) as the UCL field
+  gen.rs        — Procedural world generation (names, squads, fallback data)
+  data.rs       — CSV loader (BOM-aware, quote-aware parser) + procedural fallback
+  cup.rs        — Domestic cups, European competitions, super cups
+  engine.rs     — Shared simulation engine helpers
+  tune.rs       — Evolutionary calibration of sim parameters
+  deals.rs      — Transfers, loans, contracts
+  managers.rs   — AI manager lifecycle (hire/sack/retire)
+  players.rs    — Player development, aging, regens
+  net.rs        — Savegame persistence helpers
+  dev.rs        — Dev/debug utilities
 data/
   players.csv — 2026 players database (single EA FC-style dump)
 docs/

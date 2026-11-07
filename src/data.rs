@@ -14,6 +14,7 @@ use rand_pcg::Pcg64Mcg;
 
 use crate::gen::Gen;
 use crate::model::*;
+use crate::traits::*;
 
 /// The 2026 players database (all players and clubs) loaded at startup.
 #[derive(Clone)]
@@ -107,6 +108,11 @@ impl Database {
         let i_nat = col("nationality");
         let i_gender = col("gender");
         let i_birth = col("birthdate");
+        let i_preferred_foot = col("preferred_foot");
+        let i_skill_moves = col("skill_moves");
+        let i_weak_foot = col("weak_foot");
+        let i_height_cm = col("height_cm");
+        let i_playstyles = col("playstyles");
         let a = |n: &str| col(n);
         let (c_acc, c_spr) = (a("movement_acceleration"), a("movement_sprint_speed"));
         let (c_fin, c_pow, c_ls, c_vol) = (
@@ -217,6 +223,27 @@ impl Database {
                 first_touch: scaled(&fields, c_con),
             };
 
+            let foot = if get(&fields, i_preferred_foot)
+                .trim()
+                .eq_ignore_ascii_case("Left")
+            {
+                Foot::Left
+            } else {
+                Foot::Right
+            };
+            let weak_foot: u8 = get(&fields, i_weak_foot)
+                .trim()
+                .parse()
+                .unwrap_or(3)
+                .clamp(1, 5);
+            let skill_moves: u8 = get(&fields, i_skill_moves)
+                .trim()
+                .parse()
+                .unwrap_or(3)
+                .clamp(1, 5);
+            let height_cm: u8 = get(&fields, i_height_cm).trim().parse().unwrap_or(0);
+            let traits = parse_playstyles(&get(&fields, i_playstyles));
+
             let mut player = Player {
                 id: players.len() as PlayerId + 1,
                 name,
@@ -243,6 +270,11 @@ impl Database {
                 transfer_status: 0,
                 scout_knowledge: 0,
                 personality: Personality::Balanced,
+                foot,
+                weak_foot,
+                skill_moves,
+                traits,
+                height_cm,
             };
             let ovr = player.overall();
             // Potential cap: current ability plus a little youth headroom, hard-
