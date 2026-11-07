@@ -124,6 +124,19 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
   best XI tops ~75 and no longer contests a World Cup; new world-class
   players (Kaiser-class regens) emerge only from academy 4–5 clubs.
 
+## The 90 wall (earned elite progression)
+- Pushing past overall 90 is *astronomical* — development past 90 only unlocks
+  when the player **proves** it that fresh season via `proof_to_push_past_90`:
+  real production (20+ goal involvements, or an 8.15+ rating over 25+ apps)
+  **and** deep big-stage success (UCL/EL semi-final or better, international
+  semi, or a league title plus European knockout run). Without proof the wall
+  is absolute even in a 5★ academy; with proof, at most ONE growth step per
+  season (~90→94 needs four proven seasons, if the pot cooperates). Applies to
+  both the ≤21 growth phase and the 22–25 mid-twenties phase.
+  Career check after the wall: World Cup winners Argentina/Turkey/Greece/
+  Senegal; Ballons only to elite names; Cherki's back-to-back wins from
+  River Plate are the blast-through case the bias factor allows.
+
 ## Not done (ROADMAP tracks deferred)
 - T5b: full multi-tier league simulation (promotion/relegation across
   England's 4 tiers Spain/Germany/Italy/France's 2–3 tiers) and extra

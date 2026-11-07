@@ -3107,6 +3107,25 @@ fn env_mult(academy: u8) -> f32 {
     }
 }
 
+/// The 90 wall: development past overall 90 is astronomical. Above 90,
+/// growth is *earned*, not grown — a player only unlocks progress when that
+/// season pairs elite production (20+ goal involvements, or an 8.15+ rating
+/// over 25+ apps) with deep success on the big stage (a Champions League or
+/// Europa semi-final-or-better, an international tournament semi, or the
+/// combo of a league title plus a European knockout run). Without proof of
+/// dominance and winning, 90 is a hard wall for everyone, including academy
+/// 5 environments — the Ronaldo-cut is the rarest thing in football, not a
+/// level on a growth trajectory.
+fn proof_to_push_past_90(p: &WP) -> bool {
+    let prod = (p.goals + p.assists) >= 20
+        || (p.apps >= 25 && p.avg_rating() >= 8.15);
+    let stage = p.ucl_result >= 3
+        || p.el_result >= 3
+        || p.intl_result >= 3
+        || (p.league_won && p.ucl_result >= 2);
+    prod && stage
+}
+
 /// Complex-enough annual development: attributes grow toward potential while
 /// young, plateau in the prime, and decline with age (pace/stamina first).
 fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng: &mut Pcg64Mcg) {
@@ -3152,6 +3171,18 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng
         } else {
             steps = ((steps as f32 * mult).round() as u32).max(1);
         }
+        // The 90 wall: above 90 every growth step must be re-earned — real
+        // production AND deep knockout/championship success that fresh season.
+        // Without proof, the wall is absolute even in a 5★ academy; with proof,
+        // at most one step per season (astronomical grind, ~90→94 takes four
+        // proven seasons, if luck and the pot cooperate).
+        if p.ovr >= 90 {
+            if proof_to_push_past_90(p) {
+                steps = steps.min(1);
+            } else {
+                steps = 0;
+            }
+        }
         for _ in 0..steps {
             match p.pos {
                 Position::FWD => {
@@ -3184,8 +3215,22 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng
     } else if p.age <= 25 && rng.gen_bool(dev_mid_p.clamp(0.0, 1.0) as f64) {
         // Mid-twenties growth is slower, still environment-bound: who develops
         // and how far may approach the ceiling, but never pass it — the academy
-        // wall holds there too.
+        // wall holds there too. And the 90 wall holds harder: even in a 5★
+        // academy, the roll above 90 only grows (one step) when the player
+        // proved it that season.
         if p.ovr < env_cap(academy) {
+            if p.ovr >= 90 {
+                // Above 90: same proof standard as the 21-and-under phase.
+                if proof_to_push_past_90(p) {
+                    // once past the proof test, one modest step
+                    match p.pos {
+                        Position::FWD => grow_attr(&mut p.attrs.shooting, 3, rng),
+                        Position::MID => grow_attr(&mut p.attrs.passing, 3, rng),
+                        Position::DEF => grow_attr(&mut p.attrs.tackling, 3, rng),
+                        Position::GK => grow_attr(&mut p.attrs.goalkeeping, 3, rng),
+                    }
+                }
+            } else {
         match p.pos {
             Position::FWD => grow_attr(&mut p.attrs.shooting, 3, rng),
             Position::MID => grow_attr(&mut p.attrs.passing, 3, rng),
@@ -3200,6 +3245,7 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng
                 Position::DEF => grow_attr(&mut p.attrs.composure, 2, rng),
                 Position::GK => grow_attr(&mut p.attrs.composure, 2, rng),
             }
+        }
         }
         }
     } else if p.age >= 30 {
