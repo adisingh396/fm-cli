@@ -807,8 +807,10 @@ fn pick_shape(idxs: &[usize], pool: &[WP]) -> (usize, usize, usize) {
 }
 
 /// Select the XI ((player, role, line) triples) for a shape: fill each line's
-/// slots with the best available players by effective rating, assigning each
-/// their best-fitting role on that line. On-loan players belong to the loanee.
+/// slots with the best available players by actual FC overall (the database
+/// metric of record), assigning each their best-fitting role on that line.
+/// On-loan players belong to the loanee. Positional preference is a small
+/// bonus only — the XI is built from natural overall, not blended role math.
 fn select_xi(
     idxs: &[usize],
     pool: &[WP],
@@ -822,11 +824,14 @@ fn select_xi(
             .iter()
             .copied()
             .filter(|&i| !pool[i].retired)
+            .filter(|&i| !(line == 0 && pool[i].pos != Position::GK))
             .map(|i| {
-                let eff = pool[i].effective();
-                // Prefer naturals for the line, but allow anyone at suitability cost.
-                let line_bonus = if line_of(pool[i].pos) == line { 1.0 } else { 0.82 };
-                (eff * line_bonus, i)
+                let w = &pool[i];
+                // Actual FC overall is the primary score; positional line is a
+                // strong bonus so volunteers stay on their line, and role fit
+                // only nudges ties — the squad best eleven, honestly.
+                let line_bonus = if line_of(w.pos) == line { 1.0 } else { 0.82 };
+                (w.ovr as f32 * line_bonus, i)
             })
             .collect();
         cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -845,7 +850,7 @@ fn select_xi(
             .iter()
             .copied()
             .filter(|&i| !pool[i].retired && !used[i])
-            .map(|i| (pool[i].effective(), i))
+            .map(|i| (pool[i].ovr as f32, i))
             .collect();
         rest.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
         for (_, i) in rest {
@@ -861,8 +866,11 @@ fn select_xi(
 
 
 fn match_strength(idxs: &[usize], pool: &[WP], rep: u8, shape: (usize, usize, usize), p: &Params) -> f32 {
-    // Tactical XI: each slot's contribution is role fit (rating × suitability)
-    // scaled by current form, so roles, retraining and morale all move results.
+    // Club power = the XI's actual FC overall (the database metric of record),
+    // as its players were selected in select_xi. Form and morale previously
+    // weighted selection through `effective()`; actual overall is the primary
+    // driver — the squad is picked exactly like the display rating says, and
+    // form rides as a mere tilt, not a blended blend.
     let base = {
         let xi = select_xi(idxs, pool, shape);
         if xi.is_empty() {
@@ -870,12 +878,7 @@ fn match_strength(idxs: &[usize], pool: &[WP], rep: u8, shape: (usize, usize, us
         } else {
             let sum: f32 = xi
                 .iter()
-                .map(|&(i, role, _)| {
-                    let fit = role_rating(&pool[i].attrs, role)
-                        * engine::role_suitability(role, pool[i].pos);
-                    let form = pool[i].effective() / pool[i].ovr.max(1) as f32;
-                    fit * form
-                })
+                .map(|&(i, _, _)| pool[i].ovr as f32)
                 .sum();
             sum / xi.len() as f32
         }

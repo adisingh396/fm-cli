@@ -27,6 +27,12 @@ same-schema dump at `data/players.csv` to upgrade ratings.
   transferring up to a stronger academy — the real-world pipeline that takes
   decades of investment. Weak leagues produce strong *regional* players
   (ISL dynasties, Mohun Bagan's 5 titles), never world-class ones.
+- **Actual FC overall everywhere** — club XI selection (`select_xi`) and club
+  match strength (`match_strength`) now use the real database overall (synced
+  from attributes every year) — the metric of record — instead of blended
+  "role fit × suitability × form" math. Squads are picked the way the display
+  rating says, with positional preference as a small bonus. Full decade
+  regression after the switch: titles, tournaments, Ballons all sane.
 - **Ballon d'Or with a Big-5 bias factor** — voters only really watch the top-5 leagues, so a player outside them is graded at a discount: UEFA outsiders ×0.90, CONMEBOL ×0.84, CONCACAF ×0.78, AFC ×0.72. Only a genuinely historic season (a 40-goal Port-city masterclass, a Saudi-era blasting) still breaks through — ordinary fine seasons elsewhere don't edge out Europe's monsters the way they used to. The world also produces the occasional true outsider winner when numbers are undeniable.
 - **Full international calendar** — World Cup + Euros (unchanged), an **AFC Asian Cup** every 4 years (2027, 2031, 2035…) with its own winner, plus **annual friendlies** for every built nation (ISL, Saudi, MLS players eat caps and goals on the top-level stage continuously, so outsider stars actually develop as internationals worth voting for via `International goals/assists/run` components in the Ballon).
 - **Player traits & body** — The 2026 dump's FC playstyles (Finesse Shot, Rapid, Dead Ball, Incisive Pass…) are parsed into internal traits that bias finishing, creation, dribbling and set pieces, and preferred foot / weak foot penalise finishing on the wrong side — all emerging from duels, not dice.
