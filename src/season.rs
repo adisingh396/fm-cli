@@ -463,6 +463,14 @@ struct World {
     inflation: f32,
     /// Active season-long loans: (player, home club, away club).
     loans: Vec<SeasonLoan>,
+    /// Host-queue for the World Cup: each entry is a bid-won host nation set
+    /// for one tournament cycle (2030, 2034…). The 2026 tournament's real
+    /// hosts (USA, Canada, Mexico) are the queue head; after every World Cup,
+    /// a bid vote produces the *next* tournament's host set and pushes it here.
+    host_queue: Vec<Vec<String>>,
+    /// Host nations of the last two tournaments (disqualifies them from
+    /// bidding for the next one, like FIFA's rotation policy).
+    recent_hosts: Vec<String>,
     /// Continental champions history for Club World Cup qualification:
     /// (competition label — "UCL"/"AFC"/"CONCACAF"/"CONMEBOL", winning team).
     /// The CWC hands out its 4-year-cycle slots to these winners.
@@ -506,6 +514,8 @@ struct SeasonOutcome {
     club_world_cup_winner: String,
     intl_kind: IntlKind,
     intl_winner: String,
+    /// World Cup host nations this cycle (empty in non-WC years).
+    wc_hosts: Vec<String>,
     // Ballon d'Or: name, club, league g, league a, UCL g, UCL a, overall g, overall a
     ballon: (String, String, u16, u16, u16, u16, u16, u16),
     // Managerial merry-go-round moves that closed this season.
@@ -2008,6 +2018,12 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         params,
         loans: Vec::new(),
         continent_hist: Vec::new(),
+        host_queue: vec![vec![
+            "United States".to_string(),
+            "Canada".to_string(),
+            "Mexico".to_string(),
+        ]],
+        recent_hosts: Vec::new(),
         free_agents: Vec::new(),
         used_names,
     }
@@ -2483,15 +2499,27 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     // International tournament (calendar-driven). Squads get a summer break
     // first — nobody plays a World Cup at 100 fatigue after league + Europe.
     let intl_kind = intl_kind_for(year);
+    // Hosts for this cycle's World Cup: appointed by the latest bid vote and
+    // carried in the queue (2026 = USA/Canada/Mexico; after every World Cup,
+    // the next host set is decided and queued).
+    let wc_hosts: Vec<String> = if intl_kind == IntlKind::WorldCup {
+        w.host_queue
+            .first()
+            .cloned()
+            .unwrap_or_else(|| vec!["United States".into(), "Canada".into(), "Mexico".into()])
+    } else {
+        Vec::new()
+    };
+    // International tournament (calendar-driven) with hosts boost for WC.
     let intl_winner = match intl_kind {
         IntlKind::None => "-".to_string(),
         kind => {
             for p in w.pool.iter_mut() {
                 p.fatigue = p.fatigue.min(25);
             }
-            let mut nations = build_nations(&w.pool, kind);
+            let mut nations = build_nations(&w.pool, kind, &wc_hosts);
             if kind == IntlKind::WorldCup {
-                run_world_cup_2026(&mut nations, &mut w.pool, &w.params, rng)
+                run_world_cup_2026(&mut nations, &wc_hosts, &mut w.pool, &w.params, rng)
                     .unwrap_or_else(|| "-".to_string())
             } else {
                 run_international(&mut nations, &mut w.pool, &w.params, rng)
@@ -2499,6 +2527,20 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
             }
         }
     };
+    // Award the next World Cup's hosting now (bid-appointed), keeping rotation
+    // realistic: the current hosts go on the cooldown list before the new bid.
+    if intl_kind == IntlKind::WorldCup {
+        if !w.host_queue.is_empty() {
+            let curr = w.host_queue.remove(0);
+            w.recent_hosts.extend(curr);
+        }
+        if w.recent_hosts.len() > 8 {
+            let drop = w.recent_hosts.len() - 8;
+            w.recent_hosts.drain(0..drop);
+        }
+        let next = decide_next_hosts(&mut w, rng);
+        w.host_queue.push(next);
+    }
 
     // Friendlies (every non-World-Cup year): a one-round international window
     // so the whole world's footballers get real top-level minutes, caps and
@@ -2508,7 +2550,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     // "result" is recorded (friendlies don't move the resume the way majors
     // do).
     if intl_kind != IntlKind::WorldCup {
-        let mut nations = build_nations(&w.pool, IntlKind::None);
+        let mut nations = build_nations(&w.pool, IntlKind::None, &[]);
         nations.sort_by(|a, b| {
             b.strength
                 .partial_cmp(&a.strength)
@@ -2648,6 +2690,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         club_world_cup_winner,
         intl_kind,
         intl_winner,
+        wc_hosts,
         ballon,
         overall_boot,
         ballon_why,
@@ -4642,7 +4685,7 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
 
 // ── National teams + tournaments ───────────────────────────────────────
 
-fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
+fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Nation> {
     let euro_only = kind == IntlKind::Euros;
     let asian_only = kind == IntlKind::AsianCup;
     let wc_field = kind == IntlKind::WorldCup;
@@ -4678,7 +4721,14 @@ fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
         }
         let mut ov: Vec<f32> = idxs.iter().map(|&i| pool[i].ovr as f32).collect();
         ov.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        let strength = ov.iter().take(11).sum::<f32>() / 11.0;
+        // Squad depth matters as much as the fancy XI: the top-11 mean measured
+        // the tip of the squad, which compresses minnow nations and giants to
+        // near-identical profiles (a Senegal Xerox of France). A depth-weighted
+        // mean (55% stars, 45% the rest of the 23) lets big nations — whose
+        // benches are 78s, not 60s — actually separate from small pools.
+        let top = ov.iter().take(11).sum::<f32>() / 11.0;
+        let depth = ov.iter().sum::<f32>() / ov.len().max(1) as f32;
+        let strength = top * 0.55 + depth * 0.45;
         nations.push(Nation { name, players: idxs, strength });
     }
     nations.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
@@ -4689,7 +4739,7 @@ fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
             .iter()
             .map(|n| (n.name.clone(), (n.players.clone(), n.strength)))
             .collect();
-        return qualify_wc_field(pool, &indexed);
+        return qualify_wc_field(pool, &indexed, host_nations);
     }
     let cap = if euro_only { 24 } else { 32 };
     nations.truncate(cap);
@@ -4755,7 +4805,11 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
 /// (best non-qualified CAF + AFC nations). Slots unfilled when a confed has
 /// no pool depth (OFC without New Zealand, thin CAF pools, etc.), so the
 /// field degrades gracefully towards 48 without holes.
-fn qualify_wc_field(_pool: &[WP], by_name: &HashMap<String, (Vec<usize>, f32)>) -> Vec<Nation> {
+fn qualify_wc_field(
+    _pool: &[WP],
+    by_name: &HashMap<String, (Vec<usize>, f32)>,
+    host_nations: &[String],
+) -> Vec<Nation> {
     use crate::world_model::Confederation as C;
     let mut by_confed: HashMap<u8, Vec<(String, Vec<usize>, f32)>> = HashMap::new();
     let mut idx_of: HashMap<String, usize> = HashMap::new();
@@ -4778,10 +4832,10 @@ fn qualify_wc_field(_pool: &[WP], by_name: &HashMap<String, (Vec<usize>, f32)>) 
         pool.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
     }
     let mut chosen: Vec<String> = Vec::new();
-    // Hosts first: they qualify automatically, inside the CONCACAF allocation.
-    for h in ["United States", "Canada", "Mexico"] {
-        if by_name.contains_key(h) && !chosen.contains(&h.to_string()) {
-            chosen.push(h.to_string());
+    // Hosts first: they qualify automatically, inside the regional allocation.
+    for h in host_nations {
+        if by_name.contains_key(h) && !chosen.contains(h) {
+            chosen.push(h.clone());
         }
     }
     // Regional slots by confederation.
@@ -4824,6 +4878,85 @@ fn qualify_wc_field(_pool: &[WP], by_name: &HashMap<String, (Vec<usize>, f32)>) 
     out
 }
 
+/// Bid vote for the next World Cup's hosting, run after each tournament for
+/// the next race four years hence. FIFA-style committee voting: strong,
+/// well-resourced federations weigh more; recently-hosted nations are
+/// disqualified (rotation policy); winners occasionally bring co-hosts from
+/// their own confederation (the modern multi-country format — Spain/Portugal
+/// style bundles emerge here too). The hosts picked get an automatic slot and
+/// the home-crowd edge during the tournament.
+fn decide_next_hosts(w: &mut World, rng: &mut Pcg64Mcg) -> Vec<String> {
+    let mut nations = build_nations(&w.pool, IntlKind::None, &[]);
+    nations.sort_by(|a, b| {
+        b.strength
+            .partial_cmp(&a.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    // Candidates: eligible nations (not on the recent-hosts cooldown).
+    let mut cand: Vec<&Nation> = nations
+        .iter()
+        .filter(|n| !w.recent_hosts.contains(&n.name))
+        .collect();
+    if cand.is_empty() {
+        return vec![
+            "United States".into(),
+            "Canada".into(),
+            "Mexico".into(),
+        ];
+    }
+    cand.truncate(12);
+    // Weighted committee vote (rank-weighted randomness layered on strength).
+    let mut weights: Vec<f32> = cand
+        .iter()
+        .map(|n| (n.strength * n.strength * (1.0 + rng.gen_range(0.0..0.6))).max(1.0))
+        .collect();
+    let winner_idx = weighted_pick_idx(&weights, rng);
+    let mut hosts = vec![cand[winner_idx].name.clone()];
+    // Feasibility: a winner whose pool is thin gets bumped in favor of the
+    // runner-up (the committee guards the stage).
+    if hosts[0].trim().len() < 3 {
+        hosts[0] = cand[(winner_idx + 1) % cand.len()].name.clone();
+    }
+    // Co-hosts: the modern world wants multi-country tournaments about a
+    // third of the time — same-confederation shortlist partners join in.
+    if rng.gen::<f32>() < 0.35 && cand.len() > 1 {
+        let winner_confed = crate::world_model::confed_of(&hosts[0]);
+        let mut partners: Vec<&Nation> = cand
+            .iter()
+            .copied()
+            .filter(|n| {
+                n.name != hosts[0]
+                    && crate::world_model::confed_of(&n.name) == winner_confed
+            })
+            .collect();
+        partners.sort_by(|a, b| {
+            b.strength
+                .partial_cmp(&a.strength)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut rng2 = rng;
+        for p in partners.into_iter().take(2) {
+            if rng2.gen::<f32>() < 0.6 {
+                hosts.push(p.name.clone());
+            }
+        }
+        let _ = &mut weights;
+    }
+    hosts
+}
+
+fn weighted_pick_idx(weights: &[f32], rng: &mut Pcg64Mcg) -> usize {
+    let tot: f32 = weights.iter().sum();
+    let mut r = rng.gen::<f32>() * tot.max(0.01);
+    for (i, &w) in weights.iter().enumerate() {
+        if r < w {
+            return i;
+        }
+        r -= w;
+    }
+    weights.len().saturating_sub(1)
+}
+
 /// The 2026 FIFA World Cup format (48 teams):
 /// - 12 groups of 4, pot-seeded (Pot 1 = hosts + top 9 by nation strength),
 ///   one team per pot per group and confederation diversity (≤2 UEFA per
@@ -4837,6 +4970,7 @@ fn qualify_wc_field(_pool: &[WP], by_name: &HashMap<String, (Vec<usize>, f32)>) 
 /// folded in via goals/strength, a deliberate simplification documented here.
 fn run_world_cup_2026(
     nations: &mut [Nation],
+    hosts: &[String],
     pool: &mut [WP],
     p: &Params,
     rng: &mut Pcg64Mcg,
@@ -4853,17 +4987,21 @@ fn run_world_cup_2026(
     order.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
     let pot_size = (n / 4).max(1);
     let mut pots: Vec<Vec<usize>> = vec![Vec::new(); 4];
-    let mut hosts: Vec<usize> = Vec::new();
+    // Hosts go in Pot 1 (per the real protocol), ranked by strength inside it.
+    let mut ordered: Vec<usize> = Vec::new();
     for &i in &order {
-        hosts.clear();
-        if ["United States", "Canada", "Mexico"].contains(&nations[i].name.as_str()) {
-            pots[0].push(i);
-        } else {
-            let k = pots.iter().map(|p| p.len()).sum::<usize>();
-            pots[(k / pot_size).min(3)].push(i);
+        if hosts.iter().any(|h| nations[i].name == *h) {
+            ordered.push(i);
         }
     }
-    // Fill pot 1 with hosts first (top-9 + hosts like the real Pot 1).
+    for &i in &order {
+        if !hosts.iter().any(|h| nations[i].name == *h) {
+            ordered.push(i);
+        }
+    }
+    for (k, &i) in ordered.iter().enumerate() {
+        pots[(k / pot_size).min(3)].push(i);
+    }
     let groups_n = (n / 4).max(1);
     let mut groups: Vec<Vec<usize>> = vec![Vec::new(); groups_n];
     // Greedy pot-by-pot placement with confederation diversity.
@@ -4900,13 +5038,29 @@ fn run_world_cup_2026(
     // Group stage: round-robin (3/1/0), rank by points → GD → GF → strength.
     let mut advancers: Vec<usize> = Vec::new();
     let mut thirds: Vec<(i32, i32, u32, f32, usize)> = Vec::new();
+    let crowd = |t: usize| -> f32 {
+        if hosts.iter().any(|h| nations[t].name == *h) {
+            1.18 // home crowd at a hosted tournament
+        } else {
+            1.0
+        }
+    };
     for g in &groups {
         let mut pts: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         let mut gd: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         let mut gf: HashMap<usize, u32> = g.iter().map(|&t| (t, 0)).collect();
         for a in 0..g.len() {
             for b in (a + 1)..g.len() {
-                let (hg, ag) = play_nation(g[a], g[b], nations, pool, p, rng);
+                let (hg, ag) = play_nation_crowd(
+                    g[a],
+                    g[b],
+                    nations,
+                    pool,
+                    p,
+                    rng,
+                    crowd(g[a]),
+                    crowd(g[b]),
+                );
                 *gd.get_mut(&g[a]).unwrap() += hg as i32 - ag as i32;
                 *gd.get_mut(&g[b]).unwrap() += ag as i32 - hg as i32;
                 *gf.get_mut(&g[a]).unwrap() += hg;
@@ -4977,7 +5131,7 @@ fn run_world_cup_2026(
         let mut i = 0;
         while i + 1 < round.len() {
             let (a, b) = (round[i], round[i + 1]);
-            let (ga, gb) = play_nation(a, b, nations, pool, p, rng);
+            let (ga, gb) = play_nation_crowd(a, b, nations, pool, p, rng, crowd(a), crowd(b));
             let (win, lose) = if ga > gb {
                 (a, b)
             } else if gb > ga {
@@ -5019,7 +5173,16 @@ fn run_world_cup_2026(
     // Third-place playoff between the two semifinal losers.
     if sf_losers.len() == 2 {
         let [third, fourth] = [sf_losers[0], sf_losers[1]];
-        let (g1, g2) = play_nation(third, fourth, nations, pool, p, rng);
+        let (g1, g2) = play_nation_crowd(
+            third,
+            fourth,
+            nations,
+            pool,
+            p,
+            rng,
+            crowd(third),
+            crowd(fourth),
+        );
         for &pi in &nations[third].players {
             if g1 >= g2 {
                 pool[pi].intl_result = pool[pi].intl_result.max(3);
@@ -5041,8 +5204,30 @@ fn run_world_cup_2026(
 /// An international fixture, now played through the same possession engine as
 /// club football (neutral venue, single leg). Nation quality separates strong
 /// sides from weak ones through the eleven on the pitch, so cup runs are less
-/// of a lottery than the old strength-swing draw.
-fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> (u32, u32) {
+/// of a lottery than the old strength-swing draw. `crowd_a`/`crowd_b` scale
+/// each side for the home crowd: 1.0 neutral, ~1.15 for a host nation playing
+/// in front of its own people — the edge real hosts ride all tournament.
+fn play_nation(
+    a: usize,
+    b: usize,
+    nations: &[Nation],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> (u32, u32) {
+    return play_nation_crowd(a, b, nations, pool, p, rng, 1.0, 1.0);
+}
+
+fn play_nation_crowd(
+    a: usize,
+    b: usize,
+    nations: &[Nation],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+    crowd_a: f32,
+    crowd_b: f32,
+) -> (u32, u32) {
     let axi = nation_xi(&nations[a].players, pool);
     let bxi = nation_xi(&nations[b].players, pool);
     if axi.len() < 7 || bxi.len() < 7 {
@@ -5056,8 +5241,8 @@ fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Para
     // than mid-season form suggests. Sharpen the gap (×1.5 on the ratio) so
     // the class difference is priced — favorites become *favorites* (70%+),
     // while a proper minnow run still needs repeated, genuinely lucky nights.
-    side_a.threat = ta.powf(1.5);
-    side_b.threat = tb.powf(1.5);
+    side_a.threat = ta.powf(1.5) * crowd_a;
+    side_b.threat = tb.powf(1.5) * crowd_b;
     let o = matchsim::simulate(
         &side_a,
         &side_b,
@@ -5618,6 +5803,20 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             trunc(&o.conmebol_winner, 17),
             cwc,
         ));
+    }
+    let mut host_lines: Vec<String> = Vec::new();
+    for o in &history {
+        if o.intl_kind == IntlKind::WorldCup && !o.wc_hosts.is_empty() {
+            host_lines.push(format!(
+                "- **{} World Cup** — hosted by {}",
+                o.year,
+                o.wc_hosts.join(", ")
+            ));
+        }
+    }
+    if !host_lines.is_empty() {
+        lines.push(String::new());
+        lines.extend(host_lines);
     }
     lines.push(String::new());
 
@@ -6541,6 +6740,8 @@ mod tests {
             inflation: 1.0,
             loans: Vec::new(),
             continent_hist: Vec::new(),
+            host_queue: Vec::new(),
+            recent_hosts: Vec::new(),
             free_agents: Vec::new(),
             used_names: HashSet::new(),
             params: Params::default(),
