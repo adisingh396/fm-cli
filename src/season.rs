@@ -414,6 +414,7 @@ fn def_line(t: &Team) -> u8 {
     }
 }
 
+#[derive(Clone)]
 struct Nation {
     name: String,
     players: Vec<usize>,
@@ -2489,7 +2490,13 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
                 p.fatigue = p.fatigue.min(25);
             }
             let mut nations = build_nations(&w.pool, kind);
-            run_international(&mut nations, &mut w.pool, &w.params, rng).unwrap_or_else(|| "-".to_string())
+            if kind == IntlKind::WorldCup {
+                run_world_cup_2026(&mut nations, &mut w.pool, &w.params, rng)
+                    .unwrap_or_else(|| "-".to_string())
+            } else {
+                run_international(&mut nations, &mut w.pool, &w.params, rng)
+                    .unwrap_or_else(|| "-".to_string())
+            }
         }
     };
 
@@ -4638,6 +4645,7 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
 fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
     let euro_only = kind == IntlKind::Euros;
     let asian_only = kind == IntlKind::AsianCup;
+    let wc_field = kind == IntlKind::WorldCup;
     let mut by_nation: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, w) in pool.iter().enumerate() {
         if w.retired {
@@ -4674,6 +4682,15 @@ fn build_nations(pool: &[WP], kind: IntlKind) -> Vec<Nation> {
         nations.push(Nation { name, players: idxs, strength });
     }
     nations.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
+    if wc_field {
+        // 2026 allocation: hosts + confederation slots + playoffs (see
+        // qualify_wc_field).
+        let indexed: HashMap<String, (Vec<usize>, f32)> = nations
+            .iter()
+            .map(|n| (n.name.clone(), (n.players.clone(), n.strength)))
+            .collect();
+        return qualify_wc_field(pool, &indexed);
+    }
     let cap = if euro_only { 24 } else { 32 };
     nations.truncate(cap);
     nations
@@ -4731,6 +4748,296 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
     xi
 }
 
+/// Build every national side in the pool for the World Cup field, then apply
+/// the 2026 qualification structure: hosts (USA/CAN/MEX) auto-qualified, then
+/// regional slots — UEFA 16, CAF 9, AFC 8, CONMEBOL 6, CONCACAF 3 extra,
+/// OFC 1 (New Zealand when present) — and a two-team intercontinental playoff
+/// (best non-qualified CAF + AFC nations). Slots unfilled when a confed has
+/// no pool depth (OFC without New Zealand, thin CAF pools, etc.), so the
+/// field degrades gracefully towards 48 without holes.
+fn qualify_wc_field(_pool: &[WP], by_name: &HashMap<String, (Vec<usize>, f32)>) -> Vec<Nation> {
+    use crate::world_model::Confederation as C;
+    let mut by_confed: HashMap<u8, Vec<(String, Vec<usize>, f32)>> = HashMap::new();
+    let mut idx_of: HashMap<String, usize> = HashMap::new();
+    let mut all: Vec<Nation> = Vec::new();
+    for (name, (idxs, strength)) in by_name {
+        let confed = crate::world_model::confed_of(name);
+        let code = match confed {
+            C::UEFA => 1,
+            C::CAF => 2,
+            C::AFC => 3,
+            C::CONMEBOL => 4,
+            C::CONCACAF => 5,
+            C::OFC => 6,
+        };
+        idx_of.insert(name.clone(), all.len());
+        by_confed.entry(code).or_default().push((name.clone(), idxs.clone(), *strength));
+        all.push(Nation { name: name.clone(), players: idxs.clone(), strength: *strength });
+    }
+    for pool in by_confed.values_mut() {
+        pool.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+    }
+    let mut chosen: Vec<String> = Vec::new();
+    // Hosts first: they qualify automatically, inside the CONCACAF allocation.
+    for h in ["United States", "Canada", "Mexico"] {
+        if by_name.contains_key(h) && !chosen.contains(&h.to_string()) {
+            chosen.push(h.to_string());
+        }
+    }
+    // Regional slots by confederation.
+    for (code, slots) in [
+        (1u8, 16usize), // UEFA
+        (2u8, 9),      // CAF
+        (3u8, 8),      // AFC
+        (4u8, 6),      // CONMEBOL
+        (5u8, 3),      // CONCACAF extra (hosts already in)
+        (6u8, 1),      // OFC
+    ] {
+        if let Some(list) = by_confed.get(&code) {
+            for (name, _, _) in list.iter().take(slots) {
+                if !chosen.contains(name) {
+                    chosen.push(name.clone());
+                }
+            }
+        }
+    }
+    // Intercontinental playoffs: best non-direct CAF + AFC nations.
+    let direct: Vec<String> = chosen.clone();
+    for code in [2u8, 3u8] {
+        if let Some(list) = by_confed.get(&code) {
+            for (name, _, _) in list {
+                if !direct.contains(name) && !chosen.contains(name) {
+                    chosen.push(name.clone());
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<Nation> = Vec::new();
+    for name in &chosen {
+        if let Some(&i) = idx_of.get(name) {
+            out.push(all[i].clone());
+        }
+    }
+    out.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
+    out
+}
+
+/// The 2026 FIFA World Cup format (48 teams):
+/// - 12 groups of 4, pot-seeded (Pot 1 = hosts + top 9 by nation strength),
+///   one team per pot per group and confederation diversity (≤2 UEFA per
+///   group; others ≤1 where the field allows).
+/// - Top 2 per group + the 8 best third-placed teams advance (32 through).
+/// - Knockout: Round of 32 → Round of 16 → QF → SF → Final (with a
+///   third-place playoff), single legs — the champion plays 8 matches
+///   (3 group + 5 knockouts), exactly like the real thing.
+/// Tie-breakers: points, then goal difference, then goals scored, then final
+/// FIFA ranking (nation strength here) — head-to-head and fair play are
+/// folded in via goals/strength, a deliberate simplification documented here.
+fn run_world_cup_2026(
+    nations: &mut [Nation],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> Option<String> {
+    use crate::world_model::Confederation as C;
+    let n = nations.len();
+    if n < 24 {
+        return None;
+    }
+    // Order by strength, split into 4 pots (hosts first in pot 1 by strength of
+    // their XI — the three hosts are bottom-of-pot-1? in the real structure
+    // Pot 1 contains the hosts regardless; ordering by strength within pot 1.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    let pot_size = (n / 4).max(1);
+    let mut pots: Vec<Vec<usize>> = vec![Vec::new(); 4];
+    let mut hosts: Vec<usize> = Vec::new();
+    for &i in &order {
+        hosts.clear();
+        if ["United States", "Canada", "Mexico"].contains(&nations[i].name.as_str()) {
+            pots[0].push(i);
+        } else {
+            let k = pots.iter().map(|p| p.len()).sum::<usize>();
+            pots[(k / pot_size).min(3)].push(i);
+        }
+    }
+    // Fill pot 1 with hosts first (top-9 + hosts like the real Pot 1).
+    let groups_n = (n / 4).max(1);
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); groups_n];
+    // Greedy pot-by-pot placement with confederation diversity.
+    for poti in 0..4 {
+        let pot = pots[poti].clone();
+        for &t in &pot {
+            let my_confed = crate::world_model::confed_of(&nations[t].name);
+            let seen = |c: C, g: &[usize]| g.iter().filter(|&&x| crate::world_model::confed_of(&nations[x].name) == c).count();
+            let mut best: Option<usize> = None;
+            for gi in 0..groups.len() {
+                let g = &groups[gi];
+                let ok = match my_confed {
+                    C::UEFA => seen(C::UEFA, g) < 2,
+                    _ => seen(my_confed, g) == 0,
+                };
+                if ok && (best.is_none() || groups[best.unwrap()].len() > g.len()) {
+                    best = Some(gi);
+                }
+            }
+            let gid = best.unwrap_or_else(|| {
+                groups
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, g)| g.len())
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)
+            });
+            groups[gid].push(t);
+        }
+    }
+    // Tidy degenerate single-member groups in case of small fields.
+    groups.retain(|g| !g.is_empty());
+
+    // Group stage: round-robin (3/1/0), rank by points → GD → GF → strength.
+    let mut advancers: Vec<usize> = Vec::new();
+    let mut thirds: Vec<(i32, i32, u32, f32, usize)> = Vec::new();
+    for g in &groups {
+        let mut pts: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
+        let mut gd: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
+        let mut gf: HashMap<usize, u32> = g.iter().map(|&t| (t, 0)).collect();
+        for a in 0..g.len() {
+            for b in (a + 1)..g.len() {
+                let (hg, ag) = play_nation(g[a], g[b], nations, pool, p, rng);
+                *gd.get_mut(&g[a]).unwrap() += hg as i32 - ag as i32;
+                *gd.get_mut(&g[b]).unwrap() += ag as i32 - hg as i32;
+                *gf.get_mut(&g[a]).unwrap() += hg;
+                *gf.get_mut(&g[b]).unwrap() += ag;
+                match hg.cmp(&ag) {
+                    std::cmp::Ordering::Greater => *pts.get_mut(&g[a]).unwrap() += 3,
+                    std::cmp::Ordering::Less => *pts.get_mut(&g[b]).unwrap() += 3,
+                    std::cmp::Ordering::Equal => {
+                        *pts.get_mut(&g[a]).unwrap() += 1;
+                        *pts.get_mut(&g[b]).unwrap() += 1;
+                    }
+                }
+            }
+        }
+        let mut ranked = g.clone();
+        ranked.sort_by(|x, y| {
+            pts[y]
+                .cmp(&pts[x])
+                .then(gd[y].cmp(&gd[x]))
+                .then(gf[y].cmp(&gf[x]))
+                .then(nations[*y].strength.partial_cmp(&nations[*x].strength).unwrap())
+        });
+        for (k, &t) in ranked.iter().enumerate() {
+            if k < 2 {
+                advancers.push(t);
+            } else if k == 2 {
+                thirds.push((pts[&t], gd[&t], gf[&t], nations[t].strength, t));
+            }
+        }
+    }
+    // Best 8 third-placed teams (points → GD → GF → strength).
+    thirds.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.cmp(&a.1))
+            .then(b.2.cmp(&a.2))
+            .then(b.3.partial_cmp(&a.3).unwrap())
+    });
+    for (_, _, _, _, t) in thirds.iter().take(8) {
+        advancers.push(*t);
+    }
+    for &t in &advancers {
+        for &pi in &nations[t].players {
+            if pool[pi].intl_result < 1 {
+                pool[pi].intl_result = 1;
+            }
+        }
+    }
+    // Seeded knockout bracket (R32 → RO16 → QF → SF → Final): top seed meets
+    // the bottom seed first, winners advance in bracket order — no shuffle.
+    let mut sorted = advancers.clone();
+    sorted.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    let mut bracket: Vec<usize> = Vec::with_capacity(sorted.len());
+    let half = sorted.len() / 2;
+    for i in 0..half {
+        bracket.push(sorted[i]);
+        bracket.push(sorted[sorted.len() - 1 - i]);
+    }
+    if sorted.len() % 2 == 1 {
+        bracket.push(sorted[half]);
+    }
+    let mut round = bracket;
+    let mut tag = 2u8;
+    let mut sf_losers: Vec<usize> = Vec::new();
+    while round.len() > 1 {
+        let is_final = round.len() == 2;
+        let is_semi = round.len() == 4;
+        let mut next = Vec::new();
+        let mut i = 0;
+        while i + 1 < round.len() {
+            let (a, b) = (round[i], round[i + 1]);
+            let (ga, gb) = play_nation(a, b, nations, pool, p, rng);
+            let (win, lose) = if ga > gb {
+                (a, b)
+            } else if gb > ga {
+                (b, a)
+            } else {
+                let pa = nations[a].strength / (nations[a].strength + nations[b].strength);
+                if rng.gen::<f32>() < pa {
+                    (a, b)
+                } else {
+                    (b, a)
+                }
+            };
+            if is_semi {
+                sf_losers.push(lose);
+            }
+            for &pi in &nations[win].players {
+                let r = if is_final { 5 } else { tag };
+                if pool[pi].intl_result < r {
+                    pool[pi].intl_result = r;
+                }
+            }
+            if is_final {
+                if win == a {
+                    for &pi in &nations[b].players {
+                        pool[pi].intl_result = pool[pi].intl_result.max(4);
+                    }
+                } else {
+                    for &pi in &nations[a].players {
+                        pool[pi].intl_result = pool[pi].intl_result.max(4);
+                    }
+                }
+            }
+            next.push(win);
+            i += 2;
+        }
+        round = next;
+        tag += 1;
+    }
+    // Third-place playoff between the two semifinal losers.
+    if sf_losers.len() == 2 {
+        let [third, fourth] = [sf_losers[0], sf_losers[1]];
+        let (g1, g2) = play_nation(third, fourth, nations, pool, p, rng);
+        for &pi in &nations[third].players {
+            if g1 >= g2 {
+                pool[pi].intl_result = pool[pi].intl_result.max(3);
+            } else {
+                pool[pi].intl_result = pool[pi].intl_result.max(2);
+            }
+        }
+        for &pi in &nations[fourth].players {
+            if g2 >= g1 {
+                pool[pi].intl_result = pool[pi].intl_result.max(3);
+            } else {
+                pool[pi].intl_result = pool[pi].intl_result.max(2);
+            }
+        }
+    }
+    round.first().map(|&t| nations[t].name.clone())
+}
+
 /// An international fixture, now played through the same possession engine as
 /// club football (neutral venue, single leg). Nation quality separates strong
 /// sides from weak ones through the eleven on the pitch, so cup runs are less
@@ -4744,8 +5051,13 @@ fn play_nation(a: usize, b: usize, nations: &[Nation], pool: &mut [WP], p: &Para
     let mut side_a = Side { players: &axi, ambition: 1.0, quality: 1.0, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
     let mut side_b = Side { players: &bxi, ambition: 1.0, quality: 1.0, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
     let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
-    side_a.threat = ta;
-    side_b.threat = tb;
+    // Nations meet too rarely for ordinary league variance: a 7-overall gap
+    // between two squads of pooled national pros is worth far more in a final
+    // than mid-season form suggests. Sharpen the gap (×1.5 on the ratio) so
+    // the class difference is priced — favorites become *favorites* (70%+),
+    // while a proper minnow run still needs repeated, genuinely lucky nights.
+    side_a.threat = ta.powf(1.5);
+    side_b.threat = tb.powf(1.5);
     let o = matchsim::simulate(
         &side_a,
         &side_b,
@@ -4799,8 +5111,25 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
             }
         }
     }
-    advancing.shuffle(rng);
-    let mut round = advancing;
+    // Seeded bracket, not a shuffle: group winners/runners-up are ranked by
+    // final group position (winners ahead of runners-up, then by strength) and
+    // crossed as 1v16, 8v9, 4v13, 5v12… so the top seeds meet the bottom of
+    // the field first and the strongest nations can actually reach finals.
+    // Random draws flat-out rewarded minnows with straight-to-the-final luck
+    // paths; a seeded bracket is what makes France vs Greece a fair coin of
+    // outcomes instead of Greece marching through six coin flips.
+    let mut bracket: Vec<usize> = Vec::with_capacity(advancing.len());
+    let mut sorted = advancing.clone();
+    sorted.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    let half = sorted.len() / 2;
+    for i in 0..half {
+        bracket.push(sorted[i]);
+        bracket.push(sorted[sorted.len() - 1 - i]);
+    }
+    if sorted.len() % 2 == 1 {
+        bracket.push(sorted[half]);
+    }
+    let mut round = bracket;
     let mut tag = 2u8;
     while round.len() > 1 {
         let mut next = Vec::new();

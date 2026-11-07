@@ -94,7 +94,25 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
   (MLS/Liga MX of the year) = 28 teams. Continental champions qualify
   directly; the ladder fills on European silverware then strength; cap is
   2 per `Team.nation` unless that country produced 3+ continental champions
-  in the cycle. Verified winners: Real Madrid (2029), Spurs (2033).
+  in the cycle. Verified winners: Real Madrid (2029), Spurs (2031-ish 2033).
+
+## FIFA World Cup 2026 (48-team structure) + UK-style expectations (`season.rs`)
+- The World Cup is now the real format: **48 teams** qualified via the 2026
+  allocation (hosts USA/CAN/MEX, UEFA 16, CAF 9, AFC 8, CONMEBOL 6,
+  CONCACAF 3 more, OFC 1, intercontinental playoffs 2) — `qualify_wc_field`.
+- **12 groups of 4**, pot-seeded and confederation-balanced (≤2 UEFA per
+  group, ≤1 others where the field allows), top-2 + best-8 thirds → 32.
+- Knockout: **Round of 32 → R16 → QF → SF → Final** with a third-place
+  playoff — the champion plays exactly 8 matches (3 group + 5 knockout).
+- Tie-breakers: points → GD → GF → nation strength (FIFA ranking analogue);
+  head-to-head and fair play folded in via goals/strength, documented.
+- Bracket is seeded properly (1v32…), and national-team matches sharpen the
+  threat gap (×1.5) since pooled national XI quality is compressed in the
+  dump — favorites finally behave like favorites.
+- Verified decade: World Cup winners England (2026, 2030), France (2034);
+  England also won both Euros of the decade; no more mid-tier-heavy champions.
+- The European Championship (24) and AFC Asian Cup (6 AFC nations) reuse the
+  same group+seeded-knockout machinery.
 - **AFC Asian Cup** (2027, 2031, 2035): `IntlKind::AsianCup`, `build_nations`
   filters `world_model::confed_of(nation) == AFC`. `run_international`
   threshold lowered to 4 (only 6 AFC nations clear the 15-player pool filter:
