@@ -3075,9 +3075,41 @@ fn grow_attr(v: &mut u8, base: i32, rng: &mut Pcg64Mcg) {
     *v = (cur + d).clamp(1, 99) as u8;
 }
 
+/// Environment-first development ceiling by academy tier (1..=5): the best a
+/// player can *become* under a given club's development environment. A 1–2★
+/// world cannot mint world-class (90+) athletes — those need academy 4–5
+/// plumbing, which in the real game takes decades of investment to reach.
+/// >62 at 1★, >75 at 2★, >82 at 3★, >88 at 4★: a youngster caps out around
+/// here unless he moves to an environment that can carry him further, or one
+/// that has been in the elite tier long enough to matter. The 4→5 gap is
+/// deliberately bigger than 1→2: revolutionary change is slow, not a toggle.
+fn env_cap(academy: u8) -> u8 {
+    match academy {
+        1 => 62,
+        2 => 75,
+        3 => 82,
+        4 => 88,
+        _ => 95,
+    }
+}
+
+/// Growth intensity 0..=1 by academy tier. Only an elite (5★) environment
+/// gives multipliers near 1.0; weaker environments slow growth so even
+/// their talents peak lower and later — a revolutionary leap is a
+/// decades-long project, not a two-season makeover.
+fn env_mult(academy: u8) -> f32 {
+    match academy {
+        1 => 0.25,
+        2 => 0.45,
+        3 => 0.65,
+        4 => 0.85,
+        _ => 1.0,
+    }
+}
+
 /// Complex-enough annual development: attributes grow toward potential while
 /// young, plateau in the prime, and decline with age (pace/stamina first).
-fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, rng: &mut Pcg64Mcg) {
+fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng: &mut Pcg64Mcg) {
     // Attributes live on the 0-100 scale, so a year's growth/decline moves a
     // few points (not one). Profiles change unevenly — pace and stamina fade
     // first while technique, vision and composure linger — so a veteran can
@@ -3096,13 +3128,29 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, rng: &mut Pcg64M
         // develop — and international caps count as minutes too, so a teenager
         // breaking into his national team grows from that experience, not only
         // from club games.
+        // Environment pressure (academy 1–5): raw growth emerges as steps, but
+        // only a fraction landed by this environment's pace. Under a ceiling,
+        // growth nearly stops — a player can only outgrow the environment by
+        // *leaving* it (transferring up), never just by grinding.
         let minutes = p.apps + p.intl_apps;
+        let mult = env_mult(academy);
+        let cap = env_cap(academy);
         let mut steps = rng.gen_range(1..=3);
         if minutes >= 15 && rng.gen_bool(0.35) {
             steps += 1; // playing develops
         }
         if youth_boost > 1.05 && minutes >= 15 && rng.gen_bool(0.5) {
             steps += 1; // …especially for a manager who trusts kids
+        }
+        if p.ovr >= cap {
+            // At the environment's ceiling: nearly imperceptible growth only.
+            if !rng.gen_bool(0.15) {
+                steps = 0;
+            } else {
+                steps = 1;
+            }
+        } else {
+            steps = ((steps as f32 * mult).round() as u32).max(1);
         }
         for _ in 0..steps {
             match p.pos {
@@ -3134,6 +3182,10 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, rng: &mut Pcg64M
             }
         }
     } else if p.age <= 25 && rng.gen_bool(dev_mid_p.clamp(0.0, 1.0) as f64) {
+        // Mid-twenties growth is slower, still environment-bound: who develops
+        // and how far may approach the ceiling, but never pass it — the academy
+        // wall holds there too.
+        if p.ovr < env_cap(academy) {
         match p.pos {
             Position::FWD => grow_attr(&mut p.attrs.shooting, 3, rng),
             Position::MID => grow_attr(&mut p.attrs.passing, 3, rng),
@@ -3148,6 +3200,7 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, rng: &mut Pcg64M
                 Position::DEF => grow_attr(&mut p.attrs.composure, 2, rng),
                 Position::GK => grow_attr(&mut p.attrs.composure, 2, rng),
             }
+        }
         }
     } else if p.age >= 30 {
         // Physical decline accelerates with age; technique fades far slower, so
@@ -3198,7 +3251,8 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         }
         p.age = p.age.saturating_add(1);
         let yb = boosts.get(p.team).copied().unwrap_or(1.0);
-        develop_player(p, dev_mid_p, yb, rng);
+        let ac = w.teams.get(p.team).map(|t| t.academy).unwrap_or(3);
+        develop_player(p, dev_mid_p, yb, ac, rng);
         // Revalue every player to the inflated market each year — without this,
         // fees and clauses freeze at 2026 prices while budgets inflate, so by
         // the 2030s every star moves at a decade-old discount. Wages inflate
@@ -3328,6 +3382,11 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
     } else {
         (w.elite_cap as i32 - rng.gen_range(10..=30)).max(46) as u8
     };
+    // Environment wall: a 1–2★ world cannot mint world-class ceilings. A
+    // wonderkid at a weak club tops out at that club's academy wall (he's his
+    // country's future star, not the next Messi); only elite environments roll
+    // elite ceilings. An ordinary prospect peaks even lower still.
+    let ceiling = ceiling.min(env_cap(academy as u8));
     let pot = ovr.max(ceiling.min(w.elite_cap));
     let nation = if w.nation_pool.is_empty() {
         String::new()
@@ -6325,7 +6384,7 @@ mod tests {
         for age in 18..=25 {
             pool[0].age = age;
             pool[0].apps = 30;
-            develop_player(&mut pool[0], 1.0, 1.1, &mut rng);
+            develop_player(&mut pool[0], 1.0, 1.1, 5, &mut rng);
         }
         let s = pool[0].attrs.shooting;
         assert!(s >= 82, "wonderkid must actually develop, got {}", s);

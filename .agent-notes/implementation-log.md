@@ -65,8 +65,7 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
   writes season stats/cards/suspensions/condition/form/injuries off the real
   per-player lines; suspended non-players still serve.
 
-## T5 — Real European outsiders (`season.rs`)
-- `build_world` loads the top 8 UEFA tier-1 (non-Big-5) clubs by reputation
+## T5 — Real European outsiders (`season.rs`)- `build_world` loads the top 8 UEFA tier-1 (non-Big-5) clubs by reputation
   with real database squads (dedupe pre-pass + team build both include them),
   assigned `league_idx: 5` so they contest the UCL/Europa and enter the
   transfer market. The 8 procedural fillers remain only as a fallback if the
@@ -105,6 +104,25 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
   and goals — feeding Ballon international components.
 - `Team` gained `nation: String` (for the CWC cap); `World` gained
   `league_meta: Vec<LeagueMeta>` and `continent_hist`.
+
+## Environment-first development (the India fix)
+- Root cause of "India won the 2034 WC": `develop_player` gave every ≤21yo
+  1–3 growth steps/yr everywhere, and regen ceilings were global
+  (`w.elite_cap`), so weak leagues generated 90-ceiling wonderkids and grew
+  them at full pace — 8 seasons to world-class.
+- Fix: each youth now develops under his club's academy tier (1–5).
+  `env_cap` walls growth at 62 (1★), 75 (2★), 82 (3★), 88 (4★), 95 (5★);
+  `env_mult` scales steps at 0.25/0.45/0.65/0.85/1.0. At the wall, growth
+  nearly stops (15% of one step) — only transferring up (the real-world
+  pipeline) raises it further. Same cap in the 22–25 branch. Regen ceilings
+  are `min(rolled, env_cap(academy))`, so a wonderkid at a weak club tops
+  out at the local ceiling (the country's future star, not the next Messi);
+  `elite_cap` only ever shows up at academy 4–5.
+- Consequence: the revolutionary leap is now what it should be — nearly
+  unattainable without decades of academy investment. Verification sim:
+  ISL clubs still rule their own league (Mohun Bagan 5 titles) but their
+  best XI tops ~75 and no longer contests a World Cup; new world-class
+  players (Kaiser-class regens) emerge only from academy 4–5 clubs.
 
 ## Not done (ROADMAP tracks deferred)
 - T5b: full multi-tier league simulation (promotion/relegation across

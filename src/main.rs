@@ -909,12 +909,6 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
     // Apply difficulty boost
     let diff_boost = state.difficulty.match_boost();
 
-    // Both sides rated from the world player pool (fixed: AI squads now exist).
-    let home_players: Vec<Player> = state.players.iter().filter(|p| p.club == Some(fixture.home)).cloned().collect();
-    let away_players: Vec<Player> = state.players.iter().filter(|p| p.club == Some(fixture.away)).cloned().collect();
-    let home_refs: Vec<&Player> = home_players.iter().collect();
-    let away_refs: Vec<&Player> = away_players.iter().collect();
-
     // Full possession engine (Track 3/4): the career match now plays the same
     // 22-individual engine as the sandbox — formation geometry, traits, cards,
     // substitutions, injury time, real scorers. The manager's XI, shape and
