@@ -58,10 +58,11 @@ impl PlayerMind {
     pub fn evaluate(&mut self, apps: u16, played: u16, rank: usize, morale: &mut u8) {
         let expected = played as f32 * pace_for_rank(rank);
         let shortfall = expected - apps as f32;
-        if shortfall >= 4.0 {
+        let contract_sore = self.contract_happiness < 0.45;
+        if shortfall >= 4.0 || contract_sore {
             self.unhappy = true;
             *morale = morale.saturating_sub(6).max(30);
-            if shortfall >= 8.0 && self.loyalty < 0.45 {
+            if shortfall >= 8.0 && self.loyalty < 0.45 || contract_sore && self.loyalty < 0.35 {
                 self.requested = true;
             }
         } else if shortfall <= 0.0 {
@@ -76,10 +77,19 @@ impl PlayerMind {
 
     /// Morale drift target: the disgruntled sit at 45, everyone else at 65.
     pub fn morale_target(&self) -> u8 {
-        if self.requested || self.unhappy {
+        // Contract money matters as much as blame on the bench: a star paid
+        // below market sees his morale sag even while starting; a loyalty
+        // buffer softens that, ambition deepens it.
+        let contract = (self.contract_happiness * 38.0 + 30.0) as u8;
+        let base = if self.requested || self.unhappy {
             45
         } else {
             65
+        };
+        if self.unhappy || self.requested {
+            base.min(contract)
+        } else {
+            base.max(contract)
         }
     }
 
@@ -132,6 +142,19 @@ mod tests {
         m.evaluate(10, 10, 2, &mut morale);
         assert!(!m.unhappy);
         assert!(morale > 60);
+    }
+
+    #[test]
+    fn contract_unhappiness_can_make_request_even_if_started() {
+        let mut rng = Pcg64Mcg::new(10);
+        let mut m = PlayerMind::new(&mut rng);
+        m.loyalty = 0.2;
+        m.contract_happiness = 0.2;
+        let mut morale = 80u8;
+        m.evaluate(10, 10, 2, &mut morale);
+        assert!(m.unhappy);
+        assert!(m.requested);
+        assert_eq!(m.morale_target(), 37);
     }
 
     #[test]

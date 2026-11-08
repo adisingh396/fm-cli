@@ -330,6 +330,16 @@ fn run_calibration() {
         Ok(()) => println!("\n  Best parameters saved to tuned_params.json — future sims use them."),
         Err(e) => println!("\n  Could not save tuned_params.json: {}", e),
     }
+    match net::write_ml_export(&best, "ml_export/ml_models.json") {
+        Ok(()) => println!("\n  Model package exported to ml_export/ml_models.json (GPU-ready weight tables)."),
+        Err(e) => println!("\n  Could not export models: {}", e),
+    }
+    let validation = tune::validate_best(&db, &best, 3, seed);
+    println!("\n  Holdout validation (3 unseen seeds x 3 seasons): loss {:.3}", validation.loss);
+    println!("  Champion points: {:.1} ± {:.1}", validation.mean_champ_pts, validation.champ_pts_sd);
+    println!("  Golden boot: {:.1}", validation.mean_boot);
+    println!("  UCL elite rate: {:.0}%  Ballon elite rate: {:.0}%", validation.ucl_elite_rate * 100.0, validation.ballon_elite_rate * 100.0);
+    println!("  Deals: {:.1}  Mean record fee {:.1}m", validation.mean_deals, validation.mean_max_fee);
     press_enter();
 }
 
@@ -2722,6 +2732,12 @@ fn scouting(state: &mut GameState) {
                     4 => Some(Position::FWD),
                     _ => None,
                 };
+                let country_name = read_text("  Country focus (blank = world): ");
+                let country = if country_name.trim().is_empty() {
+                    None
+                } else {
+                    Some(country_name.trim().to_string())
+                };
                 let max_age = read_number("  Max age (16-35): ").clamp(16, 35) as u8;
                 let weeks = read_number("  Weeks (1-4): ").clamp(1, 4) as u8;
                 let cost = 2000 * weeks as i64;
@@ -2739,6 +2755,7 @@ fn scouting(state: &mut GameState) {
                     max_age,
                     weeks_left: weeks,
                     weeks_total: weeks,
+                    country,
                 });
                 state.add_news(format!("Scout assignment #{} started ({} weeks).", id, weeks));
                 println!("  Assignment #{} started.", id);
@@ -2751,7 +2768,8 @@ fn scouting(state: &mut GameState) {
                 } else {
                     for a in &state.assignments {
                         let pos = a.position.map(|p| p.short()).unwrap_or("ANY");
-                        println!("  #{} {} U{} - {} week(s) left", a.id, pos, a.max_age, a.weeks_left);
+                        let country = a.country.clone().unwrap_or_else(|| "World".to_string());
+                        println!("  #{} {} U{} in {} - {} week(s) left", a.id, pos, a.max_age, country, a.weeks_left);
                     }
                 }
                 println!("\n  Shortlist ({}):", state.scouted.len());
@@ -2787,15 +2805,42 @@ fn tick_assignments(state: &mut GameState) {
             .filter(|p| {
                 (a.position.map_or(true, |pos| p.position == pos))
                     && p.age <= a.max_age
+                    && a.country.as_ref().map_or(true, |c| p.nation.eq_ignore_ascii_case(c))
                     && !state.scouted.iter().any(|s| s.name == p.name)
                     && !state.players.iter().any(|sp| sp.name == p.name && sp.club.is_some())
             })
             .collect();
-        cands.sort_by(|x, y| y.overall().cmp(&x.overall()));
+        let mut ready: Vec<&Player> = cands.clone();
+        ready.sort_by(|x, y| y.overall().cmp(&x.overall()));
+        let mut upside: Vec<&Player> = cands
+            .iter()
+            .copied()
+            .filter(|p| p.age <= 21)
+            .collect();
+        upside.sort_by(|x, y| {
+            y.potential.cmp(&x.potential).then(y.overall().cmp(&x.overall()))
+        });
+        let mut gamble: Vec<&Player> = cands.clone();
+        gamble.sort_by(|x, y| x.value.cmp(&y.value).then(y.age.cmp(&x.age)));
+        let mut selected: Vec<(&Player, u8)> = Vec::new();
+        if let Some(p) = ready.first() {
+            selected.push((*p, 100));
+        }
+        if let Some(p) = upside.iter().find(|p| !selected.iter().any(|(q, _)| q.id == p.id)) {
+            selected.push((*p, 80));
+        }
+        if let Some(p) = gamble
+            .into_iter()
+            .skip(20)
+            .filter(|p| !selected.iter().any(|(q, _)| q.id == p.id))
+            .next()
+        {
+            selected.push((p, 60));
+        }
         let mut names = Vec::new();
-        for c in cands.into_iter().take(3) {
-            let mut cp = c.clone();
-            cp.scout_knowledge = 100;
+        for (c, knowledge) in selected {
+            let mut cp = (*c).clone();
+            cp.scout_knowledge = knowledge;
             names.push(format!("{} ({} OVR {})", cp.name.clone(), cp.position.short(), cp.overall()));
             state.scouted.push(cp);
         }

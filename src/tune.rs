@@ -420,6 +420,74 @@ pub fn loss(samples: &[SeasonSample]) -> f32 {
     l
 }
 
+/// A small aggregate validation report for a candidate parameter vector.
+/// Loss alone is not enough: this keeps the dimensional metrics visible so a
+/// candidate that hides a broken golden-boot or market regime cannot pass just
+/// because the weighted sum happened to improve.
+#[derive(Clone, Debug, Default)]
+pub struct ValidationResult {
+    pub loss: f32,
+    pub mean_champ_pts: f32,
+    pub champ_pts_sd: f32,
+    pub mean_boot: f32,
+    pub ucl_elite_rate: f32,
+    pub ballon_elite_rate: f32,
+    pub mean_deals: f32,
+    pub mean_max_fee: f32,
+    pub samples: usize,
+}
+
+pub fn summarize(samples: &[SeasonSample]) -> ValidationResult {
+    if samples.is_empty() {
+        return ValidationResult::default();
+    }
+    let pts: Vec<f32> = samples
+        .iter()
+        .flat_map(|s| s.champ_pts.iter().map(|&p| p as f32))
+        .collect();
+    let boots: Vec<f32> = samples.iter().map(|s| s.boot as f32).collect();
+    ValidationResult {
+        loss: loss(samples),
+        mean_champ_pts: mean(&pts),
+        champ_pts_sd: sd(&pts, mean(&pts)),
+        mean_boot: mean(&boots),
+        ucl_elite_rate: samples.iter().filter(|s| s.ucl_rep >= 80).count() as f32
+            / samples.len() as f32,
+        ballon_elite_rate: samples.iter().filter(|s| s.ballon_elite).count() as f32
+            / samples.len() as f32,
+        mean_deals: mean(&samples.iter().map(|s| s.deals as f32).collect::<Vec<_>>()),
+        mean_max_fee: mean(&samples.iter().map(|s| s.max_fee as f32).collect::<Vec<_>>()),
+        samples: samples.len(),
+    }
+}
+
+pub fn validate_candidate(
+    db: &Database,
+    params: &Params,
+    eval_seasons: u32,
+    seeds: &[u64],
+) -> ValidationResult {
+    let mut all = Vec::new();
+    for &seed in seeds {
+        all.extend(crate::season::eval_seasons(db, params, eval_seasons, seed));
+    }
+    summarize(&all)
+}
+
+pub fn validate_best(
+    db: &Database,
+    params: &Params,
+    eval_seasons: u32,
+    seed: u64,
+) -> ValidationResult {
+    validate_candidate(
+        db,
+        params,
+        eval_seasons,
+        &[seed + 501, seed + 1001, seed + 1501],
+    )
+}
+
 /// Evolution-strategies calibration: population of parameter vectors, each
 /// evaluated over `eval_seasons` seasons; elites survive and mutate.
 /// Progress (generation, best loss) is printed; best vector returned.
@@ -516,6 +584,28 @@ mod tests {
             max_fee: 20,
         };
         assert!(loss(&[good]) < loss(&[bad]));
+    }
+
+    #[test]
+    fn summarize_outputs_expected_metrics() {
+        let s = SeasonSample {
+            champ_pts: vec![88, 90],
+            champs: vec![],
+            boot: 30,
+            ucl_rep: 90,
+            ballon_g: 28,
+            ballon_elite: true,
+            deals: 6,
+            max_fee: 150,
+        };
+        let v = summarize(&[s]);
+        assert_eq!(v.samples, 1);
+        assert!((v.mean_champ_pts - 89.0).abs() < 0.001);
+        assert_eq!(v.mean_boot, 30.0);
+        assert_eq!(v.ucl_elite_rate, 1.0);
+        assert_eq!(v.ballon_elite_rate, 1.0);
+        assert_eq!(v.mean_deals, 6.0);
+        assert_eq!(v.mean_max_fee, 150.0);
     }
 
     #[test]

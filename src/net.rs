@@ -93,6 +93,10 @@ impl SmallMlp {
         sigmoid(out)
     }
 
+    pub fn forward_batch(&self, features: &[Vec<f32>]) -> Vec<f32> {
+        features.iter().map(|x| self.forward(x)).collect()
+    }
+
     pub fn audit(&self, kind: &str, context: &str, inputs: &[f32]) -> (f32, DecisionAudit) {
         let output = self.forward(inputs);
         let input_count = self.feature_names.len();
@@ -224,6 +228,78 @@ pub fn export_ml_models(w: &crate::tune::Params) -> Vec<ModelSpec> {
             weights: w.policy.clone(),
         },
     ]
+}
+
+/// One model for a full feature schema, with first-layer output and a
+/// reconstructable weight vector in the same order as Rust uses internally.
+#[derive(Clone, Debug, Serialize)]
+pub struct SerializedMlp {
+    pub model: String,
+    pub features: Vec<String>,
+    pub hidden: usize,
+    pub input_weights: Vec<f32>,
+    pub hidden_bias: Vec<f32>,
+    pub output_weights: Vec<f32>,
+    pub output_bias: f32,
+}
+
+/// Convert a one-hidden-layer network into separate matrices. This is the
+/// most GPU-friendly representation: the input and output layers are plain
+/// contiguous `f32` arrays, while feature names remain source-readable.
+pub fn serialize_mlp(model: &SmallMlp) -> Option<SerializedMlp> {
+    let input_count = model.feature_names.len();
+    let expected = input_count * model.hidden + model.hidden + model.hidden + 1;
+    if model.weights.len() != expected {
+        return None;
+    }
+    let base = input_count * model.hidden + model.hidden;
+    Some(SerializedMlp {
+        model: model.model.clone(),
+        features: model.feature_names.iter().map(|s| s.to_string()).collect(),
+        hidden: model.hidden,
+        input_weights: model.weights[..input_count * model.hidden].to_vec(),
+        hidden_bias: model.weights[input_count * model.hidden..base].to_vec(),
+        output_weights: model.weights[base..base + model.hidden].to_vec(),
+        output_bias: model.weights[base + model.hidden],
+    })
+}
+
+pub fn write_ml_export(params: &crate::tune::Params, path: &str) -> std::io::Result<()> {
+    let specs = export_ml_models(params);
+    let serial = specs
+        .iter()
+        .filter_map(|spec| {
+            let features: Vec<&'static str> = if spec.model == "player" {
+                PLAYER_INPUTS.to_vec()
+            } else if spec.model == "manager" {
+                MANAGER_INPUTS.to_vec()
+            } else if spec.model == "scout" {
+                SCOUT_INPUTS.to_vec()
+            } else if spec.model == "finance" {
+                FINANCE_INPUTS.to_vec()
+            } else if spec.model == "transfer" {
+                vec!["need", "value_fit", "wage_room", "ambition", "rep_gap", "requested"]
+            } else {
+                Vec::new()
+            };
+            serialize_mlp(&SmallMlp::new(&spec.model, features, spec.weights.clone(), spec.hidden))
+        })
+        .collect::<Vec<_>>();
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new(".")))?;
+    std::fs::write(path, serde_json::to_string_pretty(&serial)?)
+}
+
+/// Lightweight aggregate audit metrics for model outputs: min/max/mean/sd.
+/// These are cheap sanity checks for validation, not a full training report.
+pub fn output_stats(outputs: &[f32]) -> (f32, f32, f32, f32) {
+    if outputs.is_empty() {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    let min = outputs.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = outputs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let mean = outputs.iter().sum::<f32>() / outputs.len() as f32;
+    let var = outputs.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / outputs.len() as f32;
+    (min, max, mean, var.sqrt())
 }
 
 /// Number of inputs: need, value_fit, wage_room, ambition, rep_gap, requested.
@@ -361,6 +437,26 @@ mod tests {
         assert_eq!(specs.len(), 5);
         assert!(specs.iter().any(|s| s.model == "player" && s.features.len() == PLAYER_INPUTS.len()));
         assert!(specs.iter().any(|s| s.model == "finance" && s.weights.len() == FINANCE_WEIGHTS));
+    }
+
+    #[test]
+    fn batch_outputs_match_single_outputs_and_export_serializes() {
+        let net = player_net(&default_player_weights());
+        let examples = vec![vec![0.0; PLAYER_INPUTS.len()], vec![1.0; PLAYER_INPUTS.len()]];
+        let batch = net.forward_batch(&examples);
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0], net.forward(&examples[0]));
+        assert_eq!(batch[1], net.forward(&examples[1]));
+        let ser = serialize_mlp(&net).unwrap();
+        assert_eq!(ser.model, "player");
+        assert_eq!(ser.input_weights.len(), PLAYER_INPUTS.len() * PLAYER_HIDDEN);
+        assert_eq!(ser.hidden_bias.len(), PLAYER_HIDDEN);
+        assert_eq!(ser.output_weights.len(), PLAYER_HIDDEN);
+        let (min, max, mean, sd) = output_stats(&batch);
+        assert!((0.0..=1.0).contains(&min));
+        assert!((0.0..=1.0).contains(&max));
+        assert!((0.0..=1.0).contains(&mean));
+        assert!((0.0..=1.0).contains(&sd));
     }
 
     fn contributions_len(n: usize) -> usize { n }

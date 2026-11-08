@@ -187,3 +187,33 @@ Added a small auditable multi-model layer:
 - Audit logging is gated by FM_AUDIT_LOG=1 and writes `sim_dump/ml_decisions.jsonl`.
 
 The models remain decision scorers. Money, wage caps, release clauses, budgets, transfers, loans, retirement rules, and bookkeeping stay deterministic wrappers.
+
+## Multi-net decisions live (branch multi-net-decisions-gpu)
+
+- `src/net.rs`: `SmallMlp` with named features, forward batching, audit records, serialization, and output stats.
+- `src/tune.rs`: optional policy vectors for player/manager/scout/finance models, defaulting, clamping, mutation, and holdout validation metrics.
+- `src/season.rs`:
+  - contract offers run through PlayerNet
+  - budgets use FinanceNet
+  - prospect asks use ScoutNet
+  - transfer attempts use ManagerNet
+- `src/main.rs`: calibration saves tuned_params.json, exports `ml_export/ml_models.json`, and runs unseen-seed holdout validation.
+- `src/season.rs`: simulate_decade writes `sim_dump/ml_models.json`; audit records are optional but feature-complete.
+
+Validation gates:
+- cargo test/build green.
+- holdout metrics printed after calibration; exported weight matrices can be consumed by an external GPU trainer without importing the game.
+
+## Global-era development + award/market correction
+
+- Golden Boot is now a Big-Five-only award. Non-Big-Five goals remain in all-comps/career tables.
+- Outlier scoring is not capped: restored the scorer exponent, talisman protection, and original marked-man floor.
+- Ballon d'Or league factors made much harsher for non-Big-Five leagues (UEFA outsider 0.68, CONMEBOL 0.50, CONCACAF 0.44, AFC 0.38).
+- 35+ goal non-Big-Five seasons now trigger a transfer request/repriced clause and a dedicated Big-Five breakout auction.
+- National regen supply no longer follows raw CSV population counts. Nation tickets are weighted by football infrastructure/ranking.
+- Federation development priors: Japan > China PR > India. Academy/player ceilings are constrained by current infrastructure, with rare individual exceptions and slow wealth-driven breakthroughs.
+- Pseudo-nationality `South America` is rejected from international pools.
+- World Cup logs now include every nation, XI names/OVRs, group match scores and group standings.
+- National match programme edge now includes federation infrastructure and squad depth. Defending-champion drag multiplies rather than overwrites these edges.
+
+Old 2034 China route: Netherlands 1-0, France 2-1, Canada 1-1 (shootout), Venezuela 1-0. Old 2070 India route: Holland 0-0 (shootout), Saudi Arabia 2-0, Turkey 1-1 (shootout), England 2-0. Both were assisted by population-weighted regens and a self-reinforcing federation bonus; corrected structurally.

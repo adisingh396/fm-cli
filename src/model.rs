@@ -726,6 +726,8 @@ pub struct ScoutAssignment {
     pub max_age: u8,
     pub weeks_left: u8,
     pub weeks_total: u8,
+    #[serde(default)]
+    pub country: Option<String>,
 }
 
 /// Simplified staff member. Original design: one row per hire with a role,
