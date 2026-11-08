@@ -174,3 +174,16 @@ passing stat line, Galatasaray with Osimhen) fielded in Europe.
 - `cargo test --release` — 99/99 passed.
 - Headless season sim (menu 3 → 1 season) — report sane, generated
   `season_1yr.md`.
+
+## Branch multi-net-decisions-gpu
+
+Added a small auditable multi-model layer:
+
+- `src/net.rs`: `SmallMlp` plus dedicated player, manager, scout, finance, and legacy transfer signers.
+- `src/season.rs`: player contract renewal uses the player model over 12 features; budgets are modulated by the finance/manager model; scouting asks use the scout model.
+- `src/tune.rs`: optional new model weight vectors, defaults, clamping, and ES mutation updates.
+- `src/net.rs`: `DecisionAudit` JSON records with model inputs and first-layer feature contribution.
+- `sim_dump/ml_models.json`: exported weight matrices and feature schema for offline/GPU-friendly training.
+- Audit logging is gated by FM_AUDIT_LOG=1 and writes `sim_dump/ml_decisions.jsonl`.
+
+The models remain decision scorers. Money, wage caps, release clauses, budgets, transfers, loans, retirement rules, and bookkeeping stay deterministic wrappers.

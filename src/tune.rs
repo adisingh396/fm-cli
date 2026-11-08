@@ -82,6 +82,14 @@ pub struct Params {
     pub q_regress: f32,
     pub rot_dip: f32,
     pub policy: Vec<f32>,
+    #[serde(default)]
+    pub player_policy: Vec<f32>,
+    #[serde(default)]
+    pub manager_policy: Vec<f32>,
+    #[serde(default)]
+    pub scout_policy: Vec<f32>,
+    #[serde(default)]
+    pub finance_policy: Vec<f32>,
 }
 
 impl Default for Params {
@@ -133,6 +141,10 @@ impl Default for Params {
             q_regress: 0.92,
             rot_dip: 0.30,
             policy: net::default_weights(),
+            player_policy: net::default_player_weights(),
+            manager_policy: net::default_manager_weights(),
+            scout_policy: net::default_scout_weights(),
+            finance_policy: net::default_finance_weights(),
         }
     }
 }
@@ -143,6 +155,24 @@ impl Params {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .filter(|p: &Self| p.policy.len() == net::NET_WEIGHTS)
+            .map(|p| p.with_small_nets())
+    }
+
+    /// Fill optional small-net weights for legacy tuned_params.json files.
+    pub fn with_small_nets(mut self) -> Self {
+        if self.player_policy.len() != net::PLAYER_WEIGHTS {
+            self.player_policy = net::default_player_weights();
+        }
+        if self.manager_policy.len() != net::MANAGER_WEIGHTS {
+            self.manager_policy = net::default_manager_weights();
+        }
+        if self.scout_policy.len() != net::SCOUT_WEIGHTS {
+            self.scout_policy = net::default_scout_weights();
+        }
+        if self.finance_policy.len() != net::FINANCE_WEIGHTS {
+            self.finance_policy = net::default_finance_weights();
+        }
+        self
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -196,6 +226,18 @@ impl Params {
         c(&mut self.q_regress, 0.8, 0.99);
         c(&mut self.rot_dip, 0.0, 0.5);
         for x in &mut self.policy {
+            *x = x.clamp(-3.0, 3.0);
+        }
+        for x in &mut self.player_policy {
+            *x = x.clamp(-3.0, 3.0);
+        }
+        for x in &mut self.manager_policy {
+            *x = x.clamp(-3.0, 3.0);
+        }
+        for x in &mut self.scout_policy {
+            *x = x.clamp(-3.0, 3.0);
+        }
+        for x in &mut self.finance_policy {
             *x = x.clamp(-3.0, 3.0);
         }
     }
@@ -252,6 +294,18 @@ impl Params {
         mutf!(q_regress, 0.015);
         mutf!(rot_dip, 0.05);
         for x in &mut p.policy {
+            *x += gauss(rng) * 0.15;
+        }
+        for x in &mut p.player_policy {
+            *x += gauss(rng) * 0.15;
+        }
+        for x in &mut p.manager_policy {
+            *x += gauss(rng) * 0.15;
+        }
+        for x in &mut p.scout_policy {
+            *x += gauss(rng) * 0.15;
+        }
+        for x in &mut p.finance_policy {
             *x += gauss(rng) * 0.15;
         }
         p.clamp_all();

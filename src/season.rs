@@ -4464,15 +4464,66 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     // carried cash. Reserves are a backstop for a galáctico, not a war chest
     // that buys anyone every summer — a mid-table club with no Europe simply
     // cannot outbid a superclub, and the finance table shows why.
-    for t in &mut w.teams {
+    // Finance/manager risk model: adjusts board willingness, not the final
+    // amount of money. A calm board, a broke squad, or a transitional manager
+    // changes how much of its real revenue share is actually deployed.
+    let fallback = net::default_finance_weights();
+    let finance_model = net::finance_net(if w.params.finance_policy.len() == net::FINANCE_WEIGHTS {
+        &w.params.finance_policy
+    } else {
+        &fallback
+    });
+    let wage_bills: Vec<i64> = (0..w.teams.len()).map(|ti| wage_bill(w, ti)).collect();
+    let prospect_ratios: Vec<f32> = w
+        .teams
+        .iter()
+        .map(|t| {
+            if t.players.is_empty() {
+                0.0
+            } else {
+                let kids = t.players.iter().filter(|&&i| w.pool[i].age <= 21).count();
+                kids as f32 / t.players.len() as f32
+            }
+        })
+        .collect();
+    for (ti, t) in w.teams.iter_mut().enumerate() {
         // Boards with piles spend: effective willingness rises with reserves
         // (up to +0.3), so surplus converts into ambition instead of just
         // sitting there — while misers still hoard-and-siphon by character.
         let pile = (t.cash.max(0) as f32 / 1000.0).clamp(0.0, 1.0);
+        let cap = wage_cap(t.revenue_last, &w.params).max(1);
+        let bill = wage_bills.get(ti).copied().unwrap_or(0);
+        let wage_room = (1.0 - bill as f32 / cap as f32).clamp(0.0, 1.0);
+        let wage_ratio = if t.revenue_last > 0 {
+            bill as f32 / t.revenue_last as f32
+        } else {
+            0.0
+        };
+        let finance_inputs = [
+            wage_room,
+            (t.revenue_last.max(0) as f32 / 1000.0).clamp(0.0, 1.0),
+            (t.budget.max(0) as f32 / 1000.0).clamp(0.0, 1.0),
+            wage_ratio.clamp(0.0, 1.0),
+            (t.strength / 100.0).clamp(0.0, 1.0),
+            prospect_ratios.get(ti).copied().unwrap_or(0.0),
+            t.willingness.clamp(0.0, 1.0),
+            ((t.cash.max(0) + t.revenue_last.max(0)) as f32 / 2000.0).clamp(0.0, 1.0),
+            (w.inflation - 1.0).clamp(0.0, 1.0),
+            (t.academy as f32 / 5.0).clamp(0.0, 1.0),
+            (t.manager.ambition / 1.5).clamp(0.0, 1.0),
+            (t.rep as f32 / 100.0).clamp(0.0, 1.0),
+        ];
+        let (finance_score, finance_audit) = finance_model.audit(
+            "budget",
+            &format!("{} {}", t.name, BASE_YEAR),
+            &finance_inputs,
+        );
+        net::append_audit(&finance_audit);
+        let finance_multiplier = 0.90 + finance_score * 0.20;
         let effective_will = if t.cash < -300 {
             t.willingness * 0.5
         } else {
-            (t.willingness + 0.3 * pile).min(1.0)
+            ((t.willingness + 0.3 * pile).min(1.0) * finance_multiplier).clamp(0.0, 1.0)
         };
         // Insolvent clubs get no allocation at all — debt cannot finance
         // galácticos. They spend only what sales bring in (sell-to-buy below
@@ -4557,6 +4608,12 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     // Deterministic multi-criteria scoring: potential gap, step discipline,
     // contract leverage, seller finance, buyer affordability. No dice.
     {
+        let fallback = net::default_scout_weights();
+        let scout_model = net::scout_net(if w.params.scout_policy.len() == net::SCOUT_WEIGHTS {
+            &w.params.scout_policy
+        } else {
+            &fallback
+        });
         let tier = |rep: u8| -> u8 {
             if rep >= 88 {
                 1
@@ -4588,6 +4645,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             if active >= 30 {
                 continue;
             }
+            let (need_pos, incumbent) = weakest_slot(&w.teams[buyer].players, &w.pool);
             // Best affordable prospect anywhere strictly below our rung.
             let mut best: Option<(usize, usize, i64)> = None; // (player, seller, ask)
             for seller in 0..w.teams.len() {
@@ -4622,12 +4680,55 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     }
                     // Ask: fresh value × potential premium (the ceiling is
                     // what scouts pay for) × contract premium (committed
-                    // kids cost more — the Monaco hold-out priced in).
+                    // kids cost more — the Monaco hold-out priced in) × the
+                    // scout model's risk-adjusted valuation.
                     let base = market_value(p.ovr, p.age, p.pos) as f32;
-                    let ask = (base
+                    let raw_ask = (base
                         * (1.0 + (p.pot - p.ovr) as f32 * 0.045)
                         * (1.0 + p.locked as f32 * 0.22)
                         * w.inflation) as i64;
+                    let need_ratio = ((p.ovr as f32 - incumbent) / 20.0).clamp(0.0, 1.0);
+                    let rep_gap = ((w.teams[buyer].rep as f32 - w.teams[seller].rep as f32) / 30.0)
+                        .clamp(0.0, 1.0);
+                    let seller_finance = if w.teams[seller].revenue_last > 0 {
+                        (w.teams[seller].cash.max(0) as f32 / w.teams[seller].revenue_last as f32)
+                            .clamp(0.0, 1.0)
+                    } else if w.teams[seller].cash < 0 {
+                        0.0
+                    } else {
+                        0.5
+                    };
+                    let buyer_cap_wage = wage_cap(w.teams[buyer].revenue_last, &w.params);
+                    let wage_fit = if buyer_cap_wage > 0 {
+                        (1.0 - p.wage as f32 / buyer_cap_wage as f32).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let scout_inputs = [
+                        need_ratio,
+                        (p.pot as f32 / 100.0).clamp(0.0, 1.0),
+                        ((22u8.saturating_sub(p.age)) as f32 / 7.0).clamp(0.0, 1.0),
+                        if w.teams[buyer].budget > 0 {
+                            (raw_ask as f32 / w.teams[buyer].budget as f32).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        },
+                        if p.pos == need_pos { 1.0 } else { 0.25 },
+                        (max_rungs as f32 / 3.0).clamp(0.0, 1.0),
+                        seller_finance,
+                        wage_fit,
+                        (w.teams[buyer].academy as f32 / 5.0).clamp(0.0, 1.0),
+                        ((p.pot.saturating_sub(p.ovr)) as f32 / 40.0).clamp(0.0, 1.0),
+                        1.0 - (rungs as f32 / max_rungs.max(1) as f32),
+                        rep_gap,
+                    ];
+                    let (scout_score, scout_audit) = scout_model.audit(
+                        "prospect",
+                        &format!("{} from {} -> {}", p.name, w.teams[seller].name, w.teams[buyer].name),
+                        &scout_inputs,
+                    );
+                    net::append_audit(&scout_audit);
+                    let ask = (raw_ask as f32 * (0.85 + scout_score * 0.30)).round() as i64;
                     // Never more than 40% of the window's money on one kid,
                     // and the squad-cost gate (35% of revenue) applies too.
                     if ask > (w.teams[buyer].budget as f32 * 0.40) as i64 {
@@ -4722,6 +4823,12 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     // Shuffled acting order: no global turn sequence, each manager moves when
     // their number comes up. Ambition sets attempts, not priority.
     order.shuffle(rng);
+    let manager_fallback = net::default_manager_weights();
+    let manager_model = net::manager_net(if w.params.manager_policy.len() == net::MANAGER_WEIGHTS {
+        &w.params.manager_policy
+    } else {
+        &manager_fallback
+    });
 
     for &buyer in &order {
         // Scouting knowledge: a manager fully knows their own league, plus a
@@ -4739,7 +4846,51 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 }
             }
         }
-        let attempts = (1.0 + w.teams[buyer].manager.ambition * 2.0).round() as i32; // 2..4
+        let buyer_wage_bill = wage_bill(w, buyer);
+        let buyer_cap = wage_cap(w.teams[buyer].revenue_last, &w.params).max(1);
+        let buyer_wage_ratio = (buyer_wage_bill as f32 / w.teams[buyer].revenue_last.max(1) as f32)
+            .clamp(0.0, 1.0);
+        let buyer_prospect_ratio = if w.teams[buyer].players.is_empty() {
+            0.0
+        } else {
+            w.teams[buyer]
+                .players
+                .iter()
+                .filter(|&&i| w.pool[i].age <= 21)
+                .count() as f32
+                / w.teams[buyer].players.len() as f32
+        };
+        let buyer_average_age = if w.teams[buyer].players.is_empty() {
+            0.5
+        } else {
+            w.teams[buyer]
+                .players
+                .iter()
+                .map(|&i| w.pool[i].age as f32 / 45.0)
+                .sum::<f32>()
+                / w.teams[buyer].players.len() as f32
+        };
+        let manager_inputs = [
+            (1.0 - buyer_wage_bill as f32 / buyer_cap as f32).clamp(0.0, 1.0),
+            buyer_average_age.clamp(0.0, 1.0),
+            (w.teams[buyer].title_drought as f32 / 20.0).clamp(0.0, 1.0),
+            buyer_prospect_ratio.clamp(0.0, 1.0),
+            (w.teams[buyer].wealth as f32 / 100.0).clamp(0.0, 1.0),
+            w.teams[buyer].willingness.clamp(0.0, 1.0),
+            w.teams[buyer].manager.security.clamp(0.0, 1.0),
+            (w.teams[buyer].manager.ambition / 1.5).clamp(0.0, 1.0),
+            w.teams[buyer].manager.youth_trust.clamp(0.0, 1.0),
+            (w.teams[buyer].rep as f32 / 100.0).clamp(0.0, 1.0),
+            w.teams[buyer].manager.quality.clamp(0.0, 1.0),
+            ((w.teams[buyer].w as f32) / 38.0).clamp(0.0, 1.0),
+        ];
+        let (manager_score, manager_audit) = manager_model.audit(
+            "transfer_attempts",
+            &format!("{} manager", w.teams[buyer].name),
+            &manager_inputs,
+        );
+        net::append_audit(&manager_audit);
+        let attempts = ((1.0 + w.teams[buyer].manager.ambition * 2.0) * (0.75 + manager_score * 0.5)).round() as i32; // 2..4
         for _ in 0..attempts {
             let (need_pos, incumbent) = weakest_slot(&w.teams[buyer].players, &w.pool);
             let buyer_rep = w.teams[buyer].rep;
@@ -5240,16 +5391,33 @@ fn build_contract_offer(
     let ask = demand.max(1);
     let offer_ratio = (wage as f32 / ask as f32).clamp(0.0, 1.35);
     let club_stage = (team.rep as f32 / 100.0).clamp(0.0, 1.0);
-    let inputs = [
-        retention_need,
+    let player_inputs = vec![
+        (p.age as f32 / 45.0).clamp(0.0, 1.0),
+        (p.ovr as f32 / 100.0).clamp(0.0, 1.0),
+        (p.attrs.pace as f32 / 100.0).clamp(0.0, 1.0),
+        (p.attrs.stamina as f32 / 100.0).clamp(0.0, 1.0),
+        ((p.pot.saturating_sub(p.ovr)) as f32 / 50.0).clamp(0.0, 1.0),
         offer_ratio,
-        wage_room,
-        mind.ambition,
         club_stage,
-        if mind.requested { 1.0 } else { 0.0 },
+        (p.morale as f32 / 100.0).clamp(0.0, 1.0),
+        mind.ambition,
+        mind.greed,
+        mind.loyalty,
+        mind.contract_happiness,
     ];
-    let accept_prob = net::forward(&params.policy, &inputs) as f64;
-    let accepted = rng.gen_bool(accept_prob);
+    let fallback = net::default_player_weights();
+    let player_model = net::player_net(if params.player_policy.len() == net::PLAYER_WEIGHTS {
+        &params.player_policy
+    } else {
+        &fallback
+    });
+    let (accept_prob, audit) = player_model.audit(
+        "contract",
+        &format!("{} at {}", p.name, team.name),
+        &player_inputs,
+    );
+    net::append_audit(&audit);
+    let accepted = rng.gen_bool(accept_prob as f64);
     let signing_bonus = if accepted {
         let multiplier = 0.04 + mind.greed * 0.10 + if p.ovr >= 90 { 0.04 } else { 0.0 };
         (p.value as f32 * multiplier).round() as i64
@@ -6973,6 +7141,10 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         }
         j.push_str("]\n");
         let _ = std::fs::write("sim_dump/careers.json", j);
+        let ml_specs = crate::net::export_ml_models(&w.params);
+        if let Ok(s) = serde_json::to_string_pretty(&ml_specs) {
+            let _ = std::fs::write("sim_dump/ml_models.json", s);
+        }
     }
 
     let mut lines = Vec::new();
