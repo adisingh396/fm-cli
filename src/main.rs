@@ -191,24 +191,34 @@ fn print_menu(options: &[&str]) {
     io::stdout().flush().unwrap();
 }
 
+/// Read one line from stdin. On EOF (piped input exhausted) or read error,
+/// exit cleanly instead of spinning menu loops forever — an unattended
+/// `fm.exe < script.txt` must terminate, not write "Invalid choice!" to a
+/// redirect until the disk fills.
+fn stdin_line() -> String {
+    let mut buf = String::new();
+    match io::stdin().read_line(&mut buf) {
+        Ok(0) | Err(_) => {
+            println!("\n  (stdin closed — exiting)");
+            std::process::exit(0);
+        }
+        Ok(_) => buf,
+    }
+}
+
 fn read_choice() -> usize {
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().parse().unwrap_or(0)
+    stdin_line().trim().parse().unwrap_or(0)
 }
 
 fn read_text(prompt: &str) -> String {
     print!("  {}", prompt);
     io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
+    stdin_line().trim().to_string()
 }
 
 fn press_enter() {
     println!("\n  Press Enter to continue...");
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
+    let _ = stdin_line();
 }
 
 // ── Main Menu ────────────────────────────────────────────────────────────────
@@ -1895,8 +1905,7 @@ fn sell_player(state: &mut GameState) {
         println!("\n  Selling {} for {}?", name, format_currency(value));
         print!("  Confirm (y/n): ");
         io::stdout().flush().unwrap();
-        let mut confirm = String::new();
-        io::stdin().read_line(&mut confirm).unwrap();
+        let confirm = stdin_line();
         if confirm.trim().eq_ignore_ascii_case("y") {
             state.club.balance += value;
             state.club.squad.retain(|&id| id != pid);
@@ -1913,9 +1922,7 @@ fn sell_player(state: &mut GameState) {
 fn read_number(prompt: &str) -> i64 {
     print!("  {}", prompt);
     io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().parse().unwrap_or(0)
+    stdin_line().trim().parse().unwrap_or(0)
 }
 
 fn renew_contract(state: &mut GameState) {

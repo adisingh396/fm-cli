@@ -31,6 +31,10 @@ pub(crate) struct PlayerMind {
     pub professionalism: f32,
     pub unhappy: bool,
     pub requested: bool,
+    /// 0..1: how comfortable this man is with his current club's money, role
+    /// and stage. It drifts with treatment, salary relative to demand, and
+    /// whether the club has made an effort to keep him.
+    pub contract_happiness: f32,
 }
 
 impl PlayerMind {
@@ -42,6 +46,7 @@ impl PlayerMind {
             professionalism: rng.gen_range(0.0..1.0),
             unhappy: false,
             requested: false,
+            contract_happiness: 0.65,
         }
     }
 

@@ -138,6 +138,12 @@ struct WP {
     age: u8,
     team: usize,
     retired: bool,
+    /// Retired from international football only. The player keeps playing for
+    /// a club and remains eligible for domestic cups, but no longer enters any
+    /// national-team pool (World Cups, Euros, Asian Cups, friendlies).
+    intl_retired: bool,
+    intl_retire_age: u8,
+    club_retire_age: u8,
     morale: u8,  // 0-100, drifts to 65; results move it
     fatigue: u8, // 0-100, +22 per match involved, rests midweek
     /// Seasons since a positional retraining; 0 = fully adapted. While > 0 the
@@ -188,6 +194,18 @@ struct WP {
     release_clause: Option<i64>,
     wage: i64,
     locked: u8, // years committed to current club before another move
+    /// Lifetime earnings actually banked from salary, signing bonuses and
+    /// performance bonuses -- the player's financial story, not his market
+    /// fee (fees belong to clubs; agents were historically the only men
+    /// who quietly left rich).
+    career_earnings: i64,
+    signing_bonus: i64,
+    bonus_paid: i64,
+    contract_option: bool,
+    /// Career club path, appended on every permanent move — the scouting
+    /// cascade record ("Bryne FK → Molde FK → Salzburg → Dortmund → City").
+    /// Seeded lazily with the origin club on the player's first transfer.
+    path: Vec<String>,
     // career (accumulated across seasons for the decade legends board)
     career_goals: u32,
     career_assists: u32,
@@ -344,6 +362,15 @@ struct Team {
     /// Tactical system (defenders, midfielders, forwards) picked by the manager
     /// from the squad each season — e.g. (4, 3, 3) or (3, 5, 2).
     shape: (usize, usize, usize),
+    /// Consecutive league titles (own domestic league). Drives the dynasty
+    /// cycle: complacent boards refresh less, comfortable squads sag, and
+    /// dynastic managers leave at the top — so no club wins 40 of 50.
+    consec_titles: u8,
+    /// Challenger momentum seasons remaining: a young squad breaking into the
+    /// top four rides confidence (morale floor) and a braver transfer budget
+    /// for a while — the Leicester/Monaco spike, and the force that pries
+    /// leagues open while the giant is between eras.
+    momentum: u8,
 }
 
 /// Pick the spatial `tactics::Shape` that best matches this AI team's (d,m,f)
@@ -399,18 +426,79 @@ fn def_line(t: &Team) -> u8 {
 
 impl Team {
     fn pts(&self) -> u16 {
-
-/// Effective defensive line (0..100) for an AI team, derived from manager
-/// ambition: gung-ho coaches hold a higher line, pragmatists sit deeper.
-fn def_line(t: &Team) -> u8 {
-    (50.0 + (t.manager.ambition - 1.0) * 40.0)
-        .round()
-        .clamp(30.0, 78.0) as u8
-}
         self.w * 3 + self.d
     }
     fn gd(&self) -> i32 {
         self.gf as i32 - self.ga as i32
+    }
+}
+
+/// A persistent national-team coach. Quality measures tactical/coaching
+/// influence while discipline captures the national coaching culture: Japan,
+/// Germany and Spain are built around repeatable systems; part-time
+/// associations and chronically changing benches rarely gain that same
+/// defensive cohesion from one tournament to the next.
+#[derive(Clone, Debug)]
+struct NationalCoach {
+    name: String,
+    quality: f32,
+    ambition: f32,
+    discipline: f32,
+    possession: f32,
+    pressure: f32,
+    directness: f32,
+}
+
+impl Default for NationalCoach {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            quality: 1.0,
+            ambition: 1.0,
+            discipline: 0.65,
+            possession: 0.55,
+            pressure: 0.5,
+            directness: 0.55,
+        }
+    }
+}
+
+/// The long-lived national-team programme stored in `World`. A `Nation`
+/// transient is materialized for one tournament, but this profile is what
+/// persists: the coach brain, the tactical identity, the working XI, and the
+/// familiarity/cohesion built by shared selections and results over time.
+#[derive(Clone, Debug)]
+struct NationalState {
+    coach: NationalCoach,
+    formation: Formation,
+    instructions: TeamInstructions,
+    /// 0..1. How much of the working XI and structure carries forward.
+    chemistry: f32,
+    /// 0..1 tactical familiarisation. It grows only with shared fixtures and
+    /// retained players, so a one-off all-star roster does not arrive as an
+    /// expert running machine.
+    familiarity: f32,
+    /// The persisted first-choice XI (pool indices), for continuity.
+    lineup: Vec<usize>,
+    /// Full-season international experience for the federation programme.
+    caps_together: u16,
+    /// Seasons at the federation. Replacement ends the spell and resets the
+    /// tactical upside that accumulated familiarity had created.
+    tenure: u16,
+}
+
+impl Default for NationalState {
+    fn default() -> Self {
+        Self {
+            coach: NationalCoach::default(),
+            formation: Formation::F442,
+            instructions: TeamInstructions::default(),
+            chemistry: 0.0,
+            familiarity: 0.0,
+            lineup: Vec::new(),
+            caps_together: 0,
+            tenure: 0,
+        }
     }
 }
 
@@ -419,6 +507,13 @@ struct Nation {
     name: String,
     players: Vec<usize>,
     strength: f32,
+    state: NationalState,
+    /// Current best XI for the tournament, drawn from state/current pool.
+    lineup: Vec<usize>,
+    /// Tournament sharpness multiplier (1.0 = normal): defending champions
+    /// without elite depth arrive with sagging legs and a scouted gameplan
+    /// against them — the structural reason golden generations don't repeat.
+    edge: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -471,12 +566,21 @@ struct World {
     /// Host nations of the last two tournaments (disqualifies them from
     /// bidding for the next one, like FIFA's rotation policy).
     recent_hosts: Vec<String>,
+    /// Last two World Cup winners (most recent last) — the defending-champion
+    /// reality check. A repeat is only believable for a nation with genuine
+    /// elite depth (France/Brazil class); a thin golden generation ages four
+    /// years and finds no replacements, so it does not go back-to-back.
+    wc_hist: Vec<String>,
     /// Continental champions history for Club World Cup qualification:
     /// (competition label — "UCL"/"AFC"/"CONCACAF"/"CONMEBOL", winning team).
     /// The CWC hands out its 4-year-cycle slots to these winners.
     continent_hist: Vec<(String, usize)>,
     /// Released players without a club; train alone and can be signed freely.
     free_agents: Vec<usize>,
+    /// Long-lived national programmes: each federation's coach, tactical
+    /// system, working XI and familiarity. Countries do not rebuild an expert
+    /// unit every summer merely because a new dataset drops in.
+    national_states: HashMap<String, NationalState>,
     /// Names already used, to keep regen identities distinct.
     used_names: std::collections::HashSet<String>,
     /// Learned/hand simulation constants (see tune.rs). Loaded from
@@ -1407,6 +1511,50 @@ fn super_cup_winner(field: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64
 
 // ── World build ────────────────────────────────────────────────────────
 
+/// Majority nationality of a squad — the data-driven fallback when the league
+/// registry can't name a club's country. A league label ("Ligue 1") or a
+/// continent ("Europe") is NOT a nation: such a value must never become a
+/// club's country, because academy regens inherit it and "Ligue 1" then
+/// qualifies for World Cups.
+fn majority_nation(idxs: &[usize], pool: &[WP]) -> String {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for &i in idxs {
+        let n = pool[i].nation.trim();
+        if n.len() >= 2 {
+            *counts.entry(n).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, c)| *c)
+        .map(|(n, _)| n.to_string())
+        .unwrap_or_else(|| "Europe".to_string())
+}
+
+/// National federation grant: a nation whose clubs produce at a high level
+/// (strong home league, European minutes, deep pool) gets its development
+/// infrastructure co-funded. Real federations (the JFA's nationwide training
+/// centers, FIFA's worldwide academies programme) exist precisely so
+/// disciplined midsized nations don't die out — their home academy isn't
+/// PSG-tier, but it doesn't collapse either. Returns the academy-tier bonus
+/// (+0.0..+1.0) for a club of this nation based on its federation's output.
+fn federation_bonus(w: &World, nation: &str) -> f32 {
+    let mut tops: Vec<i32> = w
+        .pool
+        .iter()
+        .filter(|p| !p.retired && p.nation == nation && p.age <= 23)
+        .map(|p| p.ovr as i32)
+        .collect();
+    if tops.is_empty() {
+        return 0.0;
+    }
+    tops.sort_unstable();
+    let top_avg = (tops.iter().rev().take(11).sum::<i32>() as f32) / (tops.len().min(11) as f32);
+    // Depth beats one-star output: a nation whose whole youth bench is
+    // 70+ grows its academies, wherever its ceiling sits.
+    ((top_avg - 62.0) / 18.0).clamp(0.0, 1.0)
+}
+
 fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     let mut pool: Vec<WP> = Vec::new();
     let mut teams: Vec<Team> = Vec::new();
@@ -1662,6 +1810,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         age: page,
                         team: tid,
                         retired: false,
+                        intl_retired: false,
+                        intl_retire_age: 0,
+                        club_retire_age: 0,
                         morale: 70,
                         fatigue: 0,
                         adapt: 0,
@@ -1719,6 +1870,10 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         // near half of revenue like real clubs, so money doesn't
                         // pile to the cap and budgets actually bind.
                         wage: (market_value(p.overall(), page, p.position) * 2 / 5).max(1),
+                        career_earnings: 0,
+                        signing_bonus: 0,
+                        bonus_paid: 0,
+                        contract_option: false,
                         locked: {
                             let o = p.overall();
                             let h = ((pool.len() as u64).wrapping_mul(2654435761) % 3) as u8;
@@ -1730,6 +1885,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                                 h
                             }
                         },
+                        path: Vec::new(),
                         career_goals: 0,
                         career_assists: 0,
                         career_kp: 0,
@@ -1764,7 +1920,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                 name: c.name.clone(),
                 nation: crate::world_model::lookup(&c.league)
                     .map(|l| l.nation.clone())
-                    .unwrap_or_else(|| c.league.clone()),
+                    .unwrap_or_else(|| majority_nation(&pidx, &pool)),
                 league_idx: li,
                 rep: c.reputation,
                 players: pidx,
@@ -1795,6 +1951,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                 registered: Vec::new(),
                 manager: Manager::new_random(rng, &params),
                 shape,
+                consec_titles: 0,
+                momentum: 0,
             });
         }
     }
@@ -1858,6 +2016,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     age,
                     team: tid,
                     retired: false,
+                    intl_retired: false,
+                    intl_retire_age: 0,
+                    club_retire_age: 0,
                     morale: 70,
                     fatigue: 0,
                     adapt: 0,
@@ -1897,10 +2058,15 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     value: market_value(ovr, age, pos),
                     release_clause: None,
                     wage: (market_value(ovr, age, pos) * 2 / 5).max(1),
+                    career_earnings: 0,
+                    signing_bonus: 0,
+                    bonus_paid: 0,
+                    contract_option: false,
                     locked: {
                         let h = ((pool.len() as u64).wrapping_mul(2654435761) % 3) as u8;
                         if ovr >= 78 { 2 + h } else { h }
                     },
+                    path: Vec::new(),
                     career_goals: 0,
                     career_assists: 0,
                     career_kp: 0,
@@ -1929,7 +2095,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         let revenue_last = revenue(wealth) as i64;
         teams.push(Team {
             name: fname.to_string(),
-            nation: "Europe".to_string(), // procedural fallback outsiders
+            nation: majority_nation(&pidx, &pool), // procedural fallback outsiders
             league_idx: 5,
             rep: frep,
             players: pidx,
@@ -1960,6 +2126,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             registered: Vec::new(),
             manager: Manager::new_random(rng, &params),
             shape,
+            consec_titles: 0,
+            momentum: 0,
         });
     }
     }
@@ -1998,15 +2166,24 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         .filter(|w| w.nation.trim().len() >= 2)
         .map(|w| w.nation.clone())
         .collect();
-    // Elite ceiling for regens = ~the 96th percentile of current overalls, so
-    // youth can eventually become stars but never instantly outclass the world.
+    // Elite ceiling for regens = the era's ELITE BAND, not a percentile of
+    // everyone. The old 96th-percentile-of-all-players reading (~79-80) sat
+    // far below the actual world class (85-92): once 2026's stars retired,
+    // no regen could replace them, the whole world compressed into a
+    // 6-overall band, and twenty equal sides took turns winning World Cups.
+    // Anchor instead to the average of the best 50 players on earth (minus a
+    // couple of points), floored by the old percentile so a weak dataset
+    // still degrades gracefully.
     let mut ovrs: Vec<u8> = pool.iter().map(|w| w.ovr).collect();
     ovrs.sort_unstable();
-    let elite_cap = ovrs
+    let p96 = ovrs
         .get(ovrs.len() * 96 / 100)
         .copied()
         .unwrap_or(33)
         .max(28);
+    let top50_sum: u32 = ovrs.iter().rev().take(50).map(|&v| v as u32).sum();
+    let top50_avg = (top50_sum as f32 / 50.0_f32.min(ovrs.len() as f32)).round() as u8;
+    let elite_cap = p96.max(top50_avg.saturating_sub(2));
 
     World {
         pool,
@@ -2027,7 +2204,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             "Mexico".to_string(),
         ]],
         recent_hosts: Vec::new(),
+        wc_hist: Vec::new(),
         free_agents: Vec::new(),
+        national_states: HashMap::new(),
         used_names,
     }
 }
@@ -2129,6 +2308,29 @@ fn intl_kind_for(year: u16) -> IntlKind {
 fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome {
     reset_season(w);
 
+    // ── Dynasty cycle: the season's emotional starting point ─────────────
+    // Consecutive champions return from summer comfortable — comfort is the
+    // enemy, and morale (which selection and match strength both use) sags
+    // per straight title until someone pips them. Momentum challengers ride
+    // the opposite wave. No match is pre-decided; the edge is exactly the
+    // size a dressing room's hunger actually is.
+    for t in 0..w.teams.len() {
+        let consec = w.teams[t].consec_titles;
+        if consec >= 2 {
+            let sag = 4 * (consec - 1).min(4) as u8; // −4..−16 morale
+            for pi in w.teams[t].players.clone() {
+                w.pool[pi].morale = w.pool[pi].morale.saturating_sub(sag);
+            }
+        }
+        if w.teams[t].momentum > 0 {
+            for pi in w.teams[t].players.clone() {
+                if w.pool[pi].morale < 73 {
+                    w.pool[pi].morale = 73;
+                }
+            }
+        }
+    }
+
     for li in 0..BIG5.len() {
         let ids = w.league_teams[li].clone();
         if ids.len() >= 4 {
@@ -2187,6 +2389,45 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
                 w.teams[t].title_drought = w.teams[t].title_drought.saturating_add(1);
                 w.teams[t].manager.title_drought =
                     w.teams[t].manager.title_drought.saturating_add(1);
+            }
+        }
+    }
+
+    // ── Dynasty bookkeeping ─────────────────────────────────────────────
+    // Consecutive-title counters (every domestic league, so the cycle bites
+    // Al Hilal and Boca as surely as PSG), plus challenger momentum: decay
+    // first, then a young top-four finisher (2nd-4th, avg age ≤ 25.2) banks
+    // two seasons of confidence — the force that pries leagues open while
+    // the giant's guard drops.
+    let mut league_champs: Vec<usize> = champ_idxs.clone();
+    for table in &extra_tables {
+        if let Some(&c) = table.first() {
+            league_champs.push(c);
+        }
+    }
+    for t in 0..w.teams.len() {
+        w.teams[t].momentum = w.teams[t].momentum.saturating_sub(1);
+        if league_champs.contains(&t) {
+            w.teams[t].consec_titles = w.teams[t].consec_titles.saturating_add(1);
+        } else {
+            w.teams[t].consec_titles = 0;
+        }
+    }
+    for table in &tables {
+        for &t in table.iter().take(4).skip(1) {
+            let squad: Vec<usize> = w.teams[t]
+                .players
+                .iter()
+                .copied()
+                .filter(|&i| !w.pool[i].retired)
+                .collect();
+            if squad.is_empty() {
+                continue;
+            }
+            let avg_age =
+                squad.iter().map(|&i| w.pool[i].age as f32).sum::<f32>() / squad.len() as f32;
+            if avg_age <= 25.2 {
+                w.teams[t].momentum = 2;
             }
         }
     }
@@ -2522,12 +2763,71 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
             }
             let mut nations = build_nations(&w.pool, kind, &wc_hosts);
             if kind == IntlKind::WorldCup {
-                run_world_cup_2026(&mut nations, &wc_hosts, &mut w.pool, &w.params, rng)
-                    .unwrap_or_else(|| "-".to_string())
+                // ── Defending-champion reality check ────────────────────
+                // Repeats are real (Brazil '58/'62) but belong to nations
+                // with genuine elite DEPTH: a federation that can replace
+                // half its XI at the same level. A thin golden generation
+                // (one great cohort, no successors) arrives four years
+                // older, scouted by everyone, out of celebrations and
+                // short rest — and structurally does not go back-to-back.
+                // Depth is measured from the pool: how many compatriots
+                // play within 3 of the champion's XI level.
+                if let Some(champ) = w.wc_hist.last().cloned() {
+                    for n in nations.iter_mut() {
+                        if n.name != champ {
+                            continue;
+                        }
+                        let xi_level = n.strength as i32;
+                        let depth = w
+                            .pool
+                            .iter()
+                            .filter(|p| {
+                                !p.retired
+                                    && p.nation == champ
+                                    && p.ovr as i32 >= xi_level - 3
+                            })
+                            .count();
+                        // Genuine elite sides (a France/Brazil-class XI) keep
+                        // enough of their edge to repeat — history's repeat
+                        // winners were exactly that class. A golden cohort
+                        // without replacements (outlier champions) decays
+                        // hard: four years older, fully scouted, no heirs.
+                        let elite_xi = n.strength >= 85.0;
+                        n.edge = if depth >= 16 {
+                            0.99 // true dynasty depth
+                        } else if depth >= 12 {
+                            if elite_xi { 0.975 } else { 0.955 }
+                        } else if elite_xi {
+                            0.965
+                        } else {
+                            0.925 // golden cohort, no replacements
+                        };
+                        // Going for a THIRD straight title without elite
+                        // depth: even history's best never did that cold.
+                        let going_three =
+                            w.wc_hist.len() >= 2 && w.wc_hist[w.wc_hist.len() - 2] == champ;
+                        if going_three && depth < 16 {
+                            n.edge *= 0.97;
+                        }
+                    }
+                }
+            }
+            let winner = if kind == IntlKind::WorldCup {
+                run_world_cup_2026(year, &mut nations, &wc_hosts, &mut w.pool, &w.params, rng)
             } else {
                 run_international(&mut nations, &mut w.pool, &w.params, rng)
-                    .unwrap_or_else(|| "-".to_string())
+            };
+            if kind == IntlKind::WorldCup {
+                if let Some(name) = &winner {
+                    if name != "-" {
+                        w.wc_hist.push(name.clone());
+                        if w.wc_hist.len() > 2 {
+                            w.wc_hist.remove(0);
+                        }
+                    }
+                }
             }
+            winner.unwrap_or_else(|| "-".to_string())
         }
     };
     // Award the next World Cup's hosting now (bid-appointed), keeping rotation
@@ -3060,6 +3360,22 @@ fn post_season_evolution(
     // summer (seasons < 2) is spared the random axe — nobody is hired and
     // sacked in the same window.
     for t in 0..w.teams.len() {
+        // Dynastic burnout: a manager four-plus straight titles deep gets
+        // poached for a national job, leaves at the top, or the board simply
+        // craves a new voice — 30% per season. The fresh hire's inexperience
+        // IS the transition dip that ends eras; no artificial nerf needed.
+        if w.teams[t].consec_titles >= 4
+            && w.teams[t].manager.seasons >= 3
+            && rng.gen_bool(0.30)
+        {
+            let old = w.teams[t].manager.name.clone();
+            w.teams[t].manager = Manager::fresh_hire(rng, &w.params);
+            moves.push(format!(
+                "{} and champion {} part ways — the board wants a new voice",
+                w.teams[t].name, old
+            ));
+            continue;
+        }
         if w.teams[t].manager.retires(rng) {
             let old = w.teams[t].manager.name.clone();
             let yrs = w.teams[t].manager.seasons;
@@ -3083,25 +3399,178 @@ fn post_season_evolution(
 
 
 
-fn retire_prob(age: u8, is_gk: bool) -> f64 {
+fn retire_prob(age: u8, is_gk: bool, ovr: u8, lower_competition: bool) -> f64 {
     if age >= 42 {
         return 1.0; // hard cap — nobody plays on at 42
     }
-    let base = match age {
-        0..=31 => 0.0,
-        32 => 0.10,
-        33 => 0.18,
-        34 => 0.30,
-        35 => 0.45,
-        36 => 0.62,
-        37 => 0.78,
-        38 => 0.90,
-        39 => 0.96,
-        40 => 0.99,
-        _ => 0.99,
+    let base = if is_gk && !lower_competition {
+        // Goalkeepers age differently: the position survives on positioning
+        // and composure, so the mass lands in the late 30s, with stragglers
+        // into the early 40s.
+        match age {
+            0..=33 => 0.0,
+            34 => 0.04,
+            35 => 0.08,
+            36 => 0.15,
+            37 => 0.25,
+            38 => 0.32,
+            39 => 0.35,
+            40 => 0.30,
+            41 => 0.15,
+            _ => 0.99,
+        }
+    } else if is_gk {
+        // Even in a lower-division cage, goalkeeper reflexes decay slower
+        // than sprinting: retain a proper ageing curve, but let the wage and
+        // medical-support risk pull exits earlier than elite keepers.
+        match age {
+            0..=33 => 0.0,
+            34 => 0.07,
+            35 => 0.13,
+            36 => 0.22,
+            37 => 0.32,
+            38 => 0.38,
+            39 => 0.42,
+            40 => 0.38,
+            41 => 0.22,
+            _ => 0.99,
+        }
+    } else if lower_competition {
+        // Minor-club, low-support tenures: the body and the bank pack in
+        // earlier. Outfield players are mostly finished in their early/mid
+        // -30s, while the GK branch above preserves longer ageing by position.
+        match age {
+            0..=28 => 0.0,
+            29 => 0.03,
+            30 => 0.08,
+            31 => 0.15,
+            32 => 0.24,
+            33 => 0.34,
+            34 => 0.44,
+            35 => 0.55,
+            36 => 0.68,
+            37 => 0.82,
+            38 => 0.92,
+            39 => 0.97,
+            40 => 0.99,
+            _ => 0.99,
+        }
+    } else if ovr >= 86 {
+        // Elite outfielders can train/restore longer, so the curve shifts
+        // right without moving everyone's median to 38.
+        match age {
+            0..=34 => 0.0,
+            35 => 0.04,
+            36 => 0.08,
+            37 => 0.16,
+            38 => 0.25,
+            39 => 0.32,
+            40 => 0.38,
+            41 => 0.25,
+            _ => 0.99,
+        }
+    } else {
+        // General men's professional outfield population: mode/median
+        // around 35, with most exits in the 34-36 window.
+        match age {
+            0..=33 => 0.0,
+            34 => 0.18,
+            35 => 0.42,
+            36 => 0.50,
+            37 => 0.35,
+            38 => 0.20,
+            39 => 0.12,
+            40 => 0.06,
+            41 => 0.02,
+            _ => 0.99,
+        }
     };
-    if is_gk {
-        base * 0.6
+    if is_gk && !lower_competition {
+        base * 0.85
+    } else {
+        base
+    }
+}
+
+/// National-team retirement: international peaks end earlier than club careers.
+/// A player calls time on his country when the federation's youth pipeline
+/// has passed him — his pace/stamina have dropped, he is below the national
+/// call-up threshold, and continuing means saving the coach the awkward
+/// decision without any realistic prospect of a new World Cup/Euro cycle.
+/// Elite players can still contribute at 34-38; journeymen usually step aside
+/// between 30 and 36, then keep playing domestic or exile football.
+fn intl_retirement_prob(p: &WP, national_floor: i32) -> f64 {
+    if p.age < 30 || p.ovr < 60 {
+        return 0.0;
+    }
+    let exceptional = p.ovr >= 86;
+    let below_floor = (p.ovr as i32) < national_floor - 3;
+    let physical_drop = if p.pos == Position::GK {
+        p.attrs.goalkeeping < 68 || p.attrs.composure < 60
+    } else {
+        p.attrs.pace < 60 || p.attrs.stamina < 55 || p.attrs.dribbling < 55
+    };
+    let _ = national_floor;
+    let base = match p.age {
+        30..=31 => {
+            if physical_drop && !exceptional {
+                0.10
+            } else if below_floor {
+                0.06
+            } else {
+                0.01
+            }
+        }
+        32..=33 => {
+            if physical_drop && !exceptional {
+                0.22
+            } else if below_floor {
+                0.15
+            } else if exceptional {
+                0.03
+            } else {
+                0.06
+            }
+        }
+        34..=35 => {
+            if physical_drop {
+                0.38
+            } else if below_floor {
+                0.30
+            } else if exceptional {
+                0.08
+            } else {
+                0.15
+            }
+        }
+        36..=37 => {
+            if physical_drop {
+                0.55
+            } else if below_floor {
+                0.45
+            } else if exceptional {
+                0.20
+            } else {
+                0.28
+            }
+        }
+        38..=39 => {
+            if exceptional {
+                0.45
+            } else {
+                0.70
+            }
+        }
+        _ => {
+            if exceptional {
+                0.65
+            } else {
+                0.85
+            }
+        }
+    };
+    if p.pos == Position::GK {
+        base * 0.65
     } else {
         base
     }
@@ -3343,7 +3812,45 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
     // faster on minutes under managers who believe in them. Same snapshot
     // trick for revenues, feeding the superstar wage spiral below.
     let boosts: Vec<f32> = w.teams.iter().map(|t| t.manager.youth_boost()).collect();
+    // Federation development grants (by nation, not club): a strong youth
+    // floor lifts the whole nation's academy output a tier — the JFA effect,
+    // letting disciplined mid-sized footballing nations sustain depth.
+    let fed_bonus: Vec<f32> = {
+        let mut nations: Vec<String> = Vec::new();
+        for t in w.teams.iter() {
+            if !nations.contains(&t.nation) {
+                nations.push(t.nation.clone());
+            }
+        }
+        let mut out = Vec::new();
+        for t in w.teams.iter() {
+            let i = nations.iter().position(|n| n == &t.nation).unwrap_or(0);
+            out.push(federation_bonus(w, &nations[i]));
+        }
+        out
+    };
     let revs: Vec<i64> = w.teams.iter().map(|t| t.revenue_last).collect();
+    let wage_bills: Vec<i64> = (0..w.teams.len()).map(|ti| wage_bill(w, ti)).collect();
+    // National call-up floors for international retirement: the 11th-best
+    // non-retired player of each federation. The point is not merely age;
+    // a veteran who is suddenly below his federation's replacement class is
+    // the first man a coach stops trusting.
+    let national_thresholds: HashMap<String, i32> = {
+        let mut pools: HashMap<String, Vec<i32>> = HashMap::new();
+        for p in &w.pool {
+            if !p.retired && !p.intl_retired && p.nation.trim().len() >= 2 {
+                pools.entry(p.nation.clone()).or_default().push(p.ovr as i32);
+            }
+        }
+        pools
+            .into_iter()
+            .map(|(nation, mut vals)| {
+                vals.sort_unstable_by(|a, b| b.cmp(a));
+                let floor = vals.get(10).copied().or_else(|| vals.last().copied()).unwrap_or(50);
+                (nation, floor)
+            })
+            .collect()
+    };
     for (idx, p) in w.pool.iter_mut().enumerate() {
         if p.retired {
             continue;
@@ -3351,7 +3858,11 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         p.age = p.age.saturating_add(1);
         let yb = boosts.get(p.team).copied().unwrap_or(1.0);
         let ac = w.teams.get(p.team).map(|t| t.academy).unwrap_or(3);
-        develop_player(p, dev_mid_p, yb, ac, rng);
+        // Federation grant lifts effective academy quality for development:
+        // a strong youth floor raises the environment's pace and ceiling.
+        let fb = fed_bonus.get(p.team).copied().unwrap_or(0.0);
+        let ac_eff = ((ac as f32 + fb).floor() as u8).clamp(1, 5);
+        develop_player(p, dev_mid_p, yb, ac_eff, rng);
         // Revalue every player to the inflated market each year — without this,
         // fees and clauses freeze at 2026 prices while budgets inflate, so by
         // the 2030s every star moves at a decade-old discount. Wages inflate
@@ -3389,15 +3900,42 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         } else {
             p.release_clause = None;
         }
-        // Clubs renew key men before deals lapse — but not always, or the market
-        // freezes: no talent cascades down, mid-table fields children forever
-        // and retained 95-finishers feast for 70-goal seasons. Generational
-        // talents (90+) mostly stay; very good players (82+) hit the market
-        // about half the time, keeping the pyramid fluid like reality.
-        if p.ovr >= 90 && p.locked <= 1 && p.age <= 32 && rng.gen_bool(0.80) {
-            p.locked = 5 + (rng.gen::<u8>() % 3); // 5..=7 more years
-        } else if p.ovr >= 82 && p.ovr < 90 && p.locked <= 1 && p.age <= 32 && rng.gen_bool(0.55) {
-            p.locked = 3 + (rng.gen::<u8>() % 3); // 3..=5 more years
+        // Contract decision -- clubs exercise options, then negotiate in earnest.
+        // The club may use a one-year option if it has one. Otherwise the club
+        // puts a real number on the table; the player evaluates money plus role
+        // and stage, and either signs (raising morale) or leaves the table angry.
+        if !p.on_loan {
+            if p.contract_option && p.locked <= 1 && rng.gen_bool(0.85) {
+                p.contract_option = false;
+                p.locked = 2;
+                p.morale = p.morale.saturating_add(2).min(85);
+            } else if p.locked <= 1 && p.ovr >= 70 {
+                let team = &w.teams[p.team];
+                let bill = wage_bills.get(p.team).copied().unwrap_or(0);
+                let offer = build_contract_offer(p, &w.minds[idx], team, &w.params, bill, rng);
+                if offer.accepted {
+                    p.wage = offer.wage;
+                    p.signing_bonus += offer.signing_bonus;
+                    p.career_earnings += offer.signing_bonus;
+                    let team_i = w.teams.get_mut(p.team).unwrap();
+                    team_i.cash -= offer.signing_bonus;
+                    team_i.net_spend += offer.signing_bonus;
+                    p.locked = 3 + (rng.gen::<u8>() % 3);
+                    p.contract_option = offer.club_option;
+                    let m = &mut w.minds[idx];
+                    m.unhappy = false;
+                    m.requested = false;
+                    m.contract_happiness = offer.contract_happiness;
+                    p.morale = p.morale.saturating_add(3).min(88);
+                } else {
+                    let m = &mut w.minds[idx];
+                    m.unhappy = true;
+                    m.contract_happiness = offer.contract_happiness;
+                    if m.loyalty < 0.65 || rng.gen_bool(0.45) {
+                        m.requested = true;
+                    }
+                }
+            }
         }
         // Champion restlessness: highly ambitious winners in their prime
         // sometimes want a new mountain (the Ronaldo mechanism) — dominance
@@ -3414,8 +3952,105 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             w.minds[idx].unhappy = true;
         }
         let is_gk = p.pos == Position::GK;
-        if rng.gen_bool(retire_prob(p.age, is_gk)) {
+        if !p.intl_retired {
+            let national_floor = national_thresholds
+                .get(&p.nation)
+                .copied()
+                .unwrap_or(p.ovr as i32);
+            if rng.gen_bool(intl_retirement_prob(p, national_floor)) {
+                p.intl_retired = true;
+                p.intl_retire_age = p.age;
+            }
+        }
+        let lower_competition = w
+            .teams
+            .get(p.team)
+            .map(|t| t.league_idx >= 6 && t.rep <= 62)
+            .unwrap_or(false);
+        let wealthy_exile = w
+            .teams
+            .get(p.team)
+            .map(|t| {
+                t.league_idx >= 6 && !lower_competition && t.revenue_last >= 200
+            })
+            .unwrap_or(false)
+            && p.intl_retired
+            && p.ovr >= 70;
+        let raw_retire_prob = retire_prob(p.age, is_gk, p.ovr, lower_competition);
+        let club_retire_prob = if p.age >= 42 {
+            1.0
+        } else if wealthy_exile {
+            raw_retire_prob * 0.75
+        } else {
+            raw_retire_prob
+        };
+        if rng.gen_bool(club_retire_prob) {
             p.retired = true;
+            p.club_retire_age = p.age;
+        }
+        // ── The last payday: veterans cash in abroad ───────────────────
+        // A 33-year-old star too expensive for his wage band doesn't retire
+        // into thin air — he requests a move and the money leaks (Saudi
+        // Pro League, MLS, Qatar, the classic plane tickets) take him for
+        // 2-4 more seasons, earning double money against weaker defenders,
+        // padding the numbers he'll be remembered by. Stars who can still
+        // command top wages instead stay and retire inside the big five.
+        if !p.retired
+            && p.age >= 33
+            && p.ovr >= if p.intl_retired { 70 } else { 78 }
+            && p.team < w.teams.len()
+        {
+            let leak_exists = (0..w.teams.len()).any(|ti| {
+                ti != p.team
+                    && w.teams[ti].rep >= 40
+                    && w.teams[ti].rep <= 70
+                    && w.teams[ti].league_idx >= 6
+            });
+            if leak_exists {
+                // Wage squeeze = the Saudi trigger: if the club can't or
+                // won't carry his wage, a wealthier league recruits him.
+                // Once he has left international football, that country career
+                // is closed anyway, so the money-and-easier-competition move
+                // becomes especially attractive.
+                let wage_q = w.teams[p.team].rep >= 88
+                    && (p.wage as f32) > (w.teams[p.team].revenue_last as f32) * 0.02;
+                let mercenary = w.minds[idx].ambition > 0.7;
+                let post_intl_payday = p.intl_retired
+                    && (wage_q
+                        || mercenary
+                        || rng.gen_bool(0.32));
+                if wage_q || mercenary || post_intl_payday {
+                    // Find the richest leak league that fits.
+                    let mut dest: Option<usize> = None;
+                    let mut best_rev = 0i64;
+                    for ti in 0..w.teams.len() {
+                        if ti == p.team {
+                            continue;
+                        }
+                        let t = &w.teams[ti];
+                        if t.rep < 40 || t.rep > 70 || t.league_idx < 6 {
+                            continue;
+                        }
+                        if t.revenue_last > best_rev {
+                            // Wages must beat decline: Saudi pays well.
+                            let ok = (p.wage as f32) * 0.9
+                                <= wage_cap(t.revenue_last, &w.params) as f32 * 0.9;
+                            if ok {
+                                best_rev = t.revenue_last;
+                                dest = Some(ti);
+                            }
+                        }
+                    }
+                    if let Some(d) = dest {
+                        let old = p.team;
+                        w.teams[old].players.retain(|&x| x != idx);
+                        w.teams[d].players.push(idx);
+                        p.team = d;
+                        p.morale = 78; // sunny, paid, unmarked
+                        p.locked = (rng.gen::<u8>() % 3) + 2;
+                    }
+                }
+            }
         }
     }
 
@@ -3475,6 +4110,13 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
     // Most youth top out mid-tier; the rare wonderkid reaches the elite band.
     let wonder_p = 0.02 + academy * 0.012;
     let wonder = rng.gen::<f32>() < wonder_p;
+    // The vanishingly rare one-academy-lucky-child: ~3% of the time an elite
+    // academy (rep>=88, academy 5) mints a wonderkid destined for the
+    // world-class band whatever his origin, so the world's top XI can never
+    // sag below the 80s.
+    let elite_trickle = rep >= 88
+        && w.teams.get(team).map(|t| t.academy >= 5).unwrap_or(false)
+        && rng.gen_bool(0.03);
     let ovr = age_cap_ovr(gp.overall().min(w.elite_cap.saturating_sub(2)), age, wonder);
     let ceiling = if wonder {
         w.elite_cap
@@ -3486,11 +4128,39 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
     // country's future star, not the next Messi); only elite environments roll
     // elite ceilings. An ordinary prospect peaks even lower still.
     let ceiling = ceiling.min(env_cap(academy as u8));
-    let pot = ovr.max(ceiling.min(w.elite_cap));
-    let nation = if w.nation_pool.is_empty() {
-        String::new()
+    // The elite trickle overrides the wall — that's the once-in-a-hundred-
+    // years find breaking out the tiny shop.
+    let ceiling = if elite_trickle {
+        w.elite_cap.saturating_sub(2)
     } else {
-        w.nation_pool[rng.gen_range(0..w.nation_pool.len())].clone()
+        ceiling
+    };
+    let pot = ovr.max(ceiling.min(w.elite_cap));
+    // Academy products are mostly LOCAL: a boy entering Barcelona's academy
+    // is overwhelmingly Spanish; only truly global academies (Salzburg,
+    // Benfica, the big clubs' African pipelines) draw broadly. Drawing purely
+    // from the global pool sprinkled every nation's talent uniformly across
+    // all academies — volume nations minted golden cohorts abroad while the
+    // traditional powers quietly stopped regenerating. 60% local, 40% the
+    // old global draw.
+    let nation = if elite_trickle {
+        // The one-in-a-hundred-years find: a once-in-a-generation talent
+        // any academy could produce. Keep him local to the academy then.
+        w.teams.get(team).map(|t| t.nation.clone()).unwrap_or_default()
+    } else {
+        match w.teams.get(team) {
+            Some(t) if !t.nation.trim().is_empty() && rng.gen_bool(0.60) => {
+                t.nation.clone()
+            }
+            _ if !w.nation_pool.is_empty() => {
+                w.nation_pool[rng.gen_range(0..w.nation_pool.len())].clone()
+            }
+            _ => w
+                .teams
+                .get(team)
+                .map(|t| t.nation.clone())
+                .unwrap_or_default(),
+        }
     };
     // Distinct identity from an inexhaustible, nation-aware supply: no bounded
     // retries, no recycled names even a century out.
@@ -3507,6 +4177,9 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         age,
         team,
         retired: false,
+        intl_retired: false,
+        intl_retire_age: 0,
+        club_retire_age: 0,
         morale: 70,
         fatigue: 0,
         adapt: 0,
@@ -3547,7 +4220,12 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         value: (market_value(ovr, age, pos) as f32 * w.inflation) as i64,
         release_clause: None,
         wage: ((market_value(ovr, age, pos) as f32 * w.inflation * 2.0 / 5.0) as i64).max(1),
+        career_earnings: 0,
+        signing_bonus: 0,
+        bonus_paid: 0,
+        contract_option: false,
         locked: 1,
+        path: Vec::new(),
         career_goals: 0,
         career_assists: 0,
         career_kp: 0,
@@ -3663,12 +4341,12 @@ fn transfer_willing(
 
 /// Season-long loans end here: every loanee returns to the parent before the
 /// window opens, so squads (and budgets) are assessed honestly.
-fn return_loans(w: &mut World) {
+fn return_loans(w: &mut World) -> Vec<SeasonLoan> {
     if w.loans.is_empty() {
-        return;
+        return Vec::new();
     }
     let returning = std::mem::take(&mut w.loans);
-    for loan in returning {
+    for loan in &returning {
         let pi = loan.player;
         w.teams[loan.away].players.retain(|&x| x != pi);
         if !w.pool[pi].retired && !w.teams[loan.home].players.contains(&pi) {
@@ -3677,6 +4355,79 @@ fn return_loans(w: &mut World) {
         w.pool[pi].team = loan.home;
         w.pool[pi].on_loan = false;
     }
+    returning
+}
+
+/// Post-loan futures, resolved once budgets exist: a youngster who starred on
+/// loan either moves to the loanee permanently (loan-to-buy — the fee the
+/// small club could never refuse for a player it developed) or returns to
+/// fight for his parent's XI. Anyone who has grown into the parent's own
+/// first eleven is recalled and stays — no re-loan. Everyone else simply
+/// comes home and the window's loan-out pass may send him out again.
+fn resolve_loan_futures(
+    w: &mut World,
+    loans: &[SeasonLoan],
+    moved: &mut std::collections::HashSet<usize>,
+    rng: &mut Pcg64Mcg,
+) -> (Vec<String>, usize, i64) {
+    let mut lines = Vec::new();
+    let mut deals = 0usize;
+    let mut top_fee = 0i64;
+    for loan in loans {
+        let (pi, home, away) = (loan.player, loan.home, loan.away);
+        if w.pool[pi].retired || moved.contains(&pi) || w.pool[pi].team != home {
+            continue;
+        }
+        // Recall: the loan turned him into a parent-XI player — he stays.
+        if best_xi_indices(&w.teams[home].players, &w.pool).contains(&pi) {
+            continue;
+        }
+        // Loan-to-buy: he starred (15+ apps) for a smaller club whose books
+        // stretch to a fair fee. The parent cashes in on a player it cannot
+        // itself use and reinvests (the elite-loan economy, systematised).
+        let starred = w.pool[pi].apps >= 15;
+        let smaller = w.teams[away].rep + 6 <= w.teams[home].rep;
+        if !starred || !smaller {
+            continue;
+        }
+        let fee = (w.pool[pi].value as f32 * 1.15) as i64;
+        if fee > w.teams[away].budget {
+            continue;
+        }
+        if wage_bill(w, away) + w.pool[pi].wage > wage_cap(w.teams[away].revenue_last, &w.params) {
+            continue;
+        }
+        w.teams[home].players.retain(|&x| x != pi);
+        w.teams[home].budget += fee;
+        w.teams[home].cash += fee / 2;
+        w.teams[away].budget -= fee;
+        w.teams[home].net_spend -= fee;
+        w.teams[away].net_spend += fee;
+        w.pool[pi].team = away;
+        w.pool[pi].homegrown = false;
+        w.pool[pi].locked = 3 + (rng.gen::<u8>() % 3);
+        if w.pool[pi].path.is_empty() {
+            let origin = w.teams[home].name.clone();
+            w.pool[pi].path.push(origin);
+        }
+        w.pool[pi].path.push(w.teams[away].name.clone());
+        if w.pool[pi].path.len() > 8 {
+            w.pool[pi].path.drain(0..1);
+        }
+        moved.insert(pi);
+        lines.push(format!(
+            "{} loan made permanent: {} -> {} ({}m)",
+            w.pool[pi].name,
+            w.teams[home].name,
+            w.teams[away].name,
+            ((fee as f32 / w.inflation.max(1.0)).round() as i64)
+        ));
+        deals += 1;
+        if fee > top_fee {
+            top_fee = fee;
+        }
+    }
+    (lines, deals, top_fee)
 }
 
 /// Between-seasons transfer window (original club-management model): assign
@@ -3707,7 +4458,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     // dwarfs revenue because the books are quoted in different money.
     let dfl = w.inflation.max(1.0);
     let rl = |v: i64| (v as f32 / dfl).round() as i64;
-    return_loans(w);
+    let loans_back = return_loans(w);
     // Budgets come from the money loop, not reputation: one summer's allocation
     // (last season's revenue × board willingness) plus a small dividend from
     // carried cash. Reserves are a backstop for a galáctico, not a war chest
@@ -3735,9 +4486,32 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             (t.cash.max(0) as f32 * 0.15
                 + t.revenue_last as f32 * effective_will * w.params.budget_ratio) as i64
         };
+        // Dynasty complacency: the board of a consecutive champion believes
+        // the squad is complete — allocation shrinks per straight title (up
+        // to −30%), the refresh slows, and veterans age into the gap while
+        // challengers' money catches up. Momentum clubs push the boat out.
+        if t.consec_titles >= 2 {
+            let drag = 1.0 - 0.10 * (t.consec_titles - 1).min(3) as f32;
+            t.budget = (t.budget as f32 * drag) as i64;
+        }
+        if t.momentum > 0 {
+            t.budget = (t.budget as f32 * 1.15) as i64;
+        }
         t.budget_alloc = t.budget;
         // New window, new books: transfer net spend accumulates from here.
         t.net_spend = 0;
+    }
+    // Loan futures first (budgets now exist): recalls home, loan-to-buy
+    // conversions for kids who starred at smaller clubs.
+    {
+        let (lines, deals, top) = resolve_loan_futures(w, &loans_back, &mut moved, rng);
+        deals_done += deals;
+        if top > max_fee {
+            max_fee = top;
+        }
+        for l in lines {
+            star_lines.push(l);
+        }
     }
     // Contracts tick down: a player committed to his club can't move yet.
     for p in &mut w.pool {
@@ -3771,6 +4545,176 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     }
                 }
                 None => break,
+            }
+        }
+    }
+    // ── Scouting pass: prospects rise through the pyramid on potential ──
+    // Need-buying prices only today's rating, so a 17-year-old at a minnow
+    // with an 85 ceiling never moves. Real football moves him: scouts pay
+    // for the ceiling, minnows sell transformative fees to rebuild the whole
+    // squad, and nobody jumps straight from a fishpond to a superclub —
+    // talent climbs the ladder (Bryne → Molde → Salzburg → Dortmund → City).
+    // Deterministic multi-criteria scoring: potential gap, step discipline,
+    // contract leverage, seller finance, buyer affordability. No dice.
+    {
+        let tier = |rep: u8| -> u8 {
+            if rep >= 88 {
+                1
+            } else if rep >= 80 {
+                2
+            } else if rep >= 70 {
+                3
+            } else if rep >= 60 {
+                4
+            } else {
+                5
+            }
+        };
+        let mut buyers: Vec<usize> = (0..w.teams.len()).collect();
+        buyers.shuffle(rng);
+        for buyer in buyers {
+            // Only tiers 1-3 shop the future seriously (the Madrid model —
+            // light on academy trust, heavy on scouting), ~every other window,
+            // with squad room. One prospect deal per club per window.
+            let buyer_tier = tier(w.teams[buyer].rep);
+            if buyer_tier >= 4 || !rng.gen_bool(0.5) {
+                continue;
+            }
+            let active = w.teams[buyer]
+                .players
+                .iter()
+                .filter(|&&i| !w.pool[i].retired)
+                .count();
+            if active >= 30 {
+                continue;
+            }
+            // Best affordable prospect anywhere strictly below our rung.
+            let mut best: Option<(usize, usize, i64)> = None; // (player, seller, ask)
+            for seller in 0..w.teams.len() {
+                if seller == buyer {
+                    continue;
+                }
+                let seller_tier = tier(w.teams[seller].rep);
+                if seller_tier <= buyer_tier {
+                    continue; // shop downward only
+                }
+                for &pi in &w.teams[seller].players {
+                    let p = &w.pool[pi];
+                    if moved.contains(&pi) || p.on_loan || p.retired || p.locked > 0 {
+                        continue;
+                    }
+                    if p.age > 22 || p.pot < p.ovr + 8 || p.ovr < 58 || p.pos == Position::GK {
+                        continue;
+                    }
+                    // Step discipline: 17-18s move ONE rung; 19-21s two;
+                    // 22s (proven at their level) may skip three — the
+                    // Mbappé Monaco→PSG jump, never Bryne→Madrid direct.
+                    let rungs = seller_tier - buyer_tier;
+                    let max_rungs = if p.age <= 18 {
+                        1
+                    } else if p.age <= 21 {
+                        2
+                    } else {
+                        3
+                    };
+                    if rungs > max_rungs {
+                        continue;
+                    }
+                    // Ask: fresh value × potential premium (the ceiling is
+                    // what scouts pay for) × contract premium (committed
+                    // kids cost more — the Monaco hold-out priced in).
+                    let base = market_value(p.ovr, p.age, p.pos) as f32;
+                    let ask = (base
+                        * (1.0 + (p.pot - p.ovr) as f32 * 0.045)
+                        * (1.0 + p.locked as f32 * 0.22)
+                        * w.inflation) as i64;
+                    // Never more than 40% of the window's money on one kid,
+                    // and the squad-cost gate (35% of revenue) applies too.
+                    if ask > (w.teams[buyer].budget as f32 * 0.40) as i64 {
+                        continue;
+                    }
+                    if ask as f32 > w.teams[buyer].revenue_last as f32 * 0.35 {
+                        continue;
+                    }
+                    if best.map_or(true, |(bpi, _, _)| p.pot > w.pool[bpi].pot) {
+                        best = Some((pi, seller, ask));
+                    }
+                }
+            }
+            let Some((pi, seller, ask)) = best else {
+                continue;
+            };
+            // The minnow's decision — the "stuck on a long deal" problem and
+            // its price: sell only when the fee transforms the club (~a third
+            // of a season's revenue), when the kid has clearly outgrown the
+            // level at real money, or when the books demand it.
+            let base_now = market_value(w.pool[pi].ovr, w.pool[pi].age, w.pool[pi].pos) as f32;
+            let transformative = ask as f32 >= w.teams[seller].revenue_last as f32 * 0.33;
+            let outgrown = w.pool[pi].ovr >= 74
+                && ask >= (base_now * 1.8) as i64
+                && w.pool[pi].age >= 19;
+            let distressed = w.teams[seller].cash < 0;
+            if !transformative && !outgrown && !distressed {
+                continue;
+            }
+            let agent = (ask as f32 * w.params.agent_fee) as i64;
+            if w.teams[buyer].budget < ask + agent {
+                continue;
+            }
+            if wage_bill(w, buyer) + w.pool[pi].wage
+                > wage_cap(w.teams[buyer].revenue_last, &w.params)
+            {
+                continue;
+            }
+            // Execute: same bookkeeping as any permanent move, plus a cash
+            // windfall the selling board actually feels (funds the rebuild).
+            let old_team = w.pool[pi].team;
+            w.teams[seller].players.retain(|&x| x != pi);
+            w.teams[seller].budget += ask;
+            w.teams[seller].cash += ask / 2;
+            w.teams[buyer].players.push(pi);
+            w.teams[buyer].budget -= ask + agent;
+            w.teams[buyer].net_spend += ask + agent;
+            w.teams[seller].net_spend -= ask;
+            agent_paid += agent;
+            w.pool[pi].team = buyer;
+            w.pool[pi].homegrown = false;
+            w.pool[pi].locked = 3 + (rng.gen::<u8>() % 3);
+            w.pool[pi].release_clause = None;
+            w.pool[pi].value = (market_value(w.pool[pi].ovr, w.pool[pi].age, w.pool[pi].pos)
+                as f32
+                * w.inflation) as i64;
+            w.pool[pi].wage = ((w.pool[pi].value as f32 * 2.0 / 5.0) as i64).max(1);
+            w.pool[pi].morale = 75;
+            w.minds[pi].requested = false;
+            w.minds[pi].unhappy = false;
+            moved.insert(pi);
+            // Career cascade record: seed with the origin club on first move.
+            if w.pool[pi].path.is_empty() {
+                let origin = w.teams[old_team].name.clone();
+                w.pool[pi].path.push(origin);
+            }
+            w.pool[pi].path.push(w.teams[buyer].name.clone());
+            if w.pool[pi].path.len() > 8 {
+                w.pool[pi].path.drain(0..1);
+            }
+            deals_done += 1;
+            if ask > max_fee {
+                max_fee = ask;
+            }
+            let line = format!(
+                "{} ({}, pot {}) scouted: {} -> {} ({}m)",
+                w.pool[pi].name,
+                w.pool[pi].age,
+                w.pool[pi].pot,
+                w.teams[old_team].name,
+                w.teams[buyer].name,
+                rl(ask)
+            );
+            if ask >= w.params.log_fee.round() as i64 {
+                log.push((ask, line));
+            } else {
+                star_lines.push(line);
             }
         }
     }
@@ -4040,12 +4984,28 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             w.teams[seller].net_spend -= fee;
             agent_paid += agent;
             w.pool[pi].team = buyer;
+            // Career cascade record: seed with the origin club on first move.
+            if w.pool[pi].path.is_empty() {
+                let origin = w.teams[seller].name.clone();
+                w.pool[pi].path.push(origin);
+            }
+            w.pool[pi].path.push(w.teams[buyer].name.clone());
+            if w.pool[pi].path.len() > 8 {
+                w.pool[pi].path.drain(0..1);
+            }
             // A permanent move away ends club-trained status here.
             w.pool[pi].homegrown = false;
             moved.insert(pi);
+            let signing_bonus = (fee as f32 * (0.05 + w.minds[pi].greed * 0.10)).round() as i64;
             // New multi-year contract: commit the player and drop the easy
             // release clause, so stars settle instead of moving every summer.
             w.pool[pi].locked = 3 + (rng.gen::<u8>() % 3); // 3..=5 year deal
+            w.pool[pi].signing_bonus += signing_bonus;
+            w.teams[buyer].budget -= signing_bonus;
+            w.teams[buyer].cash -= signing_bonus;
+            w.teams[buyer].net_spend += signing_bonus;
+            w.pool[pi].career_earnings += signing_bonus;
+            w.pool[pi].contract_option = w.pool[pi].ovr >= 80 && rng.gen_bool(0.30);
             w.pool[pi].release_clause = None;
             let (ovr, age) = (w.pool[pi].ovr, w.pool[pi].age);
             w.pool[pi].value = (market_value(ovr, age, w.pool[pi].pos) as f32 * w.inflation) as i64;
@@ -4054,6 +5014,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             // A completed move settles the player: request cleared, mood restored.
             w.minds[pi].requested = false;
             w.minds[pi].unhappy = false;
+            w.minds[pi].contract_happiness = (0.55 + w.minds[pi].loyalty * 0.30).clamp(0.0, 1.0);
             w.pool[pi].morale = 75;
             if fee >= w.params.log_fee.round() as i64 {
                 log.push((fee, format!("{} -> {} ({}m, +{}m agent)", w.pool[pi].name, w.teams[buyer].name, rl(fee), rl(agent))));
@@ -4204,7 +5165,116 @@ fn wage_bill(w: &World, club: usize) -> i64 {
         .sum()
 }
 
-/// Wage capacity as a share of revenue (tuned ratio; real wage-to-turnover
+/// Annual performance bonus for a player who actually produced.
+fn season_performance_bonus(p: &WP) -> i64 {
+    if p.retired {
+        return 0;
+    }
+    let production = p.overall_goals() + p.overall_assists();
+    let mut rate = 0.0f32;
+    if p.pos == Position::GK {
+        if p.clean_sheets >= 12 {
+            rate = 0.10;
+        }
+    } else if p.ovr >= 82 {
+        rate = 0.12;
+    } else if p.ovr >= 75 && production >= 20 {
+        rate = 0.08;
+    }
+    if p.apps >= 25 && p.avg_rating() >= 8.15 {
+        rate += 0.05;
+    }
+    (p.wage as f32 * rate).round() as i64
+}
+
+struct ContractOffer {
+    accepted: bool,
+    wage: i64,
+    signing_bonus: i64,
+    club_option: bool,
+    contract_happiness: f32,
+}
+
+/// A club's offer and the player's acceptance probability. The decision is
+/// deliberately not "highest wage wins": it prices ask premium, the club's
+/// wage room, manager ambition, stage/reputation, the player's motives, and
+/// whether he already wants out. The existing tiny policy network is the
+/// player-decision model (one hidden layer, sigmoid output); this maps
+/// contract situations into the same input language used for transfers.
+fn build_contract_offer(
+    p: &WP,
+    mind: &PlayerMind,
+    team: &Team,
+    params: &Params,
+    current_wage_bill: i64,
+    rng: &mut Pcg64Mcg,
+) -> ContractOffer {
+    let base_from_value = (p.value * 2 / 5).max(1);
+    let market_wage = (base_from_value as f32 * mind.wage_mult()).round() as i64;
+    let retention_need = if p.ovr >= 90 {
+        0.90
+    } else if p.ovr >= 82 {
+        0.75
+    } else if p.ovr >= 75 {
+        0.45
+    } else {
+        0.25
+    };
+    let cap = wage_cap(team.revenue_last, params);
+    let wage_room = (1.0 - if cap > 0 { current_wage_bill as f32 / cap as f32 } else { 1.0 })
+        .clamp(0.0, 1.0);
+    let elite_retention = p.ovr >= 82;
+    let urgent = mind.requested || mind.unhappy;
+    let demand = p.wage.max(market_wage);
+    // The club tries to keep its man: an elite star, a transfer request, or a
+    // financially valuable prospect gets a genuine improvement on the table --
+    // not a token from the table, not symbolic.
+    let premium = if elite_retention && urgent {
+        1.10 + mind.greed * 0.22
+    } else if elite_retention {
+        1.03 + mind.greed * 0.15
+    } else {
+        1.0 + mind.greed * 0.10
+    };
+    let wage = (demand as f32 * premium * (1.0 + (team.willingness - 0.5) * 0.10)).round() as i64;
+    let ask = demand.max(1);
+    let offer_ratio = (wage as f32 / ask as f32).clamp(0.0, 1.35);
+    let club_stage = (team.rep as f32 / 100.0).clamp(0.0, 1.0);
+    let inputs = [
+        retention_need,
+        offer_ratio,
+        wage_room,
+        mind.ambition,
+        club_stage,
+        if mind.requested { 1.0 } else { 0.0 },
+    ];
+    let accept_prob = net::forward(&params.policy, &inputs) as f64;
+    let accepted = rng.gen_bool(accept_prob);
+    let signing_bonus = if accepted {
+        let multiplier = 0.04 + mind.greed * 0.10 + if p.ovr >= 90 { 0.04 } else { 0.0 };
+        (p.value as f32 * multiplier).round() as i64
+    } else {
+        0
+    };
+    let contract_happiness = if accepted {
+        (0.45 + mind.loyalty * 0.30 + (offer_ratio - 0.9).max(0.0) * 0.35
+            + (club_stage - 0.5) * 0.18
+            - if mind.requested { 0.20 } else { 0.0 })
+            .clamp(0.0, 1.0)
+    } else {
+        (0.25 + mind.loyalty * 0.20 - if mind.requested { 0.20 } else { 0.0 }).clamp(0.0, 1.0)
+    };
+    let club_option = accepted && p.ovr >= 80 && rng.gen_bool(0.30);
+    ContractOffer {
+        accepted,
+        wage,
+        signing_bonus,
+        club_option,
+        contract_happiness,
+    }
+}
+
+/// A club's wage capacity as a share of revenue (tuned ratio; real wage-to-turnover
 /// ratios run 50-70%, UEFA's squad-cost ceiling is 70% from 2025/26). Derived
 /// from the club's own last revenue — never reputation — so a rich club with a
 /// stacked squad still has to sell before signing, and a poor club can't
@@ -4273,7 +5343,17 @@ fn settle_finances(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) {
         let brand_floor = revenue(w.teams[t].heritage) * 0.55;
         let base = revenue(w.teams[t].wealth).max(brand_floor) * infl;
         let revenue = (base + (league_prize + ucl_prize + el_prize) * infl) as i64;
-        let wages = wage_bill(w, t);
+        let mut performance_bonus_cost = 0i64;
+        for &pi in w.teams[t].players.clone().iter() {
+            if w.pool[pi].retired {
+                continue;
+            }
+            let bonus = season_performance_bonus(&w.pool[pi]);
+            w.pool[pi].bonus_paid += bonus;
+            w.pool[pi].career_earnings += w.pool[pi].wage + bonus;
+            performance_bonus_cost += bonus;
+        }
+        let wages = wage_bill(w, t) + performance_bonus_cost;
         let operating = (base * 0.25) as i64;
         w.teams[t].revenue_last = revenue;
         // Audit trail: the season's money, stream by stream (nominal — the
@@ -4694,7 +5774,7 @@ fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Na
     let wc_field = kind == IntlKind::WorldCup;
     let mut by_nation: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, w) in pool.iter().enumerate() {
-        if w.retired {
+        if w.retired || w.intl_retired {
             continue;
         }
         let n = w.nation.trim();
@@ -4733,7 +5813,7 @@ fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Na
         // the XI overall is then used for draw math, so a France with a
         // killer genuine XI behaves like one.
         let xi_overall = ov.iter().take(11).sum::<f32>() / 11.0;
-        nations.push(Nation { name, players: idxs, strength: xi_overall });
+        nations.push(Nation { name, players: idxs, strength: xi_overall, lineup: Vec::new(), state: NationalState::default(), edge: 1.0 });
     }
     nations.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
     if wc_field {
@@ -4841,7 +5921,7 @@ fn qualify_wc_field(
         };
         idx_of.insert(name.clone(), all.len());
         by_confed.entry(code).or_default().push((name.clone(), idxs.clone(), *strength));
-        all.push(Nation { name: name.clone(), players: idxs.clone(), strength: *strength });
+        all.push(Nation { name: name.clone(), players: idxs.clone(), strength: *strength, lineup: Vec::new(), state: NationalState::default(), edge: 1.0 });
     }
     for pool in by_confed.values_mut() {
         pool.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
@@ -4984,6 +6064,7 @@ fn weighted_pick_idx(weights: &[f32], rng: &mut Pcg64Mcg) -> usize {
 /// FIFA ranking (nation strength here) — head-to-head and fair play are
 /// folded in via goals/strength, a deliberate simplification documented here.
 fn run_world_cup_2026(
+    year: u16,
     nations: &mut [Nation],
     hosts: &[String],
     pool: &mut [WP],
@@ -4995,11 +6076,33 @@ fn run_world_cup_2026(
     if n < 24 {
         return None;
     }
+    // Forensic log: the tournament's full audit trail — seeded field (with
+    // pool depth and champion-drag edge), every knockout result, the final.
+    // Written to sim_dump/wc_{year}.log so any "how did X win?" question is
+    // answerable from data, not speculation.
+    let mut wclog: Vec<String> = Vec::new();
+    wclog.push(format!("== World Cup {} ==", year));
+    wclog.push(format!("hosts: {}", hosts.join(", ")));
     // Order by strength, split into 4 pots (hosts first in pot 1 by strength of
     // their XI — the three hosts are bottom-of-pot-1? in the real structure
     // Pot 1 contains the hosts regardless; ordering by strength within pot 1.
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    for (k, &i) in order.iter().enumerate().take(24) {
+        let xi_level = nations[i].strength as i32;
+        let depth = pool
+            .iter()
+            .filter(|p| !p.retired && p.nation == nations[i].name && p.ovr as i32 >= xi_level - 3)
+            .count();
+        wclog.push(format!(
+            "{:>2}. {:<24} str={:5.1} depth={:<3} edge={:.3}",
+            k + 1,
+            nations[i].name,
+            nations[i].strength,
+            depth,
+            nations[i].edge
+        ));
+    }
     let pot_size = (n / 4).max(1);
     let mut pots: Vec<Vec<usize>> = vec![Vec::new(); 4];
     // Hosts go in Pot 1 (per the real protocol), ranked by strength inside it.
@@ -5142,6 +6245,14 @@ fn run_world_cup_2026(
     while round.len() > 1 {
         let is_final = round.len() == 2;
         let is_semi = round.len() == 4;
+        let round_label = match round.len() {
+            32 => "R32",
+            16 => "R16",
+            8 => "QF",
+            4 => "SF",
+            2 => "F",
+            _ => "KO",
+        };
         let mut next = Vec::new();
         let mut i = 0;
         while i + 1 < round.len() {
@@ -5152,13 +6263,39 @@ fn run_world_cup_2026(
             } else if gb > ga {
                 (b, a)
             } else {
-                let pa = nations[a].strength / (nations[a].strength + nations[b].strength);
+                // Level after 90': a shootout is nerve, not class — keeper
+                // quality and composure under pressure decide it. A pure
+                // strength coin let disciplined grinding sides farm drawn
+                // ties forever (6-for-6 across half a century in testing);
+                // the pitch's eleven should settle it, exactly like the
+                // Euros path.
+                let axi = nation_xi(&nations[a].players, pool);
+                let bxi = nation_xi(&nations[b].players, pool);
+                let nerve = |xi: &[MatchPlayer]| -> f32 {
+                    xi.iter()
+                        .map(|mp| {
+                            mp.attrs.goalkeeping as f32 * 0.3
+                                + mp.attrs.composure as f32 * 0.7
+                        })
+                        .sum::<f32>()
+                };
+                let (na, nb) = (nerve(&axi), nerve(&bxi));
+                let pa = na / (na + nb).max(1.0);
                 if rng.gen::<f32>() < pa {
                     (a, b)
                 } else {
                     (b, a)
                 }
             };
+            wclog.push(format!(
+                "{} {} {}-{} {} -> {}",
+                round_label,
+                nations[a].name,
+                ga,
+                gb,
+                nations[b].name,
+                nations[win].name
+            ));
             if is_semi {
                 sf_losers.push(lose);
             }
@@ -5198,6 +6335,10 @@ fn run_world_cup_2026(
             crowd(third),
             crowd(fourth),
         );
+        wclog.push(format!(
+            "3rd {} {}-{} {}",
+            nations[third].name, g1, g2, nations[fourth].name
+        ));
         for &pi in &nations[third].players {
             if g1 >= g2 {
                 pool[pi].intl_result = pool[pi].intl_result.max(3);
@@ -5213,7 +6354,13 @@ fn run_world_cup_2026(
             }
         }
     }
-    round.first().map(|&t| nations[t].name.clone())
+    let champion = round.first().map(|&t| nations[t].name.clone());
+    if let Some(c) = &champion {
+        wclog.push(format!("CHAMPION: {}", c));
+    }
+    let _ = std::fs::create_dir_all("sim_dump");
+    let _ = std::fs::write(format!("sim_dump/wc_{}.log", year), wclog.join("\n"));
+    champion
 }
 
 /// An international fixture, now played through the same possession engine as
@@ -5256,8 +6403,12 @@ fn play_nation_crowd(
     // than mid-season form suggests. Sharpen the gap (×1.5 on the ratio) so
     // the class difference is priced — favorites become *favorites* (70%+),
     // while a proper minnow run still needs repeated, genuinely lucky nights.
-    side_a.threat = ta.powf(1.5) * crowd_a;
-    side_b.threat = tb.powf(1.5) * crowd_b;
+    let sharp = std::env::var("FM_SHARP").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.5);
+    // `edge` is the tournament-sharpness multiplier (defending-champion drag,
+    // federation-programme form). It scales how the same eleven performs on
+    // the day without touching their underlying class.
+    side_a.threat = ta.powf(sharp) * crowd_a * nations[a].edge;
+    side_b.threat = tb.powf(sharp) * crowd_b * nations[b].edge;
     let o = matchsim::simulate(
         &side_a,
         &side_b,
@@ -5770,6 +6921,60 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         p.career_rating_apps += p.rating_apps as u32;
     }
 
+    // ── Per-player career dump (sim_dump/careers.json) ─────────────────
+    // The forensic record for post-sim analysis: every player's full career
+    // line plus their club path — the data behind "how did nation X build a
+    // World Cup winner" and "which cascades did scouting create".
+    {
+        let esc = |s: &str| -> String { s.replace('"', "'").replace('\\', "/") };
+        let _ = std::fs::create_dir_all("sim_dump");
+        let mut j = String::with_capacity(64 * 1024 * 1024 / 8);
+        j.push_str("[\n");
+        let last = w.pool.len().saturating_sub(1);
+        for (i, p) in w.pool.iter().enumerate() {
+            let club = if p.retired {
+                "retired".to_string()
+            } else if let Some(t) = w.teams.get(p.team) {
+                t.name.clone()
+            } else {
+                "free agent".to_string()
+            };
+            let path: Vec<String> = p
+                .path
+                .iter()
+                .map(|c| format!("\"{}\"", esc(c)))
+                .collect();
+            j.push_str(&format!(
+                "  {{\"name\":\"{}\",\"nation\":\"{}\",\"pos\":\"{}\",\"age\":{},\"intl_retired\":{},\"intl_retire_age\":{},\"club_retire_age\":{},\"club\":\"{}\",\"ovr\":{},\"pot\":{},\"wage\":{},\"locked\":{},\"career_earnings\":{},\"signing_bonus\":{},\"bonus_paid\":{},\"contract_option\":{},\"apps\":{},\"goals\":{},\"assists\":{},\"kp\":{},\"ballons\":{},\"path\":[{}]}}{}\n",
+                esc(&p.name),
+                esc(&p.nation),
+                p.pos.short(),
+                p.age,
+                p.intl_retired,
+                p.intl_retire_age,
+                p.club_retire_age,
+                esc(&club),
+                p.ovr,
+                p.pot,
+                p.wage,
+                p.locked,
+                p.career_earnings,
+                p.signing_bonus,
+                p.bonus_paid,
+                p.contract_option,
+                p.career_apps,
+                p.career_goals,
+                p.career_assists,
+                p.career_kp,
+                p.ballons,
+                path.join(","),
+                if i < last { "," } else { "" }
+            ));
+        }
+        j.push_str("]\n");
+        let _ = std::fs::write("sim_dump/careers.json", j);
+    }
+
     let mut lines = Vec::new();
     lines.push(format!(
         "# {}-Year Simulation ({}–{})",
@@ -6138,6 +7343,46 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         |p| p.career_bcc as f32, |p| format!("{}", p.career_bcc));
     top10(&mut lines, "Career key passes", "KP", &w.pool, &w.teams, &career,
         |p| p.career_kp as f32, |p| format!("{}", p.career_kp));
+    top10(&mut lines, "Highest career earnings", "Earnings (2026m) / bonus", &w.pool, &w.teams, &career,
+        |p| p.career_earnings as f32 / w.inflation.max(1.0),
+        |p| format!("{}m / {}m", (p.career_earnings as f32 / w.inflation.max(1.0)) as i64,
+            ((p.signing_bonus + p.bonus_paid) as f32 / w.inflation.max(1.0)) as i64));
+
+    // ── Scouting cascades: the pathways the scout system built. ──
+    // Careers that climbed the pyramid club by club — the Monaco→PSG→Madrid
+    // and Bryne→Molde→Salzburg→Dortmund→City ladders, found by scouts at
+    // every rung: potential priced, minnows paid, steps disciplined.
+    lines.push("## Scouting cascades (careers that climbed the pyramid)".to_string());
+    lines.push(String::new());
+    let cascade: Vec<usize> = career
+        .iter()
+        .copied()
+        .filter(|&i| w.pool[i].path.len() >= 3)
+        .collect();
+    if cascade.is_empty() {
+        lines.push("- No multi-club cascades developed this era.".to_string());
+    } else {
+        let mark = |p: &WP| -> f32 {
+            p.career_goals as f32 + p.career_assists as f32 * 0.8 + p.ballons as f32 * 40.0
+        };
+        let mut cc = cascade;
+        cc.sort_by(|&a, &b| mark(&w.pool[b]).partial_cmp(&mark(&w.pool[a])).unwrap_or(std::cmp::Ordering::Equal));
+        for &i in cc.iter().take(10) {
+            let p = &w.pool[i];
+            lines.push(format!(
+                "- **{}** ({}, {}): {} — {} apps, {}g {}a{}",
+                p.name,
+                p.pos.short(),
+                p.nation,
+                p.path.join(" → "),
+                p.career_apps,
+                p.career_goals,
+                p.career_assists,
+                if p.ballons > 0 { format!(", {}× Ballon d'Or", p.ballons) } else { String::new() }
+            ));
+        }
+    }
+    lines.push(String::new());
     // Siege effect, stated plainly: sides that defend for their lives make
     // more tackles — so career ball-winning is led by relegation-battlers,
     // exactly as real tackle charts are. Totals show apps and per-game rate
@@ -6598,6 +7843,9 @@ mod tests {
             age,
             team,
             retired: false,
+            intl_retired: false,
+            intl_retire_age: 0,
+            club_retire_age: 0,
             morale: 70,
             fatigue: 0,
             adapt: 0,
@@ -6637,7 +7885,12 @@ mod tests {
             value: 40,
             release_clause: None,
             wage: 8,
+            career_earnings: 0,
+            signing_bonus: 0,
+            bonus_paid: 0,
+            contract_option: false,
             locked: 0,
+            path: Vec::new(),
             career_goals: 0,
             career_assists: 0,
             career_kp: 0,
@@ -6692,6 +7945,8 @@ mod tests {
             registered: Vec::new(),
             manager: Manager::new_random(rng, &Params::default()),
             shape: (4, 4, 2),
+            consec_titles: 0,
+            momentum: 0,
         }
     }
 
@@ -6757,7 +8012,9 @@ mod tests {
             continent_hist: Vec::new(),
             host_queue: Vec::new(),
             recent_hosts: Vec::new(),
+            wc_hist: Vec::new(),
             free_agents: Vec::new(),
+            national_states: HashMap::new(),
             used_names: HashSet::new(),
             params: Params::default(),
         }
@@ -7171,6 +8428,50 @@ mod tests {
             }
         }
         assert!(seen, "no restlessness in 100 champion-seasons");
+    }
+
+    #[test]
+    fn international_retirement_precedes_club_career() {
+        let mut rng = Pcg64Mcg::new(41);
+
+        let mut old = mkp("Old Veteran", Position::MID, 72, 35, 72, 0, false);
+        old.attrs = attrs_all(72);
+        old.attrs.pace = 42;
+        old.attrs.stamina = 42;
+        assert!(
+            intl_retirement_prob(&old, 76) > 0.35,
+            "a 35-year-old who has fallen below his federation's call-up floor should be a strong international-retirement candidate"
+        );
+
+        let mut prime = mkp("Prime Mid", Position::MID, 82, 29, 85, 0, false);
+        prime.attrs = attrs_all(82);
+        assert_eq!(
+            intl_retirement_prob(&prime, 80),
+            0.0,
+            "international careers should not end at 29 merely because of ordinary age"
+        );
+
+        let mut timeless = mkp("Timeless Star", Position::FWD, 89, 36, 89, 0, false);
+        timeless.attrs = attrs_all(89);
+        assert!(
+            intl_retirement_prob(&timeless, 82) < intl_retirement_prob(&old, 76),
+            "a genuine elite should be far less likely to leave the national team than a declining veteran"
+        );
+
+        let mut keeper = mkp("Old Keeper", Position::GK, 75, 35, 75, 0, false);
+        keeper.attrs = attrs_all(75);
+        keeper.attrs.goalkeeping = 64;
+        assert!(
+            intl_retirement_prob(&keeper, 78) > 0.15,
+            "goalkeeper decline should also end international selection"
+        );
+
+        let _ = rng;
+        assert_eq!(retire_prob(33, false, 75, false), 0.0);
+        assert!(retire_prob(35, false, 75, false) > 0.34);
+        assert!(retire_prob(39, false, 75, false) > 0.08);
+        assert!(retire_prob(41, false, 75, false) < retire_prob(39, false, 75, false));
+        assert_eq!(retire_prob(42, false, 75, false), 1.0);
     }
 
     #[test]
