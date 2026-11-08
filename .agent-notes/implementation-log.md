@@ -217,3 +217,12 @@ Validation gates:
 - National match programme edge now includes federation infrastructure and squad depth. Defending-champion drag multiplies rather than overwrites these edges.
 
 Old 2034 China route: Netherlands 1-0, France 2-1, Canada 1-1 (shootout), Venezuela 1-0. Old 2070 India route: Holland 0-0 (shootout), Saudi Arabia 2-0, Turkey 1-1 (shootout), England 2-0. Both were assisted by population-weighted regens and a self-reinforcing federation bonus; corrected structurally.
+
+### 20-year global-era validation
+- World Cups: Portugal 2026, Argentina 2030, Spain 2034, Germany 2038 and 2042.
+- China ranked 29-40 with XI strength 63-68; India ranked 40-42 with XI 58-64. No early WC wins.
+- Japan won Asian Cups 2027 and 2031. Added federation-backed export pathway floor because J-League is absent from the source DB.
+- Golden Boot is Big-Five-only. Non-Big-Five outliers stay in overall/career boards.
+- Breakout auction examples: 50-goal River Plate striker to Arsenal (177m), 43-goal Al Nassr striker to Roma (121m), 42-goal LDU Quito striker to Milano (118m), 35-goal Toluca striker to OM (95m).
+- Ballon winners remained top-level: Dembele, Yamal, Kvaratskhelia, Saka, Isak and later Big-Five stars.
+- 107 tests pass.
