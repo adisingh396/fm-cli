@@ -3,6 +3,7 @@
 
   const SPINNER = '<div class="empty">Loading live world…</div>';
   const DEFAULT_API = 'http://127.0.0.1:8080';
+  const UCL_ID = 1000000;
 
   function storedApi() {
     const saved = localStorage.getItem('fm-web-api-base');
@@ -21,6 +22,7 @@
     overview: null, leagues: [], fixtures: null, players: { players: [], total: 0 },
     page: 'home', mode: localStorage.getItem('fm-mode') || 'simulate',
     leagueIndex: 0, leagueTab: 'table', leagueData: null,
+    cupTab: 'groups', cupData: null,
     matchId: 0, matchTab: 'facts', matchData: null, matchLeagueData: null,
     playerHandle: '', playerData: null,
     playerQuery: '', sort: 'goals', scope: 'all', matchQuery: '', search: null, followedPlayers: JSON.parse(localStorage.getItem('fm-followed-players') || '[]'), followedLeagues: JSON.parse(localStorage.getItem('fm-followed-leagues') || '[]'),
@@ -157,7 +159,7 @@
       <span class="home"><button class="linklike" data-team="${m.home_team}">${esc(m.home)}</button>${crest(m.home)}</span>
       <span class="score">${m.home_goals} - ${m.away_goals}</span>
       <span class="away">${crest(m.away)}<button class="linklike" data-team="${m.away_team}">${esc(m.away)}</button></span>
-    </button>`;
+    </div>`;
   }
   function fixtureRow(f) {
     return `<div class="match-row" style="cursor:default">
@@ -199,7 +201,35 @@
 
   function renderLeagues() {
     $('app').innerHTML = `<div class="page-head"><div><h1 style="margin:0">Leagues</h1><p class="small" style="margin:4px 0 0">Open any competition to see the live table, fixtures, matches and player stats.</p></div><span class="pill">${state.leagues.length} competitions</span></div>
-    <div class="grid cols-4">${state.leagues.map((l) => `<button class="card league-card" data-league="${l.id}"><div class="pill">${esc(l.confederation || '')}</div><h3 style="margin-top:10px">${esc(l.name)}</h3><p>${l.teams} clubs · ${l.rounds} rounds<br>Leader: <strong>${esc(l.leader || '—')}</strong></p></button>`).join('')}</div>`;
+    <div class="grid cols-4"><button class="card league-card" data-league="${UCL_ID}"><div class="pill">UEFA</div><h3 style="margin-top:10px">UEFA Champions League</h3><p>32 clubs · 6 group matchdays<br>Knockout rounds in spring</p></button>${state.leagues.map((l) => `<button class="card league-card" data-league="${l.id}"><div class="pill">${esc(l.confederation || '')}</div><h3 style="margin-top:10px">${esc(l.name)}</h3><p>${l.teams} clubs · ${l.rounds} rounds<br>Leader: <strong>${esc(l.leader || '—')}</strong></p></button>`).join('')}</div>`;
+  }
+
+  function cupGroupTable(group) {
+    return `<div class="card"><h3>${esc(group.name)}</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>
+      ${(group.teams || []).map((r) => `<tr><td class="numeric">${r.position}</td><td><button class="linklike" data-team="${r.id}"><strong>${esc(r.name)}</strong></button></td><td class="numeric">${r.played}</td><td class="numeric">${r.won}</td><td class="numeric">${r.drawn}</td><td class="numeric">${r.lost}</td><td class="numeric">${r.gf}</td><td class="numeric">${r.ga}</td><td class="numeric">${r.gd}</td><td class="numeric"><strong>${r.pts}</strong></td></tr>`).join('')}
+    </tbody></table></div></div>`;
+  }
+
+  async function renderCupDetail() {
+    state.page = 'cup';
+    $('app').innerHTML = SPINNER;
+    const data = await api(`/api/league/${UCL_ID}`);
+    state.cupData = data;
+    const tabs = [['groups', 'Groups'], ['knockout', 'Knockout'], ['scoring', 'Scoring'], ['matches', 'Matches']];
+    let body = '';
+    if (state.cupTab === 'groups') {
+      body = (data.groups || []).length
+        ? `<div class="grid cols-2">${data.groups.map(cupGroupTable).join('')}</div>`
+        : '<div class="empty">Group stage has not been drawn yet.</div>';
+    } else if (state.cupTab === 'knockout') {
+      body = (data.knockout || []).map((round) => `<div class="card"><h3>${esc(round.stage)}</h3><div class="row-list">${(round.teams || []).length ? round.teams.map((t) => `<div class="row"><span><button class="linklike" data-team="${t.home_id}">${esc(t.home)}</button></span><strong class="numeric">${t.home_goals == null ? '—' : `${t.home_goals} – ${t.away_goals}`}</strong><span style="text-align:right"><button class="linklike" data-team="${t.away_id}">${esc(t.away)}</button></span></div>`).join('') : '<div class="empty">Winners of the previous round will fill this stage.</div>'}</div></div>`).join('');
+    } else if (state.cupTab === 'scoring') {
+      body = `<div class="card"><h3>Champions League scorers</h3>${(data.scorers || []).map((p) => `<div class="row"><span><button class="linklike" data-player="${esc(p.handle || p.id)}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${esc(p.nation)}</div></span><span class="badge">${p.ucl_goals} G · ${p.ucl_assists} A</span></div>`).join('') || '<div class="empty">No Champions League goals yet.</div>'}</div>`;
+    } else {
+      body = `<div class="card">${(data.recent || []).length ? data.recent.map(matchRow).join('') : '<div class="empty">No Champions League matches played yet.</div>'}</div>`;
+    }
+    $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">UEFA · Europe</div><h1 style="margin:8px 0 4px">UEFA Champions League</h1><p class="small" style="margin:0">${data.week || 0} weeks played · ${esc(fmtDate((data.week || 0) * 7))}</p></div></div>
+    <div class="tabs">${tabs.map(([id, label]) => `<button data-cup-tab="${id}" class="${state.cupTab === id ? 'active' : ''}">${label}</button>`).join('')}</div>${body}`;
   }
 
   function leagueTable(table) {
@@ -210,6 +240,7 @@
   }
 
   async function renderLeagueDetail(index = state.leagueIndex) {
+    if (index === UCL_ID) return renderCupDetail();
     state.leagueIndex = index;
     state.page = 'league';
     $('app').innerHTML = SPINNER;
@@ -463,6 +494,26 @@
     const careerApps = career.apps || live.apps || 0;
     const careerGoals = career.goals || live.goals || 0;
     const careerAssists = career.assists || live.assists || 0;
+    const h = live.honours || {};
+    const trophies = [];
+    if (h.season_trophies?.league) trophies.push(`League title${h.league ? ` (${h.league})` : ''}`);
+    if (h.season_trophies?.champions_league) trophies.push('Champions League');
+    if (h.season_trophies?.europa_league) trophies.push('Europa League');
+    if (h.season_trophies?.international) trophies.push('International trophy');
+    const raceRow = (label, rank, goals, leader) => `<div class="row"><span>${label}</span><strong>${rank ? `#${rank} · ${goals} G (leader ${leader})` : 'Not on the board'}</strong></div>`;
+    const honoursCard = `<div class="card"><h3>Individual accolades & honours</h3><div class="row-list">
+      <div class="row"><span>Ballon d'Or</span><strong>${h.ballons || 0}${h.ballons === 1 ? ' win' : ' wins'}</strong></div>
+      ${raceRow(`${esc(h.league || 'League')} Golden Boot`, h.league_top_scorer_rank, h.league_top_scorer_goals, h.league_leader_goals)}
+      ${raceRow('Champions League top scorer', h.ucl_top_scorer_rank, h.ucl_top_scorer_goals, h.ucl_leader_goals)}
+      <div class="row"><span>Club league position</span><strong>${h.league_position ? `#${h.league_position}${h.league ? ` in ${esc(h.league)}` : ''}` : '—'}</strong></div>
+      <div class="row"><span>Champions League run</span><strong>${esc(h.ucl_stage || 'Not involved')}</strong></div>
+      <div class="row"><span>Europa League run</span><strong>${esc(h.europa_stage || 'Not involved')}</strong></div>
+      <div class="row"><span>International run</span><strong>${esc(h.international_stage || 'Not involved')}</strong></div>
+      <div class="row"><span>Season trophies</span><strong style="text-align:right">${trophies.length ? esc(trophies.join(' · ')) : 'None yet'}</strong></div>
+    </div></div>`;
+    const allApps = live.overall_apps ?? (Number(live.apps || 0) + Number(live.ucl_apps || 0) + Number(live.el_apps || 0) + Number(live.intl_apps || 0));
+    const allGoals = live.overall_goals ?? (Number(live.goals || 0) + Number(live.ucl_goals || 0) + Number(live.el_goals || 0) + Number(live.intl_goals || 0));
+    const allAssists = live.overall_assists ?? (Number(live.assists || 0) + Number(live.ucl_assists || 0) + Number(live.el_assists || 0) + Number(live.intl_assists || 0));
     let playerMatches = [];
     if (p.world_id != null) {
       try { playerMatches = (await api(`/api/player/wp:${p.world_id}/matches`)).matches || []; } catch {}
@@ -506,7 +557,8 @@
     </div>
     ${playerStatus}
     <div class="grid cols-2" style="margin-top:14px">
-      <div class="card"><h3>Competitions</h3><div class="row-list"><div class="row"><span>Domestic league</span><strong>${live.apps} apps · ${live.goals} G · ${live.assists} A</strong></div><div class="row"><span>International</span><strong>${live.intl_apps ?? 0} apps · ${live.intl_goals ?? 0} G · ${live.intl_assists ?? 0} A</strong></div><div class="row"><span>Champions League</span><strong>${live.ucl_apps ?? 0} apps · ${live.ucl_goals ?? 0} G · ${live.ucl_assists ?? 0} A</strong></div><div class="row"><span>Europa League</span><strong>${live.el_apps ?? 0} apps · ${live.el_goals ?? 0} G · ${live.el_assists ?? 0} A</strong></div><div class="row"><span>Knockout result flags</span><strong>UCL ${live.ucl_result ?? 0} · EL ${live.el_result ?? 0} · Intl ${live.intl_result ?? 0}</strong></div></div></div>
+      <div class="card"><h3>Competitions</h3><div class="row-list"><div class="row"><span><strong>All competitions</strong></span><strong>${allApps} apps · ${allGoals} G · ${allAssists} A</strong></div><div class="row"><span>Domestic league</span><strong>${live.apps} apps · ${live.goals} G · ${live.assists} A</strong></div><div class="row"><span>International</span><strong>${live.intl_apps ?? 0} apps · ${live.intl_goals ?? 0} G · ${live.intl_assists ?? 0} A</strong></div><div class="row"><span>Champions League</span><strong>${live.ucl_apps ?? 0} apps · ${live.ucl_goals ?? 0} G · ${live.ucl_assists ?? 0} A</strong></div><div class="row"><span>Europa League</span><strong>${live.el_apps ?? 0} apps · ${live.el_goals ?? 0} G · ${live.el_assists ?? 0} A</strong></div></div></div>
+      ${honoursCard}
       <div class="card"><h3>Career</h3><div class="row-list"><div class="row"><span>Apps</span><strong>${fmt(careerApps)}</strong></div><div class="row"><span>Goals</span><strong>${fmt(careerGoals)}</strong></div><div class="row"><span>Assists</span><strong>${fmt(careerAssists)}</strong></div><div class="row"><span>Key passes</span><strong>${fmt(live.career?.kp ?? 0)}</strong></div><div class="row"><span>Ballon d'Ors</span><strong>${live.career?.ballons ?? 0}</strong></div><div class="row"><span>Club path</span><strong style="max-width:65%;text-align:right">${esc((live.career?.path || []).join(' → ') || 'No move yet')}</strong></div></div></div>
       ${source}
     </div>`;
@@ -587,6 +639,7 @@
     if (page === 'home') renderHome();
     else if (page === 'leagues') renderLeagues();
     else if (page === 'league') renderLeagueDetail(state.leagueIndex);
+    else if (page === 'cup') renderCupDetail();
     else if (page === 'fixtures') renderFixtures();
     else if (page === 'matches') renderMatches();
     else if (page === 'match') renderMatch(state.matchId);
@@ -699,6 +752,8 @@
     if (mtab) { state.matchTab = mtab.dataset.matchTab; renderMatch(state.matchId); return; }
     const ltab = e.target.closest('[data-league-tab]');
     if (ltab) { state.leagueTab = ltab.dataset.leagueTab; renderLeagueDetail(state.leagueIndex); return; }
+    const ctab = e.target.closest('[data-cup-tab]');
+    if (ctab) { state.cupTab = ctab.dataset.cupTab; renderCupDetail(); return; }
     const mact = e.target.closest('[data-manager-action]');
     if (mact) { managerAction(mact.dataset.managerAction, null); return; }
     const mpact = e.target.closest('[data-manager-player-action]');

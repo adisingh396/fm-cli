@@ -316,6 +316,10 @@ impl WP {
     fn overall_assists(&self) -> u16 {
         self.assists + self.ucl_assists + self.el_assists + self.intl_assists
     }
+    /// Appearances across every competition.
+    fn overall_apps(&self) -> u16 {
+        self.apps + self.ucl_apps + self.el_apps + self.intl_apps
+    }
     /// Likelihood of being the scorer: finishing quality × position.
     fn goal_weight(&self) -> f32 {
         let a = &self.attrs;
@@ -12154,6 +12158,7 @@ fn top10(
 
 pub mod web_api {
     use super::*;
+    use rand::Rng;
     use serde_json::{json, Value};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -12171,11 +12176,41 @@ pub mod web_api {
         round: usize,
         home: usize,
         away: usize,
+        comp: Comp,
+        /// Human-readable stage for cup matches ("Group A", "Round of 16"…).
+        /// Empty for domestic league rounds.
+        stage: String,
         outcome: matchsim::MatchOutcome,
     }
 
     struct LeagueSchedule {
         rounds: Vec<Vec<(usize, usize)>>,
+    }
+
+    /// Pseudo-league id used by the browser for European cup matches. Every
+    /// real domestic league has a small index, so a dedicated sentinel keeps
+    /// `/api/league/<id>` and the match list grouping unambiguous.
+    const UCL_LEAGUE_ID: usize = 1_000_000;
+    const UCL_GROUPS: usize = 8;
+
+    struct KnockoutRound {
+        stage: &'static str,
+        /// Zero-based week during which the round is played.
+        week: u32,
+        ties: Vec<(usize, usize)>,
+        winners: Vec<usize>,
+        done: bool,
+    }
+
+    /// Interactive Champions League: 8 groups of four, six group matchdays,
+    /// then single-leg round of 16, quarter-final, semi-final and final.
+    struct UclCup {
+        groups: Vec<Vec<usize>>,
+        /// [group][matchday] pairs, produced by the same circle method as the
+        /// domestic schedules (four clubs → six matchdays).
+        group_pairs: Vec<Vec<Vec<(usize, usize)>>>,
+        group_weeks: Vec<u32>,
+        knockout: Vec<KnockoutRound>,
     }
 
     struct WebState {
@@ -12198,6 +12233,9 @@ pub mod web_api {
         rng: Pcg64Mcg,
         week: u32,
         schedules: Vec<LeagueSchedule>,
+        /// European cup state for the interactive season. `None` when the
+        /// world has no European clubs.
+        ucl: Option<UclCup>,
         matches: Vec<WebMatchRecord>,
         seed: u64,
         began: String,
@@ -12230,6 +12268,105 @@ pub mod web_api {
         rounds
     }
 
+    /// Build the interactive Champions League field: the 32 strongest UEFA
+    /// clubs, snake-seeded into eight groups, plus the spring knockout dates.
+    fn build_ucl(world: &World, _rng: &mut Pcg64Mcg) -> Option<UclCup> {
+        use crate::world_model::Confederation;
+        let mut teams: Vec<usize> = world
+            .league_teams
+            .iter()
+            .enumerate()
+            .filter(|(li, _)| *li != 5)
+            .filter(|(li, _)| {
+                world
+                    .league_meta
+                    .get(*li)
+                    .and_then(|m| m.confed)
+                    == Some(Confederation::UEFA)
+            })
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .filter(|&ti| ti < world.teams.len())
+            .collect();
+        teams.sort_by(|&a, &b| {
+            world.teams[b]
+                .rep
+                .partial_cmp(&world.teams[a].rep)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        teams.dedup();
+        if teams.len() < 32 {
+            return None;
+        }
+        teams.truncate(32);
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); UCL_GROUPS];
+        for (i, &t) in teams.iter().enumerate() {
+            let pot = i / UCL_GROUPS;
+            let slot = if pot % 2 == 0 {
+                i % UCL_GROUPS
+            } else {
+                UCL_GROUPS - 1 - (i % UCL_GROUPS)
+            };
+            groups[slot].push(t);
+        }
+        let group_pairs = groups.iter().map(|g| make_schedule(g)).collect();
+        let group_weeks = vec![3, 5, 7, 9, 11, 13];
+        let knockout = vec![
+            KnockoutRound {
+                stage: "Round of 16",
+                week: 20,
+                ties: Vec::new(),
+                winners: Vec::new(),
+                done: false,
+            },
+            KnockoutRound {
+                stage: "Quarter-final",
+                week: 24,
+                ties: Vec::new(),
+                winners: Vec::new(),
+                done: false,
+            },
+            KnockoutRound {
+                stage: "Semi-final",
+                week: 28,
+                ties: Vec::new(),
+                winners: Vec::new(),
+                done: false,
+            },
+            KnockoutRound {
+                stage: "Final",
+                week: 32,
+                ties: Vec::new(),
+                winners: Vec::new(),
+                done: false,
+            },
+        ];
+        Some(UclCup {
+            groups,
+            group_pairs,
+            group_weeks,
+            knockout,
+        })
+    }
+
+    fn group_letter(idx: usize) -> char {
+        (b'A' + idx as u8) as char
+    }
+
+    /// Winner of a single-leg cup tie, with a shootout when the score is level.
+    fn cup_winner(home: usize, away: usize, gh: u8, ga: u8, rng: &mut Pcg64Mcg) -> usize {
+        if gh == ga {
+            if rng.gen::<bool>() {
+                home
+            } else {
+                away
+            }
+        } else if gh > ga {
+            home
+        } else {
+            away
+        }
+    }
+
     impl WebState {
         fn new(seed: u64) -> Self {
             let db = Database::load();
@@ -12245,6 +12382,7 @@ pub mod web_api {
                     rounds: make_schedule(teams),
                 })
                 .collect::<Vec<_>>();
+            let ucl = build_ucl(&world, &mut rng);
             let database_index = db
                 .players()
                 .iter()
@@ -12272,6 +12410,7 @@ pub mod web_api {
                 rng,
                 week: 0,
                 schedules,
+                ucl,
                 matches: Vec::new(),
                 seed,
                 began: std::time::SystemTime::now()
@@ -12350,6 +12489,8 @@ pub mod web_api {
                         round: round_idx + 1,
                         home,
                         away,
+                        comp: Comp::League,
+                        stage: String::new(),
                         outcome,
                     });
                     played += 1;
@@ -12363,11 +12504,204 @@ pub mod web_api {
                     &self.world.params,
                 );
             }
+            played += self.simulate_ucl_week();
             if played > 0 {
                 self.week += 1;
             }
             played
         }
+
+        /// Play any Champions League fixtures scheduled for the current week.
+        /// Group matchdays run through the autumn, then single-leg knockout
+        /// rounds in spring. Results are stored alongside league matches so
+        /// the same match list, player pages and team pages show them.
+        fn simulate_ucl_week(&mut self) -> usize {
+            let Some(mut cup) = self.ucl.take() else {
+                return 0;
+            };
+            let mut played = 0usize;
+            if let Some(md) = cup
+                .group_weeks
+                .iter()
+                .position(|&w| w == self.week)
+            {
+                let pairs = cup.group_pairs.clone();
+                for (g, rounds) in pairs.iter().enumerate() {
+                    let Some(round) = rounds.get(md) else {
+                        continue;
+                    };
+                    let stage = format!("Group {}", group_letter(g));
+                    for &(home, away) in round {
+                        if play_web_cup(
+                            &mut self.world,
+                            &mut self.rng,
+                            &mut self.matches,
+                            home,
+                            away,
+                            self.week + 1,
+                            UCL_LEAGUE_ID,
+                            md + 1,
+                            stage.clone(),
+                            Comp::Ucl,
+                        )
+                        .is_some()
+                        {
+                            played += 1;
+                        }
+                    }
+                }
+            }
+            if let Some(ki) = cup
+                .knockout
+                .iter()
+                .position(|r| r.week == self.week && !r.done)
+            {
+                if cup.knockout[ki].ties.is_empty() {
+                    if ki == 0 {
+                        let mut seeds: Vec<(usize, usize)> = Vec::new();
+                        for group in &cup.groups {
+                            let order = group_order(&self.matches, group);
+                            if order.len() >= 2 {
+                                // Reaching the last 16 is the first knockout stage.
+                                set_cup_result(&mut self.world, order[0], 1);
+                                set_cup_result(&mut self.world, order[1], 1);
+                                seeds.push((order[0], order[1]));
+                            }
+                        }
+                        let mut ties = Vec::new();
+                        for i in (0..seeds.len().saturating_sub(1)).step_by(2) {
+                            ties.push((seeds[i].0, seeds[i + 1].1));
+                            ties.push((seeds[i + 1].0, seeds[i].1));
+                        }
+                        cup.knockout[ki].ties = ties;
+                    } else {
+                        let prev = cup.knockout[ki - 1].winners.clone();
+                        let ties = prev
+                            .chunks(2)
+                            .filter(|c| c.len() == 2)
+                            .map(|c| (c[0], c[1]))
+                            .collect::<Vec<_>>();
+                        cup.knockout[ki].ties = ties;
+                    }
+                }
+                let ties = cup.knockout[ki].ties.clone();
+                let stage = cup.knockout[ki].stage.to_string();
+                let round = ki + 1;
+                let is_final = ki + 1 == cup.knockout.len();
+                let final_tie = if is_final { ties.first().copied() } else { None };
+                let mut winners = Vec::new();
+                for (home, away) in ties {
+                    if let Some((gh, ga)) = play_web_cup(
+                        &mut self.world,
+                        &mut self.rng,
+                        &mut self.matches,
+                        home,
+                        away,
+                        self.week + 1,
+                        UCL_LEAGUE_ID,
+                        100 + round,
+                        stage.clone(),
+                        Comp::Ucl,
+                    ) {
+                        winners.push(cup_winner(home, away, gh, ga, &mut self.rng));
+                        played += 1;
+                    }
+                }
+                if is_final {
+                    // Winning the final is code 5; the runner-up reached the
+                    // final, which is code 4.
+                    if let (Some(&wn), Some(&(h, a))) = (winners.first(), final_tie.as_ref()) {
+                        set_cup_result(&mut self.world, wn, 5);
+                        let loser = if wn == h { a } else { h };
+                        set_cup_result(&mut self.world, loser, 4);
+                    }
+                } else {
+                    // R16 winners reach the QF (2), QF winners the SF (3),
+                    // SF winners the final (4).
+                    let tag = (ki + 2) as u8;
+                    for &wn in &winners {
+                        set_cup_result(&mut self.world, wn, tag);
+                    }
+                }
+                cup.knockout[ki].winners = winners;
+                cup.knockout[ki].done = true;
+            }
+            self.ucl = Some(cup);
+            played
+        }
+    }
+
+    /// Record the furthest Champions League stage reached by every player in
+    /// a team's squad. Codes are 0 none, 1 R16, 2 QF, 3 SF, 4 runner-up, 5
+    /// winner, matching the CLI accounting.
+    fn set_cup_result(world: &mut World, ti: usize, r: u8) {
+        let squad = match world.teams.get(ti) {
+            Some(t) => t.players.clone(),
+            None => return,
+        };
+        for pi in squad {
+            if let Some(p) = world.pool.get_mut(pi) {
+                if p.ucl_result < r {
+                    p.ucl_result = r;
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn play_web_cup(
+        world: &mut World,
+        rng: &mut Pcg64Mcg,
+        matches: &mut Vec<WebMatchRecord>,
+        home: usize,
+        away: usize,
+        week: u32,
+        league_idx: usize,
+        round: usize,
+        stage: String,
+        comp: Comp,
+    ) -> Option<(u8, u8)> {
+        let outcome = play_detailed(
+            home,
+            away,
+            comp,
+            Venue::HomeA,
+            (0, 0),
+            &mut world.teams,
+            &mut world.pool,
+            &world.params,
+            rng,
+        )?;
+        let (gh, ga) = (outcome.goals_a, outcome.goals_b);
+        record_result(
+            &mut world.teams,
+            home,
+            away,
+            gh as u32,
+            ga as u32,
+        );
+        let id = matches.len() + 1;
+        matches.push(WebMatchRecord {
+            id,
+            week,
+            league_idx,
+            round,
+            home,
+            away,
+            comp,
+            stage,
+            outcome,
+        });
+        Some((gh, ga))
+    }
+
+    /// Order a Champions League group by points, goal difference, goals for,
+    /// then team id for a stable final tie-break.
+    fn group_order(matches: &[WebMatchRecord], group: &[usize]) -> Vec<usize> {
+        group_table_rows(matches, group)
+            .into_iter()
+            .map(|r| r.0)
+            .collect()
     }
 
     fn team_json(w: &World, ti: usize) -> Value {
@@ -12622,6 +12956,10 @@ pub mod web_api {
             "apps": p.apps,
             "goals": p.goals,
             "assists": p.assists,
+            "overall_apps": p.overall_apps(),
+            "overall_goals": p.overall_goals(),
+            "overall_assists": p.overall_assists(),
+            "league_idx": w.teams.get(p.team).map(|t| t.league_idx),
             "rating": if p.rating_apps == 0 { 0.0 } else { p.rating_sum / p.rating_apps as f32 },
             "shots": p.shots,
             "sot": p.sot,
@@ -12756,6 +13094,7 @@ pub mod web_api {
     /// evolving in-world attributes and statistics.
     fn player_detail_json(state: &WebState, world_idx: usize) -> Value {
         let mut out = player_json(&state.world, world_idx);
+        out["honours"] = player_honours_json(state, world_idx);
         if let Some(db_id) = state.world.pool[world_idx].db_id {
             if let Some(&db_idx) = state.database_index.get(&db_id) {
                 out["profile"] = source_profile_json(state, db_idx);
@@ -12763,6 +13102,112 @@ pub mod web_api {
             }
         }
         out
+    }
+
+    /// Human label for a competition result code. Codes are 0 none, 1 first
+    /// knockout round, 2 quarter-final, 3 semi-final, 4 runner-up, 5 winner.
+    fn result_label(code: u8) -> &'static str {
+        match code {
+            0 => "Not involved",
+            1 => "Round of 16",
+            2 => "Quarter-final",
+            3 => "Semi-final",
+            4 => "Runner-up",
+            5 => "Winner",
+            _ => "—",
+        }
+    }
+
+    /// Individual accolades and honours for one player: award counts, live
+    /// scoring races, club position and the furthest stage reached in each
+    /// cup this season. Computed from the same world tables the rest of the
+    /// site reads so nothing drifts out of sync.
+    fn player_honours_json(state: &WebState, world_idx: usize) -> Value {
+        let w = &state.world;
+        let p = &w.pool[world_idx];
+        let league_idx = w.teams.get(p.team).map(|t| t.league_idx);
+        let mut league_rank: Option<usize> = None;
+        let mut league_leader_goals = 0u16;
+        let mut league_position: Option<usize> = None;
+        let mut league_name = String::new();
+        if let Some(li) = league_idx {
+            league_name = state.league_name(li);
+            league_position = league_table(state, li)
+                .iter()
+                .position(|&t| t == p.team)
+                .map(|i| i + 1);
+            let mut scorers: Vec<usize> = (0..w.pool.len())
+                .filter(|&i| {
+                    w.teams
+                        .get(w.pool[i].team)
+                        .map(|t| t.league_idx == li)
+                        .unwrap_or(false)
+                        && w.pool[i].goals > 0
+                })
+                .collect();
+            scorers.sort_by(|&a, &b| {
+                w.pool[b]
+                    .goals
+                    .cmp(&w.pool[a].goals)
+                    .then(w.pool[b].assists.cmp(&w.pool[a].assists))
+            });
+            league_leader_goals = scorers.first().map(|&i| w.pool[i].goals).unwrap_or(0);
+            if p.goals > 0 {
+                league_rank = scorers.iter().position(|&i| i == world_idx).map(|r| r + 1);
+            }
+        }
+        let mut ucl: Vec<usize> = (0..w.pool.len())
+            .filter(|&i| w.pool[i].ucl_goals > 0)
+            .collect();
+        ucl.sort_by(|&a, &b| {
+            w.pool[b]
+                .ucl_goals
+                .cmp(&w.pool[a].ucl_goals)
+                .then(w.pool[b].ucl_assists.cmp(&w.pool[a].ucl_assists))
+        });
+        let ucl_leader_goals = ucl.first().map(|&i| w.pool[i].ucl_goals).unwrap_or(0);
+        let ucl_rank = if p.ucl_goals > 0 {
+            ucl.iter().position(|&i| i == world_idx).map(|r| r + 1)
+        } else {
+            None
+        };
+        let ucl_stage = if p.ucl_result == 0 {
+            if p.ucl_apps > 0 { "Group stage" } else { "Not involved" }
+        } else {
+            result_label(p.ucl_result)
+        };
+        let europa_stage = if p.el_result == 0 {
+            if p.el_apps > 0 { "Group stage" } else { "Not involved" }
+        } else {
+            result_label(p.el_result)
+        };
+        let international_stage = if p.intl_result == 0 {
+            if p.intl_apps > 0 { "Group stage" } else { "Not involved" }
+        } else {
+            result_label(p.intl_result)
+        };
+        json!({
+            "ballons": p.ballons,
+            "league": league_name,
+            "league_position": league_position,
+            "league_title": p.league_won,
+            "league_top_scorer_rank": league_rank,
+            "league_top_scorer_goals": p.goals,
+            "league_leader_goals": league_leader_goals,
+            "ucl_top_scorer_rank": ucl_rank,
+            "ucl_top_scorer_goals": p.ucl_goals,
+            "ucl_leader_goals": ucl_leader_goals,
+            "ucl_assists": p.ucl_assists,
+            "ucl_stage": ucl_stage,
+            "europa_stage": europa_stage,
+            "international_stage": international_stage,
+            "season_trophies": {
+                "league": p.league_won,
+                "champions_league": p.ucl_result == 5,
+                "europa_league": p.el_result == 5,
+                "international": p.intl_result == 5,
+            },
+        })
     }
 
     /// A database player in exactly the JSON shape used by the player
@@ -12844,12 +13289,22 @@ pub mod web_api {
 
     fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
         let w = &state.world;
+        let league = if m.comp == Comp::Ucl {
+            "UEFA Champions League".to_string()
+        } else {
+            w.league_meta
+                .get(m.league_idx)
+                .map(|x| x.label.clone())
+                .unwrap_or_default()
+        };
         json!({
             "id": m.id,
             "week": m.week,
             "round": m.round,
             "league_idx": m.league_idx,
-            "league": w.league_meta.get(m.league_idx).map(|x| x.label.as_str()).unwrap_or(""),
+            "league": league,
+            "competition": if m.comp == Comp::Ucl { "UEFA Champions League" } else { "League" },
+            "stage": m.stage,
             "home_team": m.home,
             "away_team": m.away,
             "home": w.teams[m.home].name,
@@ -13051,8 +13506,134 @@ pub mod web_api {
         })
     }
 
-    fn fixtures_json(state: &WebState, week_one_based: Option<usize>) -> Vec<Value> {
-        let week = week_one_based.unwrap_or(state.week.saturating_add(1) as usize);
+    /// Full Champions League view: group tables, knockout results and the
+    /// competition scoring chart. Returned by `/api/league/1000000` so the
+    /// normal league links and match rows can open it.
+    fn ucl_detail_json(state: &WebState) -> Value {
+        let w = &state.world;
+        let Some(cup) = state.ucl.as_ref() else {
+            return json!({"league": "UEFA Champions League", "confederation": "UEFA", "week": state.week, "groups": [], "knockout": [], "table": [], "scorers": [], "recent": []});
+        };
+        let groups = cup
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(gi, group)| {
+                let rows = group_table_rows(&state.matches, group);
+                json!({
+                    "name": format!("Group {}", group_letter(gi)),
+                    "teams": rows.iter().enumerate().map(|(pos, &(team, p, won, drawn, lost, gf, ga, pts))| {
+                        json!({
+                            "id": team,
+                            "name": w.teams[team].name,
+                            "position": pos + 1,
+                            "played": p,
+                            "won": won,
+                            "drawn": drawn,
+                            "lost": lost,
+                            "gf": gf,
+                            "ga": ga,
+                            "gd": gf as i32 - ga as i32,
+                            "pts": pts,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let knockout = cup
+            .knockout
+            .iter()
+            .map(|round| {
+                json!({
+                    "stage": round.stage,
+                    "week": round.week + 1,
+                    "teams": round.ties.iter().map(|&(h, a)| {
+                        let played = state.matches.iter().rev().find(|m| {
+                            m.comp == Comp::Ucl && m.stage == round.stage && m.home == h && m.away == a
+                        });
+                        let mut x = json!({
+                            "home_id": h,
+                            "away_id": a,
+                            "home": w.teams[h].name,
+                            "away": w.teams[a].name,
+                            "home_goals": Value::Null,
+                            "away_goals": Value::Null,
+                        });
+                        if let Some(m) = played {
+                            x["home_goals"] = json!(m.outcome.goals_a);
+                            x["away_goals"] = json!(m.outcome.goals_b);
+                        }
+                        x
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut scorers: Vec<usize> = (0..w.pool.len())
+            .filter(|&i| w.pool[i].ucl_goals > 0 || w.pool[i].ucl_assists > 0)
+            .collect();
+        scorers.sort_by(|&a, &b| {
+            w.pool[b]
+                .ucl_goals
+                .cmp(&w.pool[a].ucl_goals)
+                .then(w.pool[b].ucl_assists.cmp(&w.pool[a].ucl_assists))
+        });
+        json!({
+            "league": "UEFA Champions League",
+            "confederation": "UEFA",
+            "week": state.week,
+            "groups": groups,
+            "knockout": knockout,
+            "table": [],
+            "scorers": scorers.into_iter().take(20).map(|i| player_detail_json(state, i)).collect::<Vec<_>>(),
+            "recent": state.matches.iter().rev()
+                .filter(|m| m.comp == Comp::Ucl)
+                .take(20)
+                .map(|m| match_summary(state, m))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn group_table_rows(
+        matches: &[WebMatchRecord],
+        group: &[usize],
+    ) -> Vec<(usize, u16, u16, u16, u16, u16, u16, u16)> {
+        let mut rows: Vec<(usize, u16, u16, u16, u16, u16, u16, u16)> = group
+            .iter()
+            .map(|&t| (t, 0, 0, 0, 0, 0, 0, 0))
+            .collect();
+        for m in matches {
+            if m.comp != Comp::Ucl || !m.stage.starts_with("Group") {
+                continue;
+            }
+            let gh = m.outcome.goals_a as u16;
+            let ga = m.outcome.goals_b as u16;
+            for (team, gf, gaa) in [(m.home, gh, ga), (m.away, ga, gh)] {
+                if let Some(row) = rows.iter_mut().find(|r| r.0 == team) {
+                    row.1 += 1;
+                    row.5 += gf;
+                    row.6 += gaa;
+                    if gf > gaa {
+                        row.2 += 1;
+                        row.7 += 3;
+                    } else if gf == gaa {
+                        row.3 += 1;
+                        row.7 += 1;
+                    } else {
+                        row.4 += 1;
+                    }
+                }
+            }
+        }
+        rows.sort_by(|a, b| {
+            b.7.cmp(&a.7)
+                .then((b.5 as i32 - b.6 as i32).cmp(&(a.5 as i32 - a.6 as i32)))
+                .then(b.5.cmp(&a.5))
+                .then(a.0.cmp(&b.0))
+        });
+        rows
+    }
+
+    fn fixtures_json(state: &WebState, week_one_based: Option<usize>) -> Vec<Value> {        let week = week_one_based.unwrap_or(state.week.saturating_add(1) as usize);
         let idx = week.saturating_sub(1);
         let mut out = Vec::new();
         for (li, sched) in state.schedules.iter().enumerate() {
@@ -13561,7 +14142,9 @@ pub mod web_api {
                 .parse::<usize>()
                 .unwrap_or(0);
             let s = state.lock().unwrap();
-            if idx >= s.world.league_teams.len() || idx == 5 {
+            if idx == UCL_LEAGUE_ID {
+                ucl_detail_json(&s)
+            } else if idx >= s.world.league_teams.len() || idx == 5 {
                 json!({"error": "league not available"})
             } else {
                 league_detail_json(&s, idx)
