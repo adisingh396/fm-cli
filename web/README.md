@@ -1,4 +1,4 @@
-# Crouton Alpha web dashboard
+# FM Observatory web dashboard
 
 This directory is a **static, dependency-free frontend**. The Rust backend also
 serves it directly when run in API mode (`cargo run --release -- serve`).

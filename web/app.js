@@ -99,10 +99,10 @@
     const nd = $('news-date');
     if (nd) nd.textContent = fmtDate(state.clockDays);
     if (!state.news.length) {
-      list.innerHTML = '<div class="news-item"><div class="news-thumb">CA</div><div><strong>Opening weekend pending</strong><span>Simulate a round to populate the wire.</span></div></div>';
+      list.innerHTML = '<div class="news-item"><div class="news-thumb">FM</div><div><strong>Opening weekend pending</strong><span>Simulate a round to populate the wire.</span></div></div>';
       return;
     }
-    list.innerHTML = state.news.slice(0, 5).map((n) => `<div class="news-item"><div class="news-thumb" style="background:hsl(${hue(n.text)} 38% 28%)">${esc(initials(n.text.match(/^[A-Z][a-z]+/)?.[0] || 'CA'))}</div><div><strong>${esc(n.text)}</strong><span>${esc(n.date)} · Crouton Alpha wire</span></div></div>`).join('');
+    list.innerHTML = state.news.slice(0, 5).map((n) => `<div class="news-item"><div class="news-thumb" style="background:hsl(${hue(n.text)} 38% 28%)">${esc(initials(n.text.match(/^[A-Z][a-z]+/)?.[0] || 'FM'))}</div><div><strong>${esc(n.text)}</strong><span>${esc(n.date)} · FM wire</span></div></div>`).join('');
   }
   async function appendNews(w) {
     const week = w?.week ?? 0;
