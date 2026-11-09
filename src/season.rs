@@ -12394,6 +12394,56 @@ pub mod web_api {
         })
     }
 
+    fn player_matches_json(state: &WebState, world_idx: usize) -> Value {
+        let mut rows = Vec::new();
+        for m in state.matches.iter().rev() {
+            for s in &m.outcome.stats {
+                if s.id == world_idx {
+                    let mut row = match_summary(state, m);
+                    row["player_stats"] = json!({
+                        "minutes": s.minutes,
+                        "goals": s.goals,
+                        "assists": s.assists,
+                        "shots": s.shots,
+                        "rating": s.rating,
+                        "yellows": s.yellows,
+                        "sent_off": s.sent_off,
+                    });
+                    rows.push(row);
+                    break;
+                }
+            }
+            if rows.len() >= 20 {
+                break;
+            }
+        }
+        rows.reverse();
+        json!({"player": player_detail_json(state, world_idx), "matches": rows})
+    }
+
+    fn team_recent_json(state: &WebState, ti: usize) -> Value {
+        let mut rows = Vec::new();
+        for m in state.matches.iter().rev() {
+            if m.home == ti || m.away == ti {
+                let mut row = match_summary(state, m);
+                row["is_home"] = json!(m.home == ti);
+                row["result"] = json!(if m.outcome.goals_a as i32 == m.outcome.goals_b as i32 {
+                    "D"
+                } else if (m.outcome.goals_a as i32 > m.outcome.goals_b as i32) == (ti == m.home) {
+                    "W"
+                } else {
+                    "L"
+                });
+                rows.push(row);
+                if rows.len() >= 12 {
+                    break;
+                }
+            }
+        }
+        rows.reverse();
+        json!({"team": team_json(&state.world, ti), "recent": rows})
+    }
+
     fn manager_team_json(state: &WebState, ti: usize) -> Value {
         let w = &state.world;
         let Some(t) = w.teams.get(ti) else {
@@ -12588,6 +12638,17 @@ pub mod web_api {
             "morale": p.morale,
             "intl_goals": p.intl_goals,
             "intl_assists": p.intl_assists,
+            "intl_apps": p.intl_apps,
+            "ucl_apps": p.ucl_apps,
+            "ucl_goals": p.ucl_goals,
+            "ucl_assists": p.ucl_assists,
+            "el_apps": p.el_apps,
+            "el_goals": p.el_goals,
+            "el_assists": p.el_assists,
+            "league_won": p.league_won,
+            "ucl_result": p.ucl_result,
+            "el_result": p.el_result,
+            "intl_result": p.intl_result,
             "career": {
                 "apps": p.career_apps,
                 "goals": p.career_goals,
@@ -13545,11 +13606,19 @@ pub mod web_api {
         } else if path.starts_with("/api/player/") {
             let rest = path.trim_start_matches("/api/player/");
             let s = state.lock().unwrap();
-            // Stable handles are deliberate: `db:{PlayerId}` and
-            // `wp:{world-index}` cannot collide with the legacy bare world
-            // index. `db/{id}` and `world/{id}` are equivalent readable
-            // variants for deep links from the browser.
-            if let Some(database_id) = rest
+            if rest.ends_with("/matches") {
+                let handle = rest.trim_end_matches("/matches");
+                let world_idx = handle
+                    .strip_prefix("world:")
+                    .or_else(|| handle.strip_prefix("wp:"))
+                    .or_else(|| handle.strip_prefix("world/"))
+                    .or_else(|| handle.strip_prefix("wp/"))
+                    .and_then(|v| v.parse::<usize>().ok());
+                match world_idx {
+                    Some(i) if i < s.world.pool.len() => player_matches_json(&s, i),
+                    _ => json!({"error": "player not found"}),
+                }
+            } else if let Some(database_id) = rest
                 .strip_prefix("db:")
                 .or_else(|| rest.strip_prefix("db/"))
                 .and_then(|v| v.parse::<PlayerId>().ok())
@@ -13578,6 +13647,32 @@ pub mod web_api {
                 }
             } else {
                 json!({"error": "player not found"})
+            }
+        } else if path.starts_with("/api/team/") && path.ends_with("/recent") {
+            let raw = path
+                .trim_start_matches("/api/team/")
+                .trim_end_matches("/recent");
+            let idx = raw.parse::<usize>().unwrap_or(0);
+            let s = state.lock().unwrap();
+            if idx >= s.world.teams.len() {
+                json!({"error": "team not found"})
+            } else {
+                team_recent_json(&s, idx)
+            }
+        } else if path.starts_with("/api/player/") && path.ends_with("/matches") {
+            let raw = path
+                .trim_start_matches("/api/player/")
+                .trim_end_matches("/matches");
+            let world_idx = raw
+                .strip_prefix("world:")
+                .or_else(|| raw.strip_prefix("wp:"))
+                .or_else(|| raw.strip_prefix("world/"))
+                .or_else(|| raw.strip_prefix("wp/"))
+                .and_then(|v| v.parse::<usize>().ok());
+            let s = state.lock().unwrap();
+            match world_idx {
+                Some(i) if i < s.world.pool.len() => player_matches_json(&s, i),
+                _ => json!({"error": "player not found"}),
             }
         } else if path == "/api/manager/clubs" {
             let s = state.lock().unwrap();

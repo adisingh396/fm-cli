@@ -1123,13 +1123,22 @@ fn drive(
     // midfield volume (and the shot-volume guard) is untouched.
     let is_playmaker = matches!(
         atk.p[pa].role,
-        Role::AdvancedPlaymaker | Role::DeepLyingPlaymaker
+        Role::AdvancedPlaymaker
+            | Role::DeepLyingPlaymaker
+            | Role::FalseNine
+            | Role::InsideForward
+            | Role::ShadowStriker
+            | Role::Winger
     );
+    let elite_created = is_playmaker
+        && atk.p[pa].attrs.dribbling >= 85
+        && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 12.0;
     let carry = (atk.eff(pa, &atk.dribble) > atk.eff(pa, &atk.passing) && rng.gen::<f32>() < 0.5)
         || (is_playmaker
             && atk.p[pa].attrs.dribbling >= 85
-            && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 5.0
-            && rng.gen::<f32>() < 0.35);
+            && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 12.0
+            && rng.gen::<f32>() < 0.35)
+        || (elite_created && rng.gen::<f32>() < 0.2);
     // --- Track 3 physics: exposed flanks & the high line. -------------------
     // (a) A carrier operating in a wide channel the *opponent's shape* doesn't
     //     cover gets a real edge — a narrow diamond or back three concedes the
