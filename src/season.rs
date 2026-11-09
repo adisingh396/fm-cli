@@ -14321,15 +14321,14 @@ pub mod web_api {
     }
 
     pub fn serve_web_api() {
+        // Stable default seed: a restart reproduces the same world, so the
+        // league tables and the Champions League draw are auditable. Pin a
+        // different world with FM_API_SEED; the dashboard's "New world" button
+        // still generates a fresh random one.
         let seed = std::env::var("FM_API_SEED")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(20_260_101)
-            });
+            .unwrap_or(20_260_101);
         let port = std::env::var("PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
@@ -14338,7 +14337,7 @@ pub mod web_api {
         let state = Arc::new(Mutex::new(WebState::new(seed)));
         let listener = TcpListener::bind(("0.0.0.0", port)).expect("could not bind API port");
         println!(
-            "Crouton alpha web API + dashboard: http://localhost:{}/ (ready in {:?})",
+            "FM Observatory web API + dashboard: http://localhost:{}/ (ready in {:?})",
             port,
             started.elapsed()
         );

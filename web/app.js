@@ -788,7 +788,11 @@
     state.leagueIndex = s.leagueIndex ?? state.leagueIndex;
     state.matchId = s.matchId ?? state.matchId;
     state.playerHandle = s.playerHandle ?? state.playerHandle;
-    setPage(s.page || 'home', { skipHistory: true });
+    const restored = s.page || 'home';
+    setPage(restored, { skipHistory: true });
+    // The player laboratory is the only page that needs an async fetch before
+    // it can render; every other page renders straight from cached state.
+    if (restored === 'players') loadPlayers();
   });
 
   $('api-base').value = API;
@@ -796,5 +800,10 @@
   $('mode-manager')?.classList.toggle('active', state.mode === 'manager');
   updateClock();
   renderNewsRail();
-  api('/api/health').then(async () => { await refreshAll(); await loadPlayers(); }).catch((e) => { setStatus(`Could not connect — ${e.message}`, false); $('app').innerHTML = `<div class="alert"><strong>Simulation API is unreachable.</strong><p>The frontend is loaded, but the Rust backend did not answer at <code>${esc(API)}</code>. Start it with <code>cargo run --release -- serve</code>, check that the tunnel/process is still running, or enter a different endpoint in the left rail.</p><p><a href="${esc(API)}" target="_blank" rel="noreferrer">Open backend dashboard</a> · <a href="/api/health" target="_blank" rel="noreferrer">Health check</a></p><p>${esc(e.message)}</p></div>`; });
+  api('/api/health').then(async () => {
+    await refreshAll();
+    // Only the player laboratory needs its own fetch; booting straight into
+    // it made the app open on Players while the Home tab stayed highlighted.
+    if (state.page === 'players') await loadPlayers();
+  }).catch((e) => { setStatus(`Could not connect — ${e.message}`, false); $('app').innerHTML = `<div class="alert"><strong>Simulation API is unreachable.</strong><p>The frontend is loaded, but the Rust backend did not answer at <code>${esc(API)}</code>. Start it with <code>cargo run --release -- serve</code>, check that the tunnel/process is still running, or enter a different endpoint in the left rail.</p><p><a href="${esc(API)}" target="_blank" rel="noreferrer">Open backend dashboard</a> · <a href="/api/health" target="_blank" rel="noreferrer">Health check</a></p><p>${esc(e.message)}</p></div>`; });
 })();
