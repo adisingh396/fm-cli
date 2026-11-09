@@ -4,6 +4,7 @@
   const SPINNER = '<div class="empty">Loading live world…</div>';
   const DEFAULT_API = 'http://127.0.0.1:8080';
   const UCL_ID = 1000000;
+  const INTL_ID = 1000001;
 
   function storedApi() {
     const saved = localStorage.getItem('fm-web-api-base');
@@ -205,7 +206,7 @@
 
   function renderLeagues() {
     $('app').innerHTML = `<div class="page-head"><div><h1 style="margin:0">Leagues</h1><p class="small" style="margin:4px 0 0">Open any competition to see the live table, fixtures, matches and player stats.</p></div><span class="pill">${state.leagues.length} competitions</span></div>
-    <div class="grid cols-4"><button class="card league-card" data-league="${UCL_ID}"><div class="pill">UEFA</div><h3 style="margin-top:10px">UEFA Champions League</h3><p>36 clubs · 8 league-phase matchdays<br>Play-off + two-legged knockouts</p></button>${state.leagues.map((l) => `<button class="card league-card" data-league="${l.id}"><div class="pill">${esc(l.confederation || '')}</div><h3 style="margin-top:10px">${esc(l.name)}</h3><p>${l.teams} clubs · ${l.rounds} rounds<br>Leader: <strong>${esc(l.leader || '—')}</strong></p></button>`).join('')}</div>`;
+    <div class="grid cols-4"><button class="card league-card" data-league="${UCL_ID}"><div class="pill">UEFA</div><h3 style="margin-top:10px">UEFA Champions League</h3><p>36 clubs · 8 league-phase matchdays<br>Play-off + two-legged knockouts</p></button><button class="card league-card" data-league="${INTL_ID}"><div class="pill">FIFA · Confeds</div><h3 style="margin-top:10px">Internationals</h3><p>World Cup · Euros · continental cups<br>Friendly windows in every break</p></button>${state.leagues.map((l) => `<button class="card league-card" data-league="${l.id}"><div class="pill">${esc(l.confederation || '')}</div><h3 style="margin-top:10px">${esc(l.name)}</h3><p>${l.teams} clubs · ${l.rounds} rounds<br>Leader: <strong>${esc(l.leader || '—')}</strong></p></button>`).join('')}</div>`;
   }
 
   function cupLeagueTable(table) {
@@ -216,10 +217,12 @@
   }
 
   function cupTieRow(t) {
-    const legs = t.leg1
-      ? `<div class="small" style="flex-basis:100%;text-align:center">${t.leg2 ? `1st leg ${t.leg1.home_goals}–${t.leg1.away_goals} · 2nd leg ${t.leg2.home_goals}–${t.leg2.away_goals} · ` : ''}${t.agg_home != null ? `Agg <strong>${t.agg_home}–${t.agg_away}</strong>` : ''}${t.winner ? ` · <strong>${esc(t.winner)}</strong> advance` : ''}</div>`
+    // Aggregate is the headline; the legs live in the detail line.
+    const big = t.agg_home != null ? `${t.agg_home} – ${t.agg_away}` : '—';
+    const detail = t.leg1
+      ? `${t.leg2 ? `1st leg ${t.leg1.home_goals}–${t.leg1.away_goals} · 2nd leg ${t.leg2.home_goals}–${t.leg2.away_goals}` : `Single leg`}${t.winner ? ` · <strong>${esc(t.winner)}</strong> advance` : ''}`
       : '';
-    return `<div class="row" style="flex-wrap:wrap;justify-content:space-between">${legs}<span><button class="linklike" data-team="${t.home_id}">${esc(t.home)}</button></span><strong class="numeric">${t.home_goals == null ? '—' : `${t.home_goals} – ${t.away_goals}`}</strong><span style="text-align:right"><button class="linklike" data-team="${t.away_id}">${esc(t.away)}</button></span></div>`;
+    return `<div class="row" style="flex-wrap:wrap;justify-content:space-between">${detail ? `<div class="small" style="flex-basis:100%;text-align:center">${detail}</div>` : ''}<span><button class="linklike" data-team="${t.home_id}">${esc(t.home)}</button></span><strong class="numeric" style="font-size:18px">${big}</strong><span style="text-align:right"><button class="linklike" data-team="${t.away_id}">${esc(t.away)}</button></span></div>`;
   }
 
   async function renderCupDetail() {
@@ -250,8 +253,62 @@
     </tbody></table></div>`;
   }
 
-  async function renderLeagueDetail(index = state.leagueIndex) {
-    if (index === UCL_ID) return renderCupDetail();
+  // International football: the current or selected season's tournament and
+  // friendly windows, with the history of past tournaments.
+  async function renderInternationals(season) {
+    state.page = 'internationals';
+    state.intlSeason = season ?? state.intlSeason;
+    $('app').innerHTML = SPINNER;
+    const year = state.intlSeason ?? state.overview?.world?.year;
+    const data = await api(`/api/league/${INTL_ID}${year ? `?season=${year}` : ''}`);
+    state.intlData = data;
+    let seasons = [{ y: state.overview?.world?.year, label: `${state.overview?.world?.year} (live)` }];
+    seasons = seasons.concat((data.history || []).map((h) => ({ y: Number(h.year), label: `${h.year} ${h.kind || ''} — ${h.winner || ''}` })).reverse());
+    const opts = seasons.filter((s, i, a) => a.findIndex((x) => x.y === s.y) === i).map((s) => `<option value="${s.y}" ${s.y === data.year ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
+    const stages = (data.stages || []).map((st) => `<div class="card"><h3>${esc(st.name)}</h3><div class="row-list">${(st.matches || []).map(matchRow).join('') || '<div class="empty">Nothing played yet.</div>'}</div></div>`).join('');
+    const scorers = (data.top_scorers || []).map((p) => `<div class="row"><span><button class="linklike" data-player="wp:${p.id}">${esc(p.name)}</button><div class="small">${esc(p.nation)} · ${esc(p.club)}</div></span><span class="badge">${p.apps} apps · ${p.goals} G · ${p.assists} A</span></div>`).join('');
+    $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">International football</div><h1 style="margin:8px 0 4px">${esc(data.kind || 'Internationals')} ${data.year}</h1><p class="small" style="margin:0">${data.winner ? `Champions: <strong>${esc(data.winner)}</strong>` : data.archived ? 'Tournament outcome unrecorded' : 'Tournament played after the club season ends'}</p></div><div class="toolbar"><select id="intl-season">${opts}</select></div></div>
+    <div class="grid cols-2">
+      <div class="card"><h3>Leading scorers · tournament only</h3><div class="row-list">${scorers || '<div class="empty">No internationals played yet.</div>'}</div></div>
+      <div class="card"><h3>Past tournaments</h3><div class="row-list">${(data.history || []).slice().reverse().map((h) => `<div class="row"><span><strong>${esc(h.kind || '')} ${h.year}</strong></span><span class="badge">${esc(h.winner || '—')}</span></div>`).join('') || '<div class="empty">No completed tournaments yet.</div>'}</div></div>
+    </div>
+    ${stages || '<div class="empty">No international fixtures recorded for this season yet.</div>'}`;
+    $('intl-season')?.addEventListener('change', (e) => renderInternationals(Number(e.target.value)));
+  }
+
+  // Season review: champions, cups and the international tournament of a
+  // completed season, served from the rollover archive.
+  async function renderSeasonReview(year) {
+    state.page = 'season';
+    state.seasonReview = year;
+    $('app').innerHTML = SPINNER;
+    const data = await api(`/api/seasons/${year}`);
+    if (data.error) { $('app').innerHTML = `<div class="empty">No archive for ${esc(String(year))}.</div>`; return; }
+    const champions = (data.leagues || []).map((l) => `<div class="card"><h3>${esc(l.name)}</h3><div class="row-list">
+      <div class="row"><span>Champion</span><strong>${esc(l.champion?.name || '—')}</strong></div>
+      <div class="row"><span>Top scorer</span><strong style="text-align:right">${esc(l.top_scorer?.name || '—')} · ${l.top_scorer?.goals ?? 0} G</strong></div>
+    </div></div>`).join('');
+    const ucl = data.ucl || {};
+    const intl = data.international || {};
+    const intlScorers = (intl.top_scorers || []).map((p) => `<div class="row"><span><button class="linklike" data-player="wp:${p.id}">${esc(p.name)}</button><div class="small">${esc(p.nation)} · ${esc(p.club)}</div></span><span class="badge">${p.apps} apps · ${p.goals} G · ${p.assists} A</span></div>`).join('');
+    $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">Season review</div><h1 style="margin:8px 0 4px">Season ${esc(data.season || String(year))}</h1><p class="small" style="margin:0">Champions, cups and the international summer.</p></div></div>
+    <div class="grid cols-2">
+      <div class="card"><h3>UEFA Champions League</h3><div class="row-list">
+        <div class="row"><span>Winner</span><strong>${esc(ucl.final?.winner?.name || '—')}</strong></div>
+        <div class="row"><span>Runner-up</span><strong>${esc(ucl.final?.runner_up?.name || '—')}</strong></div>
+        <div class="row"><span>Final score</span><strong>${ucl.final?.score ? `${ucl.final.score[0]} – ${ucl.final.score[1]}` : '—'}</strong></div>
+        <div class="row"><span>Top scorer</span><strong style="text-align:right">${esc(ucl.top_scorer?.name || '—')} · ${ucl.top_scorer?.goals ?? 0} G</strong></div>
+      </div></div>
+      <div class="card"><h3>${esc(intl.kind || 'Internationals')}</h3><div class="row-list">
+        <div class="row"><span>Champions</span><strong>${esc(intl.winner || '—')}</strong></div>
+        ${intlScorers ? `<div class="row" style="display:block"><span class="small">Leading men</span><div class="row-list" style="margin-top:6px">${intlScorers}</div></div>` : ''}
+      </div></div>
+    </div>
+    <div class="grid cols-3">${champions}</div>`;
+  }
+
+  async function renderLeagueDetail(index = state.leagueIndex) {    if (index === UCL_ID) return renderCupDetail();
+    if (index === INTL_ID) return renderInternationals();
     state.leagueIndex = index;
     state.page = 'league';
     $('app').innerHTML = SPINNER;
@@ -384,9 +441,9 @@
       </div>`;
     } else if (state.matchTab === 'events') body = `<div class="card"><h2>Events</h2><div class="events">${eventRows(m)}</div></div>`;
     else if (state.matchTab === 'lineup') {
-      const limited = (stats) => (stats || []).filter((s) => s.minutes < 90).map((s) => `<div class="row"><span>${esc(s.name)}</span><span class="small">${s.minutes}' · rating ${number(s.rating)}${s.goals ? ` · ${s.goals} goal(s)` : ''}${s.assists ? ` · ${s.assists} assist(s)` : ''}${s.sent_off ? ' · sent off' : ''}</span></div>`).join('') || '<div class="empty">No limited-minute player lines in this match record.</div>';
+      const subs = (list) => (list || []).map((s) => `<div class="row"><span>${esc(s.name)}</span><span class="small">${s.minutes}' · rating ${number(s.rating)}${s.goals ? ` · ${s.goals} goal(s)` : ''}${s.assists ? ` · ${s.assists} assist(s)` : ''}</span></div>`).join('') || '<div class="empty">No substitutions used.</div>';
       body = `<div class="grid cols-2"><div class="card"><h3>${esc(mm.home)}</h3>${pitchSide(m.home_lineup || [], true)}</div><div class="card"><h3>${esc(mm.away)}</h3>${pitchSide(m.away_lineup || [], false)}</div></div>
-      <div class="grid cols-2" style="margin-top:14px"><div class="card"><h3>${esc(mm.home)} substitutes / limited minutes</h3>${limited(m.home_lineup)}</div><div class="card"><h3>${esc(mm.away)} substitutes / limited minutes</h3>${limited(m.away_lineup)}</div></div>`;
+      <div class="grid cols-2" style="margin-top:14px"><div class="card"><h3>${esc(mm.home)} substitutions</h3>${subs(m.home_subs)}</div><div class="card"><h3>${esc(mm.away)} substitutions</h3>${subs(m.away_subs)}</div></div>`;
     }
     else if (state.matchTab === 'stats') {
       const rows = (stats) => (stats || []).map((s) => `<tr><td><strong>${esc(s.name)}</strong><div class="small">${esc(s.nation)} · ${esc(s.position)}</div></td><td class="numeric">${number(s.rating)}</td><td class="numeric">${s.minutes}</td><td class="numeric">${s.goals}</td><td class="numeric">${s.assists}</td><td class="numeric">${s.shots}</td><td class="numeric">${number(s.xg)}</td><td class="numeric">${s.key_passes}</td><td class="numeric">${esc(s.passes)}</td><td class="numeric">${esc(s.dribbles)}</td><td class="numeric">${s.tackles}</td><td class="numeric">${s.saves}</td></tr>`).join('');
@@ -660,6 +717,8 @@
     else if (page === 'player') renderPlayer(state.playerHandle);
     else if (page === 'calendar') renderCalendar();
     else if (page === 'manager') renderManager();
+    else if (page === 'internationals') renderInternationals();
+    else if (page === 'season') renderSeasonReview(state.seasonReview);
   }
 
   async function refreshAll() {
@@ -675,6 +734,14 @@
     setStatus(`Connected · API ${API}`, true);
     appendNews(w);
     renderRails();
+    // Season review dropdown: completed seasons from the archive + the live one.
+    try {
+      const seasons = await api('/api/seasons');
+      const sel = $('season-select');
+      if (sel) {
+        sel.innerHTML = '<option value="">Season review…</option>' + (seasons.seasons || []).slice().reverse().map((s) => `<option value="${s.year}">${esc(s.season || String(s.year))}${s.ucl_winner ? ` · UCL ${esc(s.ucl_winner)}` : ''}${s.international?.winner ? ` · ${esc(s.international.kind)} ${esc(s.international.winner)}` : ''}${s.current ? ' (in play)' : ''}</option>`).join('');
+      }
+    } catch {}
     setPage(state.page || 'home');
   }
 
@@ -784,6 +851,11 @@
     if (e.target.id === 'auto-speed') state.auto.speed = e.target.value;
     if (e.target.id === 'player-sort') loadPlayers();
     if (e.target.id === 'player-scope') loadPlayers();
+    if (e.target.id === 'season-select' && e.target.value) {
+      const y = Number(e.target.value);
+      e.target.value = '';
+      renderSeasonReview(y);
+    }
   });
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('global-search')?.focus(); }

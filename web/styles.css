@@ -171,9 +171,9 @@ tbody tr:hover { background: #152017; }
 .pnode .rating { position: absolute; top: -8px; right: 10px; min-width: 32px; padding: 3px 5px; border-radius: 999px; font: 800 11px/1 ui-monospace, monospace; }
 .pnode .name { display: block; color: #fff; font-size: 11px; font-weight: 700; text-shadow: 0 1px 4px #000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pnode .icon { position: absolute; top: -8px; left: 8px; min-width: 20px; padding: 2px 5px; border-radius: 999px; background: #f4f4f5; color: #111; font: 800 10px/1.2 ui-monospace, monospace; }
-.pnode .icon.assist { left: auto; right: 8px; background: #2ee07f; }
-.pnode .icon.yellow { left: auto; right: 8px; background: var(--gold); }
-.pnode .icon.red { left: auto; right: 8px; background: var(--red); color: #fff; }
+.pnode .icon.assist { left: auto; top: auto; bottom: 16px; right: 0px; background: #2ee07f; box-shadow: 0 1px 4px #000; }
+.pnode .icon.yellow { left: 0px; top: auto; bottom: 16px; right: auto; background: var(--gold); box-shadow: 0 1px 4px #000; }
+.pnode .icon.red { left: 0px; top: auto; bottom: 16px; right: auto; background: var(--red); color: #fff; box-shadow: 0 1px 4px #000; }
 .sub-label { color: #ffe9a8; font-size: 11px; font-weight: 700; text-shadow: 0 1px 4px #000; }
 .events { display: grid; gap: 0; }
 .event { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }

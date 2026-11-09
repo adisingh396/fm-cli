@@ -88,6 +88,9 @@ pub enum Venue {
 pub struct MatchStats {
     pub id: usize,
     pub side_a: bool,
+    /// True for the starting XI (including men subbed off later); false for
+    /// substitutes who came on — the match sheet separates the two.
+    pub started: bool,
     pub minutes: u8,
     pub goals: u8,
     pub assists: u8,
@@ -216,12 +219,20 @@ struct Rt {
     p: Vec<MatchPlayer>,
     st: Vec<MatchStats>,
     fat: Vec<f32>,
+    /// Individual decay rate multiplier (0.85..1.24): bodies are not equal —
+    /// some players fade fast in the final third of a match, others hold
+    /// their zip deep into the second half. Derived deterministically from
+    /// the caller id, so the same man always fades the same way.
+    fat_rate: Vec<f32>,
     out: Vec<bool>,
     /// Bench players available for substitution.
     bench: Vec<MatchPlayer>,
     bench_used: Vec<bool>,
     /// Stats of players who have been substituted off (to be merged into final).
     departed: Vec<MatchStats>,
+    /// Position of each departed player, aligned with `departed` — needed to
+    /// rate their banked line (defenders/keepers are scored differently).
+    departed_pos: Vec<Position>,
     /// Minute each current slot entered the pitch (1 = kick-off).
     entry: Vec<u8>,
     subs_made: u8,
@@ -293,10 +304,19 @@ impl Rt {
             p: side.players.to_vec(),
             st: Vec::with_capacity(n),
             fat: vec![0.0; n],
+            fat_rate: side
+                .players
+                .iter()
+                .map(|mp| {
+                    let h = (mp.id as u32).wrapping_mul(2654435761) >> 16;
+                    0.92 + (h % 18) as f32 / 100.0
+                })
+                .collect(),
             out: vec![false; n],
             bench: side.bench.to_vec(),
             bench_used: vec![false; side.bench.len()],
             departed: Vec::new(),
+            departed_pos: Vec::new(),
             entry: vec![1; n],
             subs_made: 0,
             side_a,
@@ -327,6 +347,7 @@ impl Rt {
             rt.st.push(MatchStats {
                 id: mp.id,
                 side_a,
+                started: true,
                 minutes: 90,
                 rating: 6.0,
                 ..Default::default()
@@ -593,14 +614,22 @@ impl Rt {
     }
 
     fn add_fatigue(&mut self, i: usize, base: f32) {
-        // Low-stamina players tire faster; the effect compounds late on.
+        // Low-stamina players tire faster, and each body has its own decay
+        // rate (fat_rate): the effect compounds late on, so an unlucky
+        // quick-fader can be running on empty by the 70th while his
+        // team-mate still has his legs.
         let stam = self.p[i].attrs.stamina as f32;
-        self.fat[i] += base * (1.0 + (200.0 - stam).max(0.0) / 300.0);
+        self.fat[i] += base * self.fat_rate[i] * (1.0 + (200.0 - stam).max(0.0) / 300.0);
     }
 }
 
 fn logistic(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
+}
+
+/// Line index for a position: GK 0, DEF 1, MID 2, FWD 3.
+fn line_of(pos: crate::model::Position) -> usize {
+    crate::engine::line_of(pos)
 }
 
 /// Per-hard-foul injury probability, entirely a function of the challenge
@@ -788,10 +817,12 @@ pub fn simulate(
         }
 
         // --- Track 4: substitutions. Checked every ~9 drives (≈5 match
-        // minutes) at natural breaks in play.
+        // minutes) at natural breaks in play. Each side reads its own
+        // scoreline (with any first-leg aggregate folded in).
         if d % 9 == 8 {
-            maybe_substitute(&mut ra, minute, ment_a, rng);
-            maybe_substitute(&mut rb, minute, ment_b, rng);
+            let gd_sub = (ra.goals as i32 + agg.0 as i32) - (rb.goals as i32 + agg.1 as i32);
+            maybe_substitute(&mut ra, minute, ment_a, gd_sub, rng);
+            maybe_substitute(&mut rb, minute, ment_b, -gd_sub, rng);
         }
     }
 
@@ -893,66 +924,145 @@ fn added_minutes(ra: &Rt, rb: &Rt, rng: &mut impl Rng) -> u8 {
     (base + from_events.min(4)) as u8
 }
 
-/// Track 4: AI substitutions at a natural break. Three triggers, all emergent
-/// from the match state — never a fixed minute:
-///   1. exhaustion: a spent starter replaced by a fresher same-line bench body;
-///   2. chasing: a losing side after the hour throws its best remaining
-///      attacker on, line permitting;
-///   3. cover: the side is a man short (red card / injury) and the bench
-///      plugs the gap in the vacated line.
-fn maybe_substitute(rt: &mut Rt, minute: u8, ment: i8, rng: &mut impl Rng) {
-    if rt.subs_made >= 5 || rt.bench.is_empty() || minute < 46 {
+/// Track 4: AI substitutions at a natural break. A real manager's mix of
+/// reasons, each emergent from the match state — never a fixed script:
+///   1. stamina: the 60'-80' glycogen cliff; planned rotations mean a side
+///      typically uses 3 of its 5 windows, with the fourth and fifth for the
+///      special cases below;
+///   2. injury-risk management: accumulated load × fragility is a risk the
+///      manager weighs against how crucial the man is RIGHT NOW — a
+///      game-deciding star stays on at the manager's risk, a squad player
+///      comes off; a comfortable lead lets the manager protect everyone;
+///   3. a bad day: poor inherent form with nothing happening gets hooked
+///      SOMETIMES (never habitually — a random gate, like real hooks);
+///   4. a yellow card: the booked man walks a tightrope after the hour and
+///      is sometimes taken off before the second booking arrives;
+///   5. tactics: chasing a deficit after 60' brings attackers on, protecting
+///      a lead after 70' brings legs and defenders on;
+///   6. cover: a man short (red card / first-half injury) raids the bench
+///      immediately, regardless of the minute.
+fn maybe_substitute(rt: &mut Rt, minute: u8, _ment: i8, gd: i32, rng: &mut impl Rng) {
+    if rt.subs_made >= 5 || rt.bench.is_empty() {
         return;
     }
-    let chasing = ment >= 2 && minute >= 60;
+    // Cover ignores the clock: a first-half red card gets plugged right away.
+    let covering = rt.subs_pending_cover;
+    if minute < 52 && !covering {
+        return;
+    }
 
-    // Outgoing: the most-spent outfield starter (stars are protected a little
-    // because their effective quality raises the bar for going off).
+    let chasing = gd < 0 && minute >= 60;
+    let protecting = gd > 0 && minute >= 70;
+    let comfortable = gd >= 2;
+
+    // Live quality bar: "crucial" is measured against the men on the pitch,
+    // so a star in a modest XI is protected while the same man in a galáctico
+    // side is one of several.
+    let on_pitch: Vec<usize> = (0..rt.p.len())
+        .filter(|&i| !rt.out[i] && !rt.is_gk(i))
+        .collect();
+    if on_pitch.is_empty() {
+        return;
+    }
+    let avg_quality = on_pitch
+        .iter()
+        .map(|&i| rt.eff(i, &rt.passing) + rt.eff(i, &rt.dribble))
+        .sum::<f32>()
+        / on_pitch.len() as f32;
+
+    // The rotation plan: with three windows from the hour mark, a normal
+    // match lands on 3 subs; special triggers add the fourth and fifth.
+    let planned_rotation = minute >= 58 && minute <= 86 && rt.subs_made < 3;
+
+    // Outgoing: every trigger contributes to one take-off score per starter.
     let mut pick_out: Option<usize> = None;
-    let mut worst = -1.0f32;
-    for i in 0..rt.p.len() {
-        if rt.out[i] || rt.is_gk(i) {
-            continue;
-        }
+    let mut worst = 28.0f32; // threshold: below this, nobody is hooked
+    for &i in &on_pitch {
         let spent = rt.p[i].start_fatigue + rt.fat[i];
-        if spent < 0.45 {
-            continue; // nobody worth taking off yet
-        }
         let quality = rt.eff(i, &rt.passing) + rt.eff(i, &rt.dribble);
-        let score = spent * 120.0 - quality * 0.5 + rng.gen::<f32>() * 8.0;
+        let mut score = 0.0f32;
+        // 1. Exhaustion: the main driver, weighing load by how deep into
+        //    the match we are.
+        score += (spent - 0.40).max(0.0) * 160.0 * (minute as f32 / 90.0);
+        if planned_rotation {
+            score += 18.0;
+        }
+        // 2. Injury risk: accumulated minutes × fragility (strength is
+        //    robustness). The manager gambles only on men he needs.
+        let fragility = 1.0 - rt.p[i].attrs.strength as f32 / 160.0;
+        let risk = spent * (minute as f32 / 90.0) * fragility;
+        score += risk * 70.0;
+        let crucial = quality > avg_quality + 9.0 && !comfortable && minute < 82;
+        if crucial {
+            // He decides the match — the manager takes the risk and keeps
+            // him out there (unless he is truly running on empty).
+            score -= 48.0;
+        }
+        // 3. A bad day: inherent form off and nothing going for him.
+        //    Gated randomly — an early hook is a sometimes decision, not a
+        //    reflex, and only for genuinely bad days.
+        if rt.p[i].form < 0.92 && rt.st[i].goals == 0 && minute >= 55 && rng.gen::<f32>() < 0.22
+        {
+            score += 42.0;
+        }
+        // 4. One booking already: after the hour he is a red card waiting
+        //    to happen (or to be baited).
+        if rt.st[i].yellows >= 1 && minute >= 60 && rng.gen::<f32>() < 0.5 {
+            score += 30.0;
+        }
+        // 5. Comfortable lead: stars and tired legs come off, the points
+        //    are safe and next week exists.
+        if comfortable && minute >= 72 && spent > 0.42 {
+            score += 26.0;
+        }
+        // Chasing: a tiring defender or holding midfielder is the man to
+        // sacrifice for fresh attacking legs.
+        if chasing && spent > 0.38 {
+            let out_line = line_of(rt.p[i].pos);
+            if out_line <= 2 {
+                score += 20.0;
+            }
+        }
+        // Protecting a narrow lead: attackers doing defensive work they are
+        // bad at come off for honest legs.
+        if protecting && line_of(rt.p[i].pos) == 3 && rt.p[i].attrs.tackling < 40 {
+            score += 16.0;
+        }
+        // Every manager is his own man: noise so decisions are not identical.
+        score += rng.gen::<f32>() * 12.0;
         if score > worst {
             worst = score;
             pick_out = Some(i);
         }
     }
-    let Some(out_i) = pick_out else { return };
-
-    // Incoming: freshest unused bench player in the same line (or any attacker
-    // when chasing; or anyone when covering a red card).
-    let out_line = match rt.p[out_i].pos {
-        Position::GK => 0,
-        Position::DEF => 1,
-        Position::MID => 2,
-        Position::FWD => 3,
+    let Some(out_i) = pick_out else {
+        return;
     };
+
+    // Incoming: best unused bench body for the situation — like-for-like by
+    // default, a finisher when chasing, honest legs when protecting, anyone
+    // when covering a shortage.
+    let out_line = line_of(rt.p[out_i].pos);
     let mut best_in: Option<usize> = None;
     let mut best_fresh = -1.0f32;
     for (b, mp) in rt.bench.iter().enumerate() {
         if rt.bench_used[b] {
             continue;
         }
-        let line = match mp.pos {
-            Position::GK => 0,
-            Position::DEF => 1,
-            Position::MID => 2,
-            Position::FWD => 3,
-        };
-        let fits =
-            line == out_line || (chasing && mp.pos == Position::FWD) || rt.subs_pending_cover;
+        let line = line_of(mp.pos);
+        if line == 0 {
+            continue; // no goalkeeper swaps outside cover injuries
+        }
+        let fits = line == out_line
+            || (chasing && line >= 2)
+            || (protecting && line <= 2)
+            || covering;
         if !fits {
             continue;
         }
-        let fresh = 100.0 - mp.start_fatigue * 100.0;
+        // Freshest first; a like-for-line replacement gets a small edge so
+        // the shape is not quietly dismantled.
+        let fresh = 100.0 - mp.start_fatigue * 100.0 + if line == out_line { 8.0 } else { 0.0 };
         if fresh > best_fresh {
             best_fresh = fresh;
             best_in = Some(b);
@@ -965,13 +1075,16 @@ fn maybe_substitute(rt: &mut Rt, minute: u8, ment: i8, rng: &mut impl Rng) {
 
     // Execute the swap: the bench body takes the slot; his freshness resets
     // most of the slot's fatigue; the departed man's sheet is banked so his
-    // minutes/goals survive in the merged final stats.
+    // minutes/goals survive in the merged final stats — and the minutes he
+    // banked this match count as game time, so rotation keeps the squad's
+    // minds quiet (bench players get real football, not a season of nothing).
     let incoming = rt.bench[b].clone();
     let incoming_fat = incoming.start_fatigue;
     let incoming_id = incoming.id;
     rt.bench_used[b] = true;
     let mut dep = std::mem::take(&mut rt.st[out_i]);
-    dep.minutes = minute.saturating_sub(rt.entry[out_i]);
+    dep.minutes = (minute as u32 + 1).saturating_sub(rt.entry[out_i] as u32).max(1) as u8;
+    rt.departed_pos.push(rt.p[out_i].pos);
     rt.departed.push(dep);
     rt.p[out_i] = incoming;
     // Fresh stats line for the incoming player — attributed to HIS id so a
@@ -979,11 +1092,16 @@ fn maybe_substitute(rt: &mut Rt, minute: u8, ment: i8, rng: &mut impl Rng) {
     rt.st[out_i] = MatchStats {
         id: incoming_id,
         side_a: rt.side_a,
+        started: false,
         minutes: 90,
         rating: 6.0,
         ..Default::default()
     };
     rt.fat[out_i] = incoming_fat * 0.35;
+    // The incoming man gets his own decay rate (a fresh body is not the
+    // departed man's fade profile).
+    let h = (incoming_id as u32).wrapping_mul(2654435761) >> 16;
+    rt.fat_rate[out_i] = 0.85 + (h % 40) as f32 / 100.0;
     rt.entry[out_i] = minute;
     rt.subs_made += 1;
     rt.subs_pending_cover = false;
@@ -1126,7 +1244,6 @@ fn drive(
     // often; below that he carries like a real footballer — occasionally
     // when the skill justifies it.
     let drib_skill = atk.eff(pa, &atk.dribble);
-    let vs_passing = drib_skill - atk.eff(pa, &atk.passing);
     // Raw skill bands (the attribute itself, not the fatigue-scaled
     // effective value, so a 90-dribbling veteran still dribbles like one):
     // the appetite is positional-blind, only the attribute decides.
@@ -1736,38 +1853,65 @@ fn resolve_turnover(
 /// creation, defenders for duels and clean sheets — so a poacher who scores and
 /// a playmaker who creates and a centre-back who keeps a clean sheet can all
 /// rate highly in the same match, as in reality.
+/// Final match rating from the stat line, scored by position: keepers and
+/// defenders live and die by clean sheets and saves, everyone else by their
+/// end product. Applied to the men still on the pitch AND to the banked
+/// lines of everyone subbed off — a two-goal striker hooked on 81' keeps the
+/// rating his football earned, he does not freeze at the 6.0 he started with.
 fn finalize_ratings(rt: &mut Rt, conceded: u8) {
     let clean = conceded == 0;
+    // Minutes for the men still on the pitch: anyone who entered as a sub
+    // (entry > 1) played 91 minus his entry minute, not a flat 90.
+    // Injured starters already carry the minute they went off.
     for i in 0..rt.p.len() {
-        let s = &mut rt.st[i];
-        let is_def = matches!(rt.p[i].pos, Position::DEF | Position::GK);
-        let is_gk = rt.p[i].pos == Position::GK;
-        let mut r = 6.0f32;
-        r += s.passes_cmp as f32 * 0.006;
-        r += s.dribbles_cmp as f32 * 0.08;
-        r += s.key_passes as f32 * 0.16;
-        r += s.shots_on_target as f32 * 0.10;
-        r += s.goals as f32 * 1.10;
-        r += s.assists as f32 * 0.80;
-        r += s.big_chances_created as f32 * 0.12;
-        r += s.saves as f32 * 0.14; // shot-stopping is a keeper's end product
-        let tackle_w = if is_def { 0.16 } else { 0.09 };
-        r += s.tackles as f32 * tackle_w;
-        r += s.interceptions as f32 * (tackle_w * 0.8);
-        r -= (s.passes_att.saturating_sub(s.passes_cmp)) as f32 * 0.010;
-        r -= (s.dribbles_att.saturating_sub(s.dribbles_cmp)) as f32 * 0.05;
-        r -= s.fouls as f32 * 0.08;
-        r -= s.big_chances_missed as f32 * 0.10;
-        if is_def {
-            s.clean_sheet = clean;
-            if clean {
-                r += if is_gk { 0.7 } else { 0.4 };
-            } else {
-                r -= conceded as f32 * (if is_gk { 0.12 } else { 0.05 });
-            }
+        if rt.entry[i] > 1 {
+            rt.st[i].minutes = (91u32).saturating_sub(rt.entry[i] as u32).max(1) as u8;
         }
-        s.rating = r.clamp(4.0, 10.0);
     }
+    for i in 0..rt.p.len() {
+        let pos = rt.p[i].pos;
+        let (r, cs) = rating_for(&rt.st[i], pos, clean, conceded);
+        rt.st[i].rating = r;
+        rt.st[i].clean_sheet = cs;
+    }
+    for k in 0..rt.departed.len() {
+        let pos = rt.departed_pos[k];
+        let (r, cs) = rating_for(&rt.departed[k], pos, clean, conceded);
+        rt.departed[k].rating = r;
+        rt.departed[k].clean_sheet = cs;
+    }
+}
+
+/// One player's rating and clean-sheet flag from his line and position.
+fn rating_for(s: &MatchStats, pos: Position, clean: bool, conceded: u8) -> (f32, bool) {
+    let is_def = matches!(pos, Position::DEF | Position::GK);
+    let is_gk = pos == Position::GK;
+    let mut r = 6.0f32;
+    r += s.passes_cmp as f32 * 0.006;
+    r += s.dribbles_cmp as f32 * 0.08;
+    r += s.key_passes as f32 * 0.16;
+    r += s.shots_on_target as f32 * 0.10;
+    r += s.goals as f32 * 1.10;
+    r += s.assists as f32 * 0.80;
+    r += s.big_chances_created as f32 * 0.12;
+    r += s.saves as f32 * 0.14; // shot-stopping is a keeper's end product
+    let tackle_w = if is_def { 0.16 } else { 0.09 };
+    r += s.tackles as f32 * tackle_w;
+    r += s.interceptions as f32 * (tackle_w * 0.8);
+    r -= (s.passes_att.saturating_sub(s.passes_cmp)) as f32 * 0.010;
+    r -= (s.dribbles_att.saturating_sub(s.dribbles_cmp)) as f32 * 0.05;
+    r -= s.fouls as f32 * 0.08;
+    r -= s.big_chances_missed as f32 * 0.10;
+    let mut clean_sheet = false;
+    if is_def {
+        clean_sheet = clean;
+        if clean {
+            r += if is_gk { 0.7 } else { 0.4 };
+        } else {
+            r -= conceded as f32 * (if is_gk { 0.12 } else { 0.05 });
+        }
+    }
+    (r.clamp(4.0, 10.0), clean_sheet)
 }
 
 #[cfg(test)]

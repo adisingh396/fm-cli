@@ -1290,7 +1290,7 @@ fn matchday_squad(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     for &b in &bench {
-        if squad.len() >= 15 {
+        if squad.len() >= 16 {
             break;
         }
         if !squad_has(&squad, b) {
@@ -1462,6 +1462,12 @@ fn play_detailed(
     }
     let hxi = build_lineup(&hmd, pool);
     let axi = build_lineup(&amd, pool);
+    // The matchday squad's spare bodies (12th-16th man) are the bench: five
+    // substitution windows live inside the engine, so rotation actually
+    // happens and squad players bank real minutes instead of a season of
+    // nothing.
+    let hbench = build_lineup(&hmd[11.min(hmd.len())..], pool);
+    let abench = build_lineup(&amd[11.min(amd.len())..], pool);
     let mut hxi = hxi;
     let mut axi = axi;
     // A man facing his old club tends to find one extra gear; this does not
@@ -1485,7 +1491,7 @@ fn play_detailed(
         shape: Some(team_shape(&teams[home])),
         width: 50,
         defensive_line: def_line(&teams[home]),
-        bench: &[],
+        bench: &hbench,
         crowd: 1.0,
     };
     let mut side_a = Side {
@@ -1496,7 +1502,7 @@ fn play_detailed(
         shape: Some(team_shape(&teams[away])),
         width: 50,
         defensive_line: def_line(&teams[away]),
-        bench: &[],
+        bench: &abench,
         crowd: 1.0,
     };
     // Both dugouts scout the matchup off the two XIs (never reputation):
@@ -8862,6 +8868,8 @@ fn run_cup(
         } else {
             let axi = build_lineup(&hmd, pool);
             let bxi = build_lineup(&amd, pool);
+            let abench = build_lineup(&hmd[11.min(hmd.len())..], pool);
+            let bbench = build_lineup(&amd[11.min(amd.len())..], pool);
             let mut side_a = Side {
                 players: &axi,
                 ambition: teams[a].manager.ambition,
@@ -8870,7 +8878,7 @@ fn run_cup(
                 shape: Some(team_shape(&teams[a])),
                 width: 50,
                 defensive_line: def_line(&teams[a]),
-                bench: &[],
+                bench: &abench,
                 crowd: 1.0,
             };
             let mut side_b = Side {
@@ -8881,7 +8889,7 @@ fn run_cup(
                 shape: Some(team_shape(&teams[b])),
                 width: 50,
                 defensive_line: def_line(&teams[b]),
-                bench: &[],
+                bench: &bbench,
                 crowd: 1.0,
             };
             let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
@@ -12402,6 +12410,11 @@ pub mod web_api {
         total_matches: usize,
         /// Last summer's international headline: (year, tournament, winner).
         last_intl: Option<(u16, String, String)>,
+        /// Completed-season archives (one JSON blob per rolled-over season):
+        /// champions, tables, top scorers, UCL and international outcomes.
+        /// Built at rollover before the season stats reset, so history
+        /// survives the wipe.
+        archives: Vec<Value>,
         schedules: Vec<LeagueSchedule>,
         /// European cup state for the interactive season. `None` when the
         /// world has no European clubs.
@@ -12696,6 +12709,7 @@ pub mod web_api {
                 seasons_done: 0,
                 total_matches: 0,
                 last_intl: None,
+                archives: Vec::new(),
                 schedules,
                 ucl,
                 matches: Vec::new(),
@@ -12918,21 +12932,23 @@ pub mod web_api {
             };
             let sink: IntlSink = Some(&mut rec);
             let winner = summer_major_tournament(world, year, rng, sink);
+            let kind_label = match kind {
+                IntlKind::WorldCup => "World Cup".to_string(),
+                IntlKind::Euros => "UEFA Euros".to_string(),
+                IntlKind::AsianCup => "AFC Asian Cup".to_string(),
+                IntlKind::CopaAmerica => "Copa América".to_string(),
+                IntlKind::Afcon => "Africa Cup of Nations".to_string(),
+                IntlKind::GoldCup => "Gold Cup".to_string(),
+                IntlKind::None => "Internationals".to_string(),
+            };
             if winner != "-" {
-                self.last_intl = Some((
-                    year,
-                    match kind {
-                        IntlKind::WorldCup => "World Cup".to_string(),
-                        IntlKind::Euros => "Euros".to_string(),
-                        IntlKind::AsianCup => "AFC Asian Cup".to_string(),
-                        IntlKind::CopaAmerica => "Copa América".to_string(),
-                        IntlKind::Afcon => "Africa Cup of Nations".to_string(),
-                        IntlKind::GoldCup => "Gold Cup".to_string(),
-                        IntlKind::None => "Internationals".to_string(),
-                    },
-                    winner,
-                ));
+                self.last_intl = Some((year, kind_label, winner));
             }
+            // Bank the finished season before the reset wipes the tables:
+            // champions, full league tables, top scorers, the UCL final and
+            // the international tournament all survive as an archive.
+            let archive = self.build_season_archive(year);
+            self.archives.push(archive);
             let (world, rng) = (&mut self.world, &mut self.rng);
             age_and_regen(world, rng);
             let _ = transfer_window(world, rng);
@@ -12950,6 +12966,128 @@ pub mod web_api {
                 .collect::<Vec<_>>();
             self.ucl = build_ucl(&self.world, &mut self.rng);
             0
+        }
+
+        /// Snapshot a completed season: every league's champion, final table
+        /// and top scorer, the Champions League final and its top scorer,
+        /// and the summer international tournament with its leading men.
+        /// Called at rollover BEFORE the season stats reset.
+        fn build_season_archive(&self, year: u16) -> Value {
+            let w = &self.world;
+            let mut leagues = Vec::new();
+            for li in 0..w.league_teams.len() {
+                if li == 5 || w.league_teams[li].is_empty() {
+                    continue;
+                }
+                let name = self.league_name(li);
+                let order = rank(&w.league_teams[li], &w.teams);
+                let table: Vec<Value> = order
+                    .iter()
+                    .enumerate()
+                    .map(|(pos, &t)| {
+                        let tm = &w.teams[t];
+                        json!({
+                            "position": pos + 1,
+                            "id": t,
+                            "name": tm.name,
+                            "played": tm.p, "won": tm.w, "drawn": tm.d, "lost": tm.l,
+                            "gf": tm.gf, "ga": tm.ga,
+                            "gd": tm.gf as i32 - tm.ga as i32,
+                            "pts": tm.w * 3 + tm.d,
+                        })
+                    })
+                    .collect();
+                // League top scorer (domestic goals only).
+                let mut scorers: Vec<usize> = (0..w.pool.len())
+                    .filter(|&i| {
+                        w.pool[i].team < w.teams.len()
+                            && w.teams[w.pool[i].team].league_idx == li
+                            && w.pool[i].goals > 0
+                    })
+                    .collect();
+                scorers.sort_by(|&a, &b| {
+                    w.pool[b]
+                        .goals
+                        .cmp(&w.pool[a].goals)
+                        .then(w.pool[b].assists.cmp(&w.pool[a].assists))
+                });
+                let top_scorer = scorers.first().map(|&i| {
+                    json!({
+                        "name": w.pool[i].name,
+                        "id": i,
+                        "club": w.teams[w.pool[i].team].name,
+                        "goals": w.pool[i].goals,
+                        "assists": w.pool[i].assists,
+                    })
+                });
+                leagues.push(json!({
+                    "league_idx": li,
+                    "name": name,
+                    "champion": order.first().map(|&t| json!({"id": t, "name": w.teams[t].name})),
+                    "top_scorer": top_scorer,
+                    "table": table,
+                }));
+            }
+            // Champions League final + top scorer.
+            let ucl = self.ucl.as_ref().and_then(|c| {
+                let tr = c.knockout.last()?.results.iter().flatten().next()?;
+                let (h, a) = c.knockout.last()?.ties.first().copied()?;
+                Some(json!({
+                    "winner": {"id": tr.winner, "name": w.teams[tr.winner].name},
+                    "runner_up": {"id": if tr.winner == h { a } else { h },
+                                  "name": w.teams[if tr.winner == h { a } else { h }].name},
+                    "score": [tr.leg1.0, tr.leg1.1],
+                }))
+            });
+            let mut ucl_scorers: Vec<usize> = (0..w.pool.len())
+                .filter(|&i| w.pool[i].ucl_goals > 0)
+                .collect();
+            ucl_scorers.sort_by(|&a, &b| {
+                w.pool[b]
+                    .ucl_goals
+                    .cmp(&w.pool[a].ucl_goals)
+                    .then(w.pool[b].ucl_assists.cmp(&w.pool[a].ucl_assists))
+            });
+            let ucl_top_scorer = ucl_scorers.first().map(|&i| {
+                json!({
+                    "name": w.pool[i].name, "id": i,
+                    "club": w.teams.get(w.pool[i].team).map(|t| t.name.clone()).unwrap_or_default(),
+                    "goals": w.pool[i].ucl_goals, "assists": w.pool[i].ucl_assists,
+                })
+            });
+            // International tournament (summer major + the friendly windows):
+            // headline + leading scorers from the live international counters.
+            let intl = self.last_intl.as_ref().map(|(y, kind, winner)| {
+                let mut intl_scorers: Vec<usize> = (0..w.pool.len())
+                    .filter(|&i| w.pool[i].intl_goals > 0)
+                    .collect();
+                intl_scorers.sort_by(|&a, &b| {
+                    w.pool[b]
+                        .intl_goals
+                        .cmp(&w.pool[a].intl_goals)
+                        .then(w.pool[b].intl_assists.cmp(&w.pool[a].intl_assists))
+                });
+                json!({
+                    "year": y,
+                    "kind": kind,
+                    "winner": winner,
+                    "top_scorers": intl_scorers.iter().take(10).map(|&i| json!({
+                        "name": w.pool[i].name, "id": i,
+                        "club": w.teams.get(w.pool[i].team).map(|t| t.name.clone()).unwrap_or_default(),
+                        "nation": w.pool[i].nation,
+                        "apps": w.pool[i].intl_apps,
+                        "goals": w.pool[i].intl_goals,
+                        "assists": w.pool[i].intl_assists,
+                    })).collect::<Vec<_>>(),
+                })
+            });
+            json!({
+                "year": year,
+                "season": format!("{}-{}", year, (year + 1) % 100),
+                "leagues": leagues,
+                "ucl": {"final": ucl, "top_scorer": ucl_top_scorer},
+                "international": intl,
+            })
         }
 
         /// Play any Champions League fixtures scheduled for the current week.
@@ -13783,6 +13921,136 @@ pub mod web_api {
         }
     }
 
+    /// International football view: the season's fixtures grouped by stage
+    /// (friendly windows and the summer tournament), the tournament winner
+    /// and leading scorers, plus the history of past tournaments. Uses the
+    /// archive once the season has rolled over (live counters are reset),
+    /// live pool stats for the current season.
+    fn internationals_json(state: &WebState, season: Option<u16>) -> Value {
+        let year = season.unwrap_or(state.year);
+        let w = &state.world;
+        let matches: Vec<&WebMatchRecord> = state
+            .matches
+            .iter()
+            .filter(|m| m.comp == Comp::Intl && m.season == year)
+            .collect();
+        // Tournament facts: from the archive when the season is complete,
+        // live (winner unknown until played) otherwise.
+        let archived = state.archives.iter().find(|a| {
+            a.get("year").and_then(|v| v.as_u64()).map(|y| y as u16) == Some(year)
+        });
+        // Tournament-only scorers, folded straight from the recorded match
+        // sheets (friendlies excluded): a World Cup run is 8 games at most —
+        // 3 group + R32/R16/QF/SF/F — never the friendly windows on top.
+        let mut agg: std::collections::HashMap<usize, (u16, u16, u16)> =
+            std::collections::HashMap::new();
+        for m in state
+            .matches
+            .iter()
+            .filter(|m| m.comp == Comp::Intl && m.season == year)
+            .filter(|m| !m.stage.starts_with("Friendly"))
+        {
+            for s in &m.outcome.stats {
+                if s.id >= w.pool.len() {
+                    continue;
+                }
+                let e = agg.entry(s.id).or_insert((0, 0, 0));
+                e.0 += 1; // apps: one match sheet = one appearance
+                e.1 += s.goals as u16;
+                e.2 += s.assists as u16;
+            }
+        }
+        let mut order: Vec<usize> = agg.keys().copied().collect();
+        order.sort_by(|&a, &b| {
+            agg[&b]
+                .1
+                .cmp(&agg[&a].1)
+                .then(agg[&b].2.cmp(&agg[&a].2))
+                .then(agg[&a].0.cmp(&agg[&b].0))
+        });
+        let top_scorers: Value = order
+            .iter()
+            .take(10)
+            .map(|&i| {
+                let (apps, goals, assists) = agg[&i];
+                json!({
+                    "name": w.pool[i].name, "id": i,
+                    "club": w.teams.get(w.pool[i].team).map(|t| t.name.clone()).unwrap_or_default(),
+                    "nation": w.pool[i].nation,
+                    "apps": apps,
+                    "goals": goals,
+                    "assists": assists,
+                })
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let (kind, winner) = if let Some(a) = archived {
+            let intl = a.get("international").cloned().unwrap_or(Value::Null);
+            (
+                intl.get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                intl.get("winner")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        } else {
+            let kind = match intl_kind_for(year) {
+                IntlKind::WorldCup => "World Cup",
+                IntlKind::Euros => "UEFA Euros",
+                IntlKind::AsianCup => "AFC Asian Cup",
+                IntlKind::CopaAmerica => "Copa América",
+                IntlKind::Afcon => "Africa Cup of Nations",
+                IntlKind::GoldCup => "Gold Cup",
+                IntlKind::None => "Friendlies",
+            };
+            let winner = state
+                .last_intl
+                .as_ref()
+                .filter(|(y, _, _)| *y == year)
+                .map(|(_, _, wn)| wn.clone())
+                .unwrap_or_default();
+            (kind.to_string(), winner)
+        };
+        // Group the season's internationals by stage, in played order.
+        let mut stages: Vec<(String, Vec<Value>)> = Vec::new();
+        for m in &matches {
+            let row = match_summary(state, m);
+            match stages.iter_mut().find(|(s, _)| s == &m.stage) {
+                Some((_, rows)) => rows.push(row),
+                None => stages.push((m.stage.clone(), vec![row])),
+            }
+        }
+        let history: Vec<Value> = state
+            .archives
+            .iter()
+            .filter_map(|a| {
+                let intl = a.get("international")?;
+                Some(json!({
+                    "year": a.get("year"),
+                    "kind": intl.get("kind"),
+                    "winner": intl.get("winner"),
+                }))
+            })
+            .collect();
+        json!({
+            "competition": "Internationals",
+            "year": year,
+            "season": format!("{}-{}", year, (year + 1) % 100),
+            "kind": kind,
+            "winner": if winner.is_empty() { Value::Null } else { json!(winner) },
+            "top_scorers": top_scorers,
+            "stages": stages.into_iter().map(|(name, rows)| json!({
+                "name": name,
+                "matches": rows,
+            })).collect::<Vec<_>>(),
+            "history": history,
+            "archived": archived.is_some(),
+        })
+    }
+
     fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
         let w = &state.world;
         let intl = m.comp == Comp::Intl;
@@ -14438,7 +14706,7 @@ pub mod web_api {
             m.outcome
                 .stats
                 .iter()
-                .filter(|s| s.side_a == side_a)
+                .filter(|s| s.side_a == side_a && s.started)
                 .map(|s| {
                     let p = &w.pool[s.id];
                     json!({
@@ -14471,6 +14739,30 @@ pub mod web_api {
                 })
                 .collect::<Vec<_>>()
         };
+        // Substitutes: everyone who appeared without starting. `entry` is not
+        // carried on the line, so the minute shown is the minutes he played;
+        // the badge in the UI marks him as a sub.
+        let subs = |side_a: bool| {
+            m.outcome
+                .stats
+                .iter()
+                .filter(|s| s.side_a == side_a && !s.started)
+                .map(|s| {
+                    let p = &w.pool[s.id];
+                    json!({
+                        "id": s.id,
+                        "name": p.name,
+                        "nation": p.nation,
+                        "position": p.pos.short(),
+                        "ovr": p.ovr,
+                        "rating": s.rating,
+                        "minutes": s.minutes,
+                        "goals": s.goals,
+                        "assists": s.assists,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
         let events = m
             .outcome
             .events
@@ -14489,6 +14781,8 @@ pub mod web_api {
             "match": match_summary(state, m),
             "home_lineup": lines(true),
             "away_lineup": lines(false),
+            "home_subs": subs(true),
+            "away_subs": subs(false),
             "events": events,
         }))
     }
@@ -14634,6 +14928,9 @@ pub mod web_api {
             let s = state.lock().unwrap();
             if idx == UCL_LEAGUE_ID {
                 ucl_detail_json(&s)
+            } else if idx == INTL_LEAGUE_ID {
+                let season = query_value(&query, "season").and_then(|v| v.parse::<u16>().ok());
+                internationals_json(&s, season)
             } else if idx >= s.world.league_teams.len() || idx == 5 {
                 json!({"error": "league not available"})
             } else {
@@ -14649,11 +14946,18 @@ pub mod web_api {
         } else if path == "/api/matches" {
             let s = state.lock().unwrap();
             let week_filter = query_value(&query, "week");
+            let season_filter =
+                query_value(&query, "season").and_then(|v| v.parse::<u16>().ok());
             let league_filter = query_value(&query, "league").and_then(|v| v.parse::<usize>().ok());
             let matches = s
                 .matches
                 .iter()
                 .rev()
+                .filter(|m| {
+                    season_filter
+                        .map(|sy| m.season == sy)
+                        .unwrap_or(true)
+                })
                 .filter(|m| match &week_filter {
                     Some(v) if v != "all" => week_filter
                         .as_ref()
@@ -14763,6 +15067,55 @@ pub mod web_api {
             let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
             let mut s = state.lock().unwrap();
             manager_action_json(&mut s, &payload)
+        } else if path == "/api/seasons" {
+            let s = state.lock().unwrap();
+            let mut seasons: Vec<Value> = s
+                .archives
+                .iter()
+                .map(|a| {
+                    json!({
+                        "year": a.get("year"),
+                        "season": a.get("season"),
+                        "champions": a.get("leagues").map(|ls| {
+                            Value::Array(ls.as_array().map(|arr| {
+                                arr.iter()
+                                    .map(|l| {
+                                        json!({
+                                            "league": l.get("name"),
+                                            "champion": l.get("champion"),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
+                            }).unwrap_or_default())
+                        }).unwrap_or(json!([])),
+                        "ucl_winner": a.pointer("/ucl/final/winner/name"),
+                        "international": a.get("international").map(|i| json!({
+                            "kind": i.get("kind"), "winner": i.get("winner"),
+                        })).unwrap_or(Value::Null),
+                    })
+                })
+                .collect();
+            seasons.push(json!({
+                "year": s.year,
+                "season": format!("{}-{}", s.year, (s.year + 1) % 100),
+                "champions": [],
+                "ucl_winner": Value::Null,
+                "international": Value::Null,
+                "current": true,
+            }));
+            json!({"seasons": seasons, "current_year": s.year})
+        } else if let Some(year_s) = path.strip_prefix("/api/seasons/") {
+            let year = year_s.parse::<u16>().ok();
+            let s = state.lock().unwrap();
+            match year.filter(|y| *y < s.year) {
+                Some(y) => s
+                    .archives
+                    .iter()
+                    .find(|a| a.get("year").and_then(|v| v.as_u64()) == Some(y as u64))
+                    .cloned()
+                    .unwrap_or_else(|| json!({"error": "season not found"})),
+                _ => json!({"error": "season not found"}),
+            }
         } else if path == "/api/careers" {
             match std::fs::read_to_string("sim_dump/careers.json") {
                 Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(json!({"raw": text})),
