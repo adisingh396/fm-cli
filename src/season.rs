@@ -4294,6 +4294,353 @@ fn intl_kind_for(year: u16) -> IntlKind {
     }
 }
 
+/// Optional recorder for international fixtures, so interactive consumers
+/// (the web season) can surface every international match in the same match
+/// list as club football. Callback args: (outcome, home nation, away nation,
+/// competition label, stage label).
+type IntlSink<'a> = Option<&'a mut dyn FnMut(matchsim::MatchOutcome, &str, &str, &str, &str)>;
+
+/// The summer international block exactly as the batch sandbox plays it: the
+/// calendar-driven major tournament (World Cup / Euros / AFC Asian Cup / Copa
+/// America / AFCON / Gold Cup), then the four-window friendly calendar with
+/// guest nations. Pass a sink to record the fixtures (the web season does).
+fn run_summer_internationals(w: &mut World, year: u16, rng: &mut Pcg64Mcg, sink: IntlSink) -> String {
+    let winner = summer_major_tournament(w, year, rng, sink);
+    friendly_windows(w, rng, &[0, 1, 2, 3], None);
+    winner
+}
+
+/// The calendar-driven major tournament (World Cup / Euros / continental
+/// championship) with hosts, defending-champion drag and state persistence.
+fn summer_major_tournament(
+    w: &mut World,
+    year: u16,
+    rng: &mut Pcg64Mcg,
+    mut sink: IntlSink,
+) -> String {
+    // International tournament (calendar-driven). Squads get a summer break
+    // first — nobody plays a World Cup at 100 fatigue after league + Europe.
+    let intl_kind = intl_kind_for(year);
+    // Hosts for this cycle's World Cup: appointed by the latest bid vote and
+    // carried in the queue (2026 = USA/Canada/Mexico; after every World Cup,
+    // the next host set is decided and queued).
+    let wc_hosts: Vec<String> = if intl_kind == IntlKind::WorldCup {
+        w.host_queue
+            .first()
+            .cloned()
+            .unwrap_or_else(|| vec!["United States".into(), "Canada".into(), "Mexico".into()])
+    } else {
+        Vec::new()
+    };
+    // International tournament (calendar-driven) with hosts boost for WC.
+    let intl_winner = match intl_kind {
+        IntlKind::None => "-".to_string(),
+        kind => {
+            for p in w.pool.iter_mut() {
+                p.fatigue = p.fatigue.min(25);
+            }
+            let mut nations = build_nations(&w.pool, kind, &wc_hosts, false, &w.national_states);
+            if kind == IntlKind::WorldCup {
+                // ── Defending-champion reality check ────────────────────
+                // Repeats are real (Brazil '58/'62) but belong to nations
+                // with genuine elite DEPTH: a federation that can replace
+                // half its XI at the same level. A thin golden generation
+                // (one great cohort, no successors) arrives four years
+                // older, scouted by everyone, out of celebrations and
+                // short rest — and structurally does not go back-to-back.
+                // Depth is measured from the pool: how many compatriots
+                // play within 3 of the champion's XI level.
+                if let Some(champ) = w.wc_hist.last().cloned() {
+                    for n in nations.iter_mut() {
+                        if n.name != champ {
+                            continue;
+                        }
+                        let xi_level = n.strength as i32;
+                        let depth = w
+                            .pool
+                            .iter()
+                            .filter(|p| {
+                                !p.retired && p.nation == champ && p.ovr as i32 >= xi_level - 3
+                            })
+                            .count();
+                        // Genuine elite sides (a France/Brazil-class XI) keep
+                        // enough of their edge to repeat — history's repeat
+                        // winners were exactly that class. A golden cohort
+                        // without replacements (outlier champions) decays
+                        // hard: four years older, fully scouted, no heirs.
+                        let elite_xi = n.strength >= 85.0;
+                        let repeat_drag = if depth >= 16 {
+                            0.99 // true dynasty depth
+                        } else if depth >= 12 {
+                            if elite_xi {
+                                0.975
+                            } else {
+                                0.955
+                            }
+                        } else if elite_xi {
+                            0.965
+                        } else {
+                            0.925 // golden cohort, no replacements
+                        };
+                        n.edge *= repeat_drag;
+                        // Going for a THIRD straight title without elite
+                        // depth: even history's best never did that cold.
+                        let going_three =
+                            w.wc_hist.len() >= 2 && w.wc_hist[w.wc_hist.len() - 2] == champ;
+                        if going_three && depth < 16 {
+                            n.edge *= 0.97;
+                        }
+                    }
+                }
+            }
+            let label = match kind {
+                IntlKind::WorldCup => "World Cup",
+                IntlKind::Euros => "UEFA Euros",
+                IntlKind::AsianCup => "AFC Asian Cup",
+                IntlKind::CopaAmerica => "Copa América",
+                IntlKind::Afcon => "Africa Cup of Nations",
+                IntlKind::GoldCup => "Gold Cup",
+                IntlKind::None => "Internationals",
+            };
+            let winner = if kind == IntlKind::WorldCup {
+                run_world_cup_2026(year, &mut nations, &wc_hosts, &mut w.pool, &w.params, rng, sink)
+            } else {
+                run_international(&mut nations, &mut w.pool, &w.params, rng, label, sink)
+            };
+            // Persist the tournament build-up: chemistry and caps carry into
+            // the friendly windows and the next cycle.
+            for n in &nations {
+                w.national_states.insert(n.name.clone(), n.state.clone());
+            }
+            if kind == IntlKind::WorldCup {
+                if let Some(name) = &winner {
+                    if name != "-" {
+                        w.wc_hist.push(name.clone());
+                        if w.wc_hist.len() > 2 {
+                            w.wc_hist.remove(0);
+                        }
+                    }
+                }
+            }
+            winner.unwrap_or_else(|| "-".to_string())
+        }
+    };
+    // Award the next World Cup's hosting now (bid-appointed), keeping rotation
+    // realistic: the current hosts go on the cooldown list before the new bid.
+    if intl_kind == IntlKind::WorldCup {
+        if !w.host_queue.is_empty() {
+            let curr = w.host_queue.remove(0);
+            w.recent_hosts.extend(curr);
+        }
+        if w.recent_hosts.len() > 8 {
+            let drop = w.recent_hosts.len() - 8;
+            w.recent_hosts.drain(0..drop);
+        }
+        let next = decide_next_hosts(w, rng);
+        w.host_queue.push(next);
+    }
+    intl_winner
+}
+
+/// The four-window friendly calendar with guest nations. `rounds` selects
+/// which of the four windows run (the web season splits them across
+/// mid-season international breaks; the batch sandbox runs all four).
+fn friendly_windows(
+    w: &mut World,
+    rng: &mut Pcg64Mcg,
+    rounds: &[u32],
+    mut sink: IntlSink,
+) {
+    // Friendlies (every year, World Cup included): a broad four-window
+    // calendar so the whole world's footballers get real international
+    // minutes, caps and goals — the mechanism that actually develops
+    // outsider-league players and gives their Ballon scores genuine
+    // international volume. Unlike the old one-round top-32 block, this
+    // uses every federation with a bare XI (neighbors and low-level sides
+    // included) and gives each nation three to five matches: regional
+    // derbies, similar-strength games, and an occasional giant-vs-minnow
+    // mismatch. Caps and goals land, but no "result" is recorded
+    // (friendlies don't move the resume the way majors do).
+    {
+        let mut nations = build_nations(&w.pool, IntlKind::None, &[], true, &w.national_states);
+        if nations.len() >= 2 {
+            // Index order is strongest-first (build_nations sorts).
+            let n = nations.len();
+            // Round 0: similar strength. Round 1: same-confederation,
+            // nearest strength. Round 2: shuffled. Round 3: strongest vs
+            // weakest (the minnow-vs-giant showcase). Each nation plays at
+            // most once per round; the pool drains as matches are played.
+            for &round in rounds {
+                let mut avail: Vec<usize> = (0..n).collect();
+                if round == 2 {
+                    avail.shuffle(rng);
+                }
+                let mut pairs: Vec<(usize, usize)> = Vec::new();
+                if round == 3 {
+                    // Giant-vs-minnow showcase: strongest vs weakest.
+                    for i in 0..(n / 2) {
+                        pairs.push((i, n - 1 - i));
+                    }
+                } else if round == 1 {
+                    // Regional window: greedy same-confederation pairing,
+                    // nearest strength first; leftovers pair cross-confederation.
+                    let mut used = vec![false; n];
+                    for &a in &avail {
+                        if used[a] {
+                            continue;
+                        }
+                        let ca = crate::world_model::confed_of(&nations[a].name);
+                        let mut best: Option<usize> = None;
+                        let mut best_gap = f32::INFINITY;
+                        for &b in &avail {
+                            if b == a || used[b] {
+                                continue;
+                            }
+                            if crate::world_model::confed_of(&nations[b].name) != ca {
+                                continue;
+                            }
+                            let gap = (nations[a].strength - nations[b].strength).abs();
+                            if gap < best_gap {
+                                best_gap = gap;
+                                best = Some(b);
+                            }
+                        }
+                        if let Some(b) = best {
+                            used[a] = true;
+                            used[b] = true;
+                            pairs.push((a, b));
+                        }
+                    }
+                    for &a in &avail {
+                        if used[a] {
+                            continue;
+                        }
+                        let mut best: Option<usize> = None;
+                        let mut best_gap = f32::INFINITY;
+                        for &b in &avail {
+                            if b == a || used[b] {
+                                continue;
+                            }
+                            let gap = (nations[a].strength - nations[b].strength).abs();
+                            if gap < best_gap {
+                                best_gap = gap;
+                                best = Some(b);
+                            }
+                        }
+                        if let Some(b) = best {
+                            used[a] = true;
+                            used[b] = true;
+                            pairs.push((a, b));
+                        }
+                    }
+                } else {
+                    // Similar-strength window (also used for shuffled round 2,
+                    // where `avail` is already shuffled so this is a random
+                    // draw against the grain of the strength sort).
+                    let mut used = vec![false; n];
+                    for &a in &avail {
+                        if used[a] {
+                            continue;
+                        }
+                        let mut best: Option<usize> = None;
+                        let mut best_gap = f32::INFINITY;
+                        for &b in &avail {
+                            if b == a || used[b] {
+                                continue;
+                            }
+                            let gap = (nations[a].strength - nations[b].strength).abs();
+                            if gap < best_gap {
+                                best_gap = gap;
+                                best = Some(b);
+                            }
+                        }
+                        if let Some(b) = best {
+                            used[a] = true;
+                            used[b] = true;
+                            pairs.push((a, b));
+                        }
+                    }
+                }
+                for (a, b) in pairs {
+                    let (_, _, _, outcome) =
+                        play_nation(a, b, &nations, &mut w.pool, &w.params, rng);
+                    if let Some(f) = sink.as_mut() {
+                        f(
+                            outcome,
+                            &nations[a].name,
+                            &nations[b].name,
+                            "Friendly",
+                            "International window",
+                        );
+                    }
+                    bump_chem(&mut nations, a, b);
+                }
+                // Drain fatigue between windows so a 4-match year doesn't
+                // leave everyone exhausted into the next season.
+                for p in w.pool.iter_mut() {
+                    if !p.retired {
+                        p.fatigue = p.fatigue.saturating_sub(20);
+                    }
+                }
+            }
+        }
+        // Guest window: federations too thin to field a real side still
+        // play — a real nation hosts anonymous regens who may or may not
+        // contain a decent player. Credit only ever lands on real players.
+        if nations.len() >= 4 {
+            use std::collections::HashMap;
+            let mut counts: HashMap<String, u32> = HashMap::new();
+            for p in w.pool.iter() {
+                if !p.retired && !p.intl_retired {
+                    *counts.entry(p.nation.clone()).or_default() += 1;
+                }
+            }
+            let mut guest_nations: Vec<String> = Vec::new();
+            for n in crate::world_model::nations() {
+                let name = n.name.to_string();
+                if !nations.iter().any(|x| x.name == name)
+                    && counts.get(&name).copied().unwrap_or(0) < 11
+                {
+                    guest_nations.push(name);
+                }
+            }
+            guest_nations.shuffle(rng);
+            for gname in guest_nations.into_iter().take(4) {
+                // Host: prefer a same-confederation nation, else anyone.
+                let gconf = crate::world_model::confed_of(&gname);
+                let host = nations
+                    .iter()
+                    .position(|x| crate::world_model::confed_of(&x.name) == gconf)
+                    .unwrap_or_else(|| rng.gen_range(0..nations.len()));
+                let cap = federation_capacity(&gname);
+                // Mostly weak journeymen; occasionally a one-off decent side.
+                let base = if rng.gen_bool(0.12) {
+                    66.0 + cap * 10.0
+                } else {
+                    48.0 + cap * 16.0
+                };
+                play_guest_friendly(host, &nations, base, &mut w.pool, &w.params, rng);
+                {
+                    let st = &mut nations[host].state;
+                    st.caps_together = st.caps_together.saturating_add(1);
+                    st.chemistry = (st.chemistry + 0.05).min(1.0);
+                    st.familiarity = (st.familiarity + 0.05).min(1.0);
+                }
+                for p in w.pool.iter_mut() {
+                    if !p.retired {
+                        p.fatigue = p.fatigue.saturating_sub(20);
+                    }
+                }
+            }
+        }
+        // Federation programme persist: chemistry and caps carry into next
+        // season, so settled squads keep their edge.
+        for n in &nations {
+            w.national_states.insert(n.name.clone(), n.state.clone());
+        }
+    }
+}
+
 fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOutcome {
     reset_season(w);
 
@@ -4805,13 +5152,10 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         "-".to_string()
     };
 
-    // International tournament (calendar-driven). Squads get a summer break
-    // first — nobody plays a World Cup at 100 fatigue after league + Europe.
-    let intl_kind = intl_kind_for(year);
-    // Hosts for this cycle's World Cup: appointed by the latest bid vote and
-    // carried in the queue (2026 = USA/Canada/Mexico; after every World Cup,
-    // the next host set is decided and queued).
-    let wc_hosts: Vec<String> = if intl_kind == IntlKind::WorldCup {
+    // Capture this cycle's World Cup hosts BEFORE the international block:
+    // the tournament awards the next World Cup on its way out, so reading
+    // the queue afterwards would report the future hosts instead.
+    let wc_hosts_out: Vec<String> = if intl_kind_for(year) == IntlKind::WorldCup {
         w.host_queue
             .first()
             .cloned()
@@ -4819,283 +5163,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     } else {
         Vec::new()
     };
-    // International tournament (calendar-driven) with hosts boost for WC.
-    let intl_winner = match intl_kind {
-        IntlKind::None => "-".to_string(),
-        kind => {
-            for p in w.pool.iter_mut() {
-                p.fatigue = p.fatigue.min(25);
-            }
-            let mut nations = build_nations(&w.pool, kind, &wc_hosts, false, &w.national_states);
-            if kind == IntlKind::WorldCup {
-                // ── Defending-champion reality check ────────────────────
-                // Repeats are real (Brazil '58/'62) but belong to nations
-                // with genuine elite DEPTH: a federation that can replace
-                // half its XI at the same level. A thin golden generation
-                // (one great cohort, no successors) arrives four years
-                // older, scouted by everyone, out of celebrations and
-                // short rest — and structurally does not go back-to-back.
-                // Depth is measured from the pool: how many compatriots
-                // play within 3 of the champion's XI level.
-                if let Some(champ) = w.wc_hist.last().cloned() {
-                    for n in nations.iter_mut() {
-                        if n.name != champ {
-                            continue;
-                        }
-                        let xi_level = n.strength as i32;
-                        let depth = w
-                            .pool
-                            .iter()
-                            .filter(|p| {
-                                !p.retired && p.nation == champ && p.ovr as i32 >= xi_level - 3
-                            })
-                            .count();
-                        // Genuine elite sides (a France/Brazil-class XI) keep
-                        // enough of their edge to repeat — history's repeat
-                        // winners were exactly that class. A golden cohort
-                        // without replacements (outlier champions) decays
-                        // hard: four years older, fully scouted, no heirs.
-                        let elite_xi = n.strength >= 85.0;
-                        let repeat_drag = if depth >= 16 {
-                            0.99 // true dynasty depth
-                        } else if depth >= 12 {
-                            if elite_xi {
-                                0.975
-                            } else {
-                                0.955
-                            }
-                        } else if elite_xi {
-                            0.965
-                        } else {
-                            0.925 // golden cohort, no replacements
-                        };
-                        n.edge *= repeat_drag;
-                        // Going for a THIRD straight title without elite
-                        // depth: even history's best never did that cold.
-                        let going_three =
-                            w.wc_hist.len() >= 2 && w.wc_hist[w.wc_hist.len() - 2] == champ;
-                        if going_three && depth < 16 {
-                            n.edge *= 0.97;
-                        }
-                    }
-                }
-            }
-            let winner = if kind == IntlKind::WorldCup {
-                run_world_cup_2026(year, &mut nations, &wc_hosts, &mut w.pool, &w.params, rng)
-            } else {
-                run_international(&mut nations, &mut w.pool, &w.params, rng)
-            };
-            // Persist the tournament build-up: chemistry and caps carry into
-            // the friendly windows and the next cycle.
-            for n in &nations {
-                w.national_states.insert(n.name.clone(), n.state.clone());
-            }
-            if kind == IntlKind::WorldCup {
-                if let Some(name) = &winner {
-                    if name != "-" {
-                        w.wc_hist.push(name.clone());
-                        if w.wc_hist.len() > 2 {
-                            w.wc_hist.remove(0);
-                        }
-                    }
-                }
-            }
-            winner.unwrap_or_else(|| "-".to_string())
-        }
-    };
-    // Award the next World Cup's hosting now (bid-appointed), keeping rotation
-    // realistic: the current hosts go on the cooldown list before the new bid.
-    if intl_kind == IntlKind::WorldCup {
-        if !w.host_queue.is_empty() {
-            let curr = w.host_queue.remove(0);
-            w.recent_hosts.extend(curr);
-        }
-        if w.recent_hosts.len() > 8 {
-            let drop = w.recent_hosts.len() - 8;
-            w.recent_hosts.drain(0..drop);
-        }
-        let next = decide_next_hosts(&mut w, rng);
-        w.host_queue.push(next);
-    }
-
-    // Friendlies (every year, World Cup included): a broad four-window
-    // calendar so the whole world's footballers get real international
-    // minutes, caps and goals — the mechanism that actually develops
-    // outsider-league players and gives their Ballon scores genuine
-    // international volume. Unlike the old one-round top-32 block, this
-    // uses every federation with a bare XI (neighbors and low-level sides
-    // included) and gives each nation three to five matches: regional
-    // derbies, similar-strength games, and an occasional giant-vs-minnow
-    // mismatch. Caps and goals land, but no "result" is recorded
-    // (friendlies don't move the resume the way majors do).
-    {
-        let mut nations = build_nations(&w.pool, IntlKind::None, &[], true, &w.national_states);
-        if nations.len() >= 2 {
-            // Index order is strongest-first (build_nations sorts).
-            let n = nations.len();
-            // Round 0: similar strength. Round 1: same-confederation,
-            // nearest strength. Round 2: shuffled. Round 3: strongest vs
-            // weakest (the minnow-vs-giant showcase). Each nation plays at
-            // most once per round; the pool drains as matches are played.
-            for round in 0..4u32 {
-                let mut avail: Vec<usize> = (0..n).collect();
-                if round == 2 {
-                    avail.shuffle(rng);
-                }
-                let mut pairs: Vec<(usize, usize)> = Vec::new();
-                if round == 3 {
-                    // Giant-vs-minnow showcase: strongest vs weakest.
-                    for i in 0..(n / 2) {
-                        pairs.push((i, n - 1 - i));
-                    }
-                } else if round == 1 {
-                    // Regional window: greedy same-confederation pairing,
-                    // nearest strength first; leftovers pair cross-confederation.
-                    let mut used = vec![false; n];
-                    for &a in &avail {
-                        if used[a] {
-                            continue;
-                        }
-                        let ca = crate::world_model::confed_of(&nations[a].name);
-                        let mut best: Option<usize> = None;
-                        let mut best_gap = f32::INFINITY;
-                        for &b in &avail {
-                            if b == a || used[b] {
-                                continue;
-                            }
-                            if crate::world_model::confed_of(&nations[b].name) != ca {
-                                continue;
-                            }
-                            let gap = (nations[a].strength - nations[b].strength).abs();
-                            if gap < best_gap {
-                                best_gap = gap;
-                                best = Some(b);
-                            }
-                        }
-                        if let Some(b) = best {
-                            used[a] = true;
-                            used[b] = true;
-                            pairs.push((a, b));
-                        }
-                    }
-                    for &a in &avail {
-                        if used[a] {
-                            continue;
-                        }
-                        let mut best: Option<usize> = None;
-                        let mut best_gap = f32::INFINITY;
-                        for &b in &avail {
-                            if b == a || used[b] {
-                                continue;
-                            }
-                            let gap = (nations[a].strength - nations[b].strength).abs();
-                            if gap < best_gap {
-                                best_gap = gap;
-                                best = Some(b);
-                            }
-                        }
-                        if let Some(b) = best {
-                            used[a] = true;
-                            used[b] = true;
-                            pairs.push((a, b));
-                        }
-                    }
-                } else {
-                    // Similar-strength window (also used for shuffled round 2,
-                    // where `avail` is already shuffled so this is a random
-                    // draw against the grain of the strength sort).
-                    let mut used = vec![false; n];
-                    for &a in &avail {
-                        if used[a] {
-                            continue;
-                        }
-                        let mut best: Option<usize> = None;
-                        let mut best_gap = f32::INFINITY;
-                        for &b in &avail {
-                            if b == a || used[b] {
-                                continue;
-                            }
-                            let gap = (nations[a].strength - nations[b].strength).abs();
-                            if gap < best_gap {
-                                best_gap = gap;
-                                best = Some(b);
-                            }
-                        }
-                        if let Some(b) = best {
-                            used[a] = true;
-                            used[b] = true;
-                            pairs.push((a, b));
-                        }
-                    }
-                }
-                for (a, b) in pairs {
-                    let _ = play_nation(a, b, &nations, &mut w.pool, &w.params, rng);
-                    bump_chem(&mut nations, a, b);
-                }
-                // Drain fatigue between windows so a 4-match year doesn't
-                // leave everyone exhausted into the next season.
-                for p in w.pool.iter_mut() {
-                    if !p.retired {
-                        p.fatigue = p.fatigue.saturating_sub(20);
-                    }
-                }
-            }
-        }
-        // Guest window: federations too thin to field a real side still
-        // play — a real nation hosts anonymous regens who may or may not
-        // contain a decent player. Credit only ever lands on real players.
-        if nations.len() >= 4 {
-            use std::collections::HashMap;
-            let mut counts: HashMap<String, u32> = HashMap::new();
-            for p in w.pool.iter() {
-                if !p.retired && !p.intl_retired {
-                    *counts.entry(p.nation.clone()).or_default() += 1;
-                }
-            }
-            let mut guest_nations: Vec<String> = Vec::new();
-            for n in crate::world_model::nations() {
-                let name = n.name.to_string();
-                if !nations.iter().any(|x| x.name == name)
-                    && counts.get(&name).copied().unwrap_or(0) < 11
-                {
-                    guest_nations.push(name);
-                }
-            }
-            guest_nations.shuffle(rng);
-            for gname in guest_nations.into_iter().take(4) {
-                // Host: prefer a same-confederation nation, else anyone.
-                let gconf = crate::world_model::confed_of(&gname);
-                let host = nations
-                    .iter()
-                    .position(|x| crate::world_model::confed_of(&x.name) == gconf)
-                    .unwrap_or_else(|| rng.gen_range(0..nations.len()));
-                let cap = federation_capacity(&gname);
-                // Mostly weak journeymen; occasionally a one-off decent side.
-                let base = if rng.gen_bool(0.12) {
-                    66.0 + cap * 10.0
-                } else {
-                    48.0 + cap * 16.0
-                };
-                play_guest_friendly(host, &nations, base, &mut w.pool, &w.params, rng);
-                {
-                    let st = &mut nations[host].state;
-                    st.caps_together = st.caps_together.saturating_add(1);
-                    st.chemistry = (st.chemistry + 0.05).min(1.0);
-                    st.familiarity = (st.familiarity + 0.05).min(1.0);
-                }
-                for p in w.pool.iter_mut() {
-                    if !p.retired {
-                        p.fatigue = p.fatigue.saturating_sub(20);
-                    }
-                }
-            }
-        }
-        // Federation programme persist: chemistry and caps carry into next
-        // season, so settled squads keep their edge.
-        for n in &nations {
-            w.national_states.insert(n.name.clone(), n.state.clone());
-        }
-    }
+    let intl_winner = run_summer_internationals(&mut w, year, rng, None);
 
     // European Golden Shoe / headline Golden Boot: Big Five league goals only.
     // Outlier scorers elsewhere remain visible in all-competitions charts and
@@ -5226,9 +5294,9 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         concacaf_winner,
         conmebol_winner,
         club_world_cup_winner,
-        intl_kind,
+        intl_kind: intl_kind_for(year),
         intl_winner,
-        wc_hosts,
+        wc_hosts: wc_hosts_out,
         ballon,
         overall_boot,
         ballon_why,
@@ -9577,6 +9645,7 @@ fn run_world_cup_2026(
     pool: &mut [WP],
     p: &Params,
     rng: &mut Pcg64Mcg,
+    mut sink: IntlSink,
 ) -> Option<String> {
     use crate::world_model::Confederation as C;
     let n = nations.len();
@@ -9719,7 +9788,10 @@ fn run_world_cup_2026(
             for b in (a + 1)..g.len() {
                 let ca = host_crowd(&nations[g[a]], hosts);
                 let cb = host_crowd(&nations[g[b]], hosts);
-                let (hg, ag, wstats) = play_nation_crowd(g[a], g[b], nations, pool, p, rng, ca, cb);
+                let (hg, ag, wstats, outcome) = play_nation_crowd(g[a], g[b], nations, pool, p, rng, ca, cb);
+                if let Some(f) = sink.as_mut() {
+                    f(outcome, &nations[g[a]].name, &nations[g[b]].name, "World Cup", "Group Stage");
+                }
                 absorb_wc_stats(&wstats, &mut wc_agg);
                 for s in &wstats {
                     if s.id < pool.len() && pool[s.id].name.contains("Messi") {
@@ -9854,7 +9926,20 @@ fn run_world_cup_2026(
             let (a, b) = (round[i], round[i + 1]);
             let ca = host_crowd(&nations[a], hosts);
             let cb = host_crowd(&nations[b], hosts);
-            let (ga, gb, wstats) = play_nation_crowd(a, b, nations, pool, p, rng, ca, cb);
+            let (ga, gb, wstats, outcome) = play_nation_crowd(a, b, nations, pool, p, rng, ca, cb);
+            {
+                let stage_full = match round_label {
+                    "R32" => "Round of 32",
+                    "R16" => "Round of 16",
+                    "QF" => "Quarter-final",
+                    "SF" => "Semi-final",
+                    "F" => "Final",
+                    _ => "Knockout",
+                };
+                if let Some(f) = sink.as_mut() {
+                    f(outcome, &nations[a].name, &nations[b].name, "World Cup", stage_full);
+                }
+            }
             absorb_wc_stats(&wstats, &mut wc_agg);
             for s in &wstats {
                 if s.id < pool.len() && pool[s.id].name.contains("Messi") {
@@ -9937,7 +10022,10 @@ fn run_world_cup_2026(
         let [third, fourth] = [sf_losers[0], sf_losers[1]];
         let ca = host_crowd(&nations[third], hosts);
         let cb = host_crowd(&nations[fourth], hosts);
-        let (g1, g2, wstats) = play_nation_crowd(third, fourth, nations, pool, p, rng, ca, cb);
+        let (g1, g2, wstats, outcome) = play_nation_crowd(third, fourth, nations, pool, p, rng, ca, cb);
+        if let Some(f) = sink.as_mut() {
+            f(outcome, &nations[third].name, &nations[fourth].name, "World Cup", "Third-place Play-off");
+        }
         absorb_wc_stats(&wstats, &mut wc_agg);
         for s in &wstats {
             if s.id < pool.len() && pool[s.id].name.contains("Messi") {
@@ -10090,7 +10178,7 @@ fn play_nation(
     pool: &mut [WP],
     p: &Params,
     rng: &mut Pcg64Mcg,
-) -> (u32, u32, Vec<matchsim::MatchStats>) {
+) -> (u32, u32, Vec<matchsim::MatchStats>, matchsim::MatchOutcome) {
     return play_nation_crowd(a, b, nations, pool, p, rng, 1.0, 1.0);
 }
 
@@ -10103,11 +10191,16 @@ fn play_nation_crowd(
     rng: &mut Pcg64Mcg,
     crowd_a: f32,
     crowd_b: f32,
-) -> (u32, u32, Vec<matchsim::MatchStats>) {
+) -> (u32, u32, Vec<matchsim::MatchStats>, matchsim::MatchOutcome) {
     let axi = nation_xi(&nations[a].players, pool);
     let bxi = nation_xi(&nations[b].players, pool);
     if axi.len() < 7 || bxi.len() < 7 {
-        return (0, 0, Vec::new());
+        return (
+            0,
+            0,
+            Vec::new(),
+            matchsim::MatchOutcome::default(),
+        );
     }
     // Real squads, not bare elevens: reserves take the bench so
     // substitutions and rotation actually happen.
@@ -10154,7 +10247,7 @@ fn play_nation_crowd(
     let o = matchsim::simulate(&side_a, &side_b, Venue::Neutral, (0, 0), rng);
     let stats = o.stats.clone();
     apply_match(&o, Comp::Intl, pool, p);
-    (o.goals_a as u32, o.goals_b as u32, stats)
+    (o.goals_a as u32, o.goals_b as u32, stats, o)
 }
 
 fn run_international(
@@ -10162,6 +10255,8 @@ fn run_international(
     pool: &mut [WP],
     p: &Params,
     rng: &mut Pcg64Mcg,
+    label: &str,
+    mut sink: IntlSink,
 ) -> Option<String> {
     let n = nations.len();
     if n < 4 {
@@ -10186,7 +10281,10 @@ fn run_international(
         let mut gd: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         for a in 0..g.len() {
             for b in (a + 1)..g.len() {
-                let (hg, ag, _) = play_nation(g[a], g[b], nations, pool, p, rng);
+                let (hg, ag, _, outcome) = play_nation(g[a], g[b], nations, pool, p, rng);
+                if let Some(f) = sink.as_mut() {
+                    f(outcome, &nations[g[a]].name, &nations[g[b]].name, label, "Group Stage");
+                }
                 bump_chem(nations, g[a], g[b]);
                 *gd.get_mut(&g[a]).unwrap() += hg as i32 - ag as i32;
                 *gd.get_mut(&g[b]).unwrap() += ag as i32 - hg as i32;
@@ -10266,7 +10364,18 @@ fn run_international(
         }
         while i + 1 < round.len() {
             let (a, b) = (round[i], round[i + 1]);
-            let (ga, gb, _) = play_nation(a, b, nations, pool, p, rng);
+            let (ga, gb, _, outcome) = play_nation(a, b, nations, pool, p, rng);
+            let stage_label = match round.len() {
+                2 => "Final",
+                4 => "Semi-final",
+                8 => "Quarter-final",
+                16 => "Round of 16",
+                32 => "Round of 32",
+                _ => "Knockout",
+            };
+            if let Some(f) = sink.as_mut() {
+                f(outcome, &nations[a].name, &nations[b].name, label, stage_label);
+            }
             bump_chem(nations, a, b);
             let win = if ga > gb {
                 a
@@ -12172,14 +12281,22 @@ pub mod web_api {
     struct WebMatchRecord {
         id: usize,
         week: u32,
+        /// Calendar year of the season this match belongs to (matches are
+        /// retained across rollovers; per-season views filter on this).
+        season: u16,
         league_idx: usize,
         round: usize,
         home: usize,
         away: usize,
         comp: Comp,
-        /// Human-readable stage for cup matches ("Group A", "Round of 16"…).
-        /// Empty for domestic league rounds.
+        /// Human-readable stage for cup matches ("League Phase", "Round of
+        /// 16 · 1st leg", "World Cup · Final"...). Empty for domestic league
+        /// rounds.
         stage: String,
+        /// National-team fixtures have no club indexes: the two sides are
+        /// named directly and home/away carry a sentinel.
+        home_name: Option<String>,
+        away_name: Option<String>,
         outcome: matchsim::MatchOutcome,
     }
 
@@ -12191,25 +12308,68 @@ pub mod web_api {
     /// real domestic league has a small index, so a dedicated sentinel keeps
     /// `/api/league/<id>` and the match list grouping unambiguous.
     const UCL_LEAGUE_ID: usize = 1_000_000;
-    const UCL_GROUPS: usize = 8;
+    /// Pseudo-league id for international fixtures (nations, not clubs).
+    const INTL_LEAGUE_ID: usize = 1_000_001;
+    /// The 2024+ Champions League: a 36-team single league phase.
+    const UCL_FIELD: usize = 36;
+    /// League-phase matchdays per team (4 home + 4 away).
+    const UCL_PHASE_ROUNDS: usize = 8;
+    /// Top 8 in the league phase go straight to the Round of 16.
+    const UCL_DIRECT: usize = 8;
+    /// Places 9-24 contest a two-legged knockout play-off.
+    const UCL_PLAYOFF: usize = 16;
+
+    /// One knockout tie's result: first leg, optional second leg, and the
+    /// aggregate winner (decided on aggregate, then strength-weighted
+    /// penalties when level).
+    #[derive(Clone, Copy)]
+    struct TieResult {
+        leg1: (u8, u8),
+        leg2: Option<(u8, u8)>,
+        winner: usize,
+    }
 
     struct KnockoutRound {
         stage: &'static str,
-        /// Zero-based week during which the round is played.
+        /// Zero-based week during which the round is played (both legs of a
+        /// two-legged tie land in the same week).
         week: u32,
         ties: Vec<(usize, usize)>,
         winners: Vec<usize>,
+        /// Per-tie leg scores, aligned with `ties`; filled as played.
+        results: Vec<Option<TieResult>>,
         done: bool,
     }
 
-    /// Interactive Champions League: 8 groups of four, six group matchdays,
-    /// then single-leg round of 16, quarter-final, semi-final and final.
+    impl KnockoutRound {
+        fn new(stage: &'static str, week: u32) -> Self {
+            Self {
+                stage,
+                week,
+                ties: Vec::new(),
+                winners: Vec::new(),
+                results: Vec::new(),
+                done: false,
+            }
+        }
+    }
+
+    /// Interactive Champions League, real 2024+ format: one 36-team league
+    /// phase (8 matchdays, 4 home + 4 away), top 8 straight to the Round of
+    /// 16, places 9-24 into a two-legged knockout play-off, then two-legged
+    /// Round of 16 / quarter-final / semi-final and a single-leg final. A
+    /// champion therefore plays 17 matches (via the play-off) or 15
+    /// (straight from the top 8).
     struct UclCup {
-        groups: Vec<Vec<usize>>,
-        /// [group][matchday] pairs, produced by the same circle method as the
-        /// domestic schedules (four clubs → six matchdays).
-        group_pairs: Vec<Vec<Vec<(usize, usize)>>>,
-        group_weeks: Vec<u32>,
+        /// The 36 clubs, strongest first.
+        field: Vec<usize>,
+        /// [matchday] fixture pairs (home, away) for the whole league phase.
+        phase_pairs: Vec<Vec<(usize, usize)>>,
+        /// Zero-based weeks for the 8 league-phase matchdays.
+        phase_weeks: Vec<u32>,
+        /// Final league-phase order (team ids, best first). Empty until the
+        /// eighth matchday has been played.
+        standings: Vec<usize>,
         knockout: Vec<KnockoutRound>,
     }
 
@@ -12232,6 +12392,16 @@ pub mod web_api {
         world_by_database: std::collections::HashMap<PlayerId, usize>,
         rng: Pcg64Mcg,
         week: u32,
+        /// Calendar year of the current season (2026-27 season = 2026).
+        year: u16,
+        /// Completed seasons since the world was created.
+        seasons_done: u32,
+        /// Matches played in banked earlier seasons (the per-season `matches`
+        /// list is cleared at each rollover so ids and stage tables stay
+        /// unambiguous; this keeps the headline count honest).
+        total_matches: usize,
+        /// Last summer's international headline: (year, tournament, winner).
+        last_intl: Option<(u16, String, String)>,
         schedules: Vec<LeagueSchedule>,
         /// European cup state for the interactive season. `None` when the
         /// world has no European clubs.
@@ -12268,8 +12438,11 @@ pub mod web_api {
         rounds
     }
 
-    /// Build the interactive Champions League field: the 32 strongest UEFA
-    /// clubs, snake-seeded into eight groups, plus the spring knockout dates.
+    /// Build the interactive Champions League the real 2024+ way: the 36
+    /// strongest UEFA clubs in one field, a Swiss-style league phase (8
+    /// matchdays, circle-method pairing over a strength-snaked ring so
+    /// everyone meets eight different opponents, ~4 home + 4 away), then the
+    /// spring knockout calendar (play-off, R16, QF, SF, final).
     fn build_ucl(world: &World, _rng: &mut Pcg64Mcg) -> Option<UclCup> {
         use crate::world_model::Confederation;
         let mut teams: Vec<usize> = world
@@ -12294,77 +12467,187 @@ pub mod web_api {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         teams.dedup();
-        if teams.len() < 32 {
+        if teams.len() < UCL_FIELD {
             return None;
         }
-        teams.truncate(32);
-        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); UCL_GROUPS];
-        for (i, &t) in teams.iter().enumerate() {
-            let pot = i / UCL_GROUPS;
-            let slot = if pot % 2 == 0 {
-                i % UCL_GROUPS
+        teams.truncate(UCL_FIELD);
+        // Snake the strength order (1st, last, 2nd, second-last...) so early
+        // rounds pair giants with outsiders, then run the circle method: the
+        // first 8 rotations are everyone's 8 distinct league-phase fixtures.
+        let mut ring: Vec<usize> = Vec::with_capacity(teams.len());
+        let (mut lo, mut hi) = (0usize, teams.len());
+        let mut take_top = true;
+        while lo < hi {
+            if take_top {
+                ring.push(teams[lo]);
+                lo += 1;
             } else {
-                UCL_GROUPS - 1 - (i % UCL_GROUPS)
-            };
-            groups[slot].push(t);
+                hi -= 1;
+                ring.push(teams[hi]);
+            }
+            take_top = !take_top;
         }
-        let group_pairs = groups.iter().map(|g| make_schedule(g)).collect();
-        let group_weeks = vec![3, 5, 7, 9, 11, 13];
+        let n = ring.len();
+        let mut phase_pairs: Vec<Vec<(usize, usize)>> = Vec::new();
+        for round in 0..UCL_PHASE_ROUNDS {
+            let mut pairs = Vec::with_capacity(n / 2);
+            for i in 0..n / 2 {
+                let (a, b) = (ring[i], ring[n - 1 - i]);
+                // Alternate home advantage by round: ~4 home, ~4 away each.
+                pairs.push(if round % 2 == 0 { (a, b) } else { (b, a) });
+            }
+            phase_pairs.push(pairs);
+            // Rotate all but the first entry (standard circle method).
+            let last = ring.pop().unwrap();
+            ring.insert(1, last);
+        }
         let knockout = vec![
-            KnockoutRound {
-                stage: "Round of 16",
-                week: 20,
-                ties: Vec::new(),
-                winners: Vec::new(),
-                done: false,
-            },
-            KnockoutRound {
-                stage: "Quarter-final",
-                week: 24,
-                ties: Vec::new(),
-                winners: Vec::new(),
-                done: false,
-            },
-            KnockoutRound {
-                stage: "Semi-final",
-                week: 28,
-                ties: Vec::new(),
-                winners: Vec::new(),
-                done: false,
-            },
-            KnockoutRound {
-                stage: "Final",
-                week: 32,
-                ties: Vec::new(),
-                winners: Vec::new(),
-                done: false,
-            },
+            KnockoutRound::new("Knockout Play-off", 20),
+            KnockoutRound::new("Round of 16", 23),
+            KnockoutRound::new("Quarter-final", 26),
+            KnockoutRound::new("Semi-final", 29),
+            KnockoutRound::new("Final", 32),
         ];
         Some(UclCup {
-            groups,
-            group_pairs,
-            group_weeks,
+            field: teams,
+            phase_pairs,
+            phase_weeks: vec![3, 5, 7, 9, 11, 13, 15, 17],
+            standings: Vec::new(),
             knockout,
         })
     }
 
-    fn group_letter(idx: usize) -> char {
-        (b'A' + idx as u8) as char
+    /// League-phase table for the current season over the whole 36-team
+    /// field from played "League Phase" matches: points, GD, GF, then club
+    /// id for stability.
+    fn league_phase_rows(
+        state: &WebState,
+        field: &[usize],
+    ) -> Vec<(usize, u16, u16, u16, u16, u16, u16, u16)> {
+        let mut rows: Vec<(usize, u16, u16, u16, u16, u16, u16, u16)> = field
+            .iter()
+            .map(|&t| (t, 0, 0, 0, 0, 0, 0, 0))
+            .collect();
+        for m in state.matches.iter().filter(|m| m.season == state.year) {
+            if m.comp != Comp::Ucl || !m.stage.starts_with("League Phase") {
+                continue;
+            }
+            let gh = m.outcome.goals_a as u16;
+            let ga = m.outcome.goals_b as u16;
+            for (team, gf, gaa) in [(m.home, gh, ga), (m.away, ga, gh)] {
+                if let Some(row) = rows.iter_mut().find(|r| r.0 == team) {
+                    row.1 += 1;
+                    row.5 += gf;
+                    row.6 += gaa;
+                    if gf > gaa {
+                        row.2 += 1;
+                        row.7 += 3;
+                    } else if gf == gaa {
+                        row.3 += 1;
+                        row.7 += 1;
+                    } else {
+                        row.4 += 1;
+                    }
+                }
+            }
+        }
+        rows.sort_by(|a, b| {
+            b.7.cmp(&a.7)
+                .then((b.5 as i32 - b.6 as i32).cmp(&(a.5 as i32 - a.6 as i32)))
+                .then(b.5.cmp(&a.5))
+                .then(a.0.cmp(&b.0))
+        });
+        rows
     }
 
-    /// Winner of a single-leg cup tie, with a shootout when the score is level.
-    fn cup_winner(home: usize, away: usize, gh: u8, ga: u8, rng: &mut Pcg64Mcg) -> usize {
-        if gh == ga {
-            if rng.gen::<bool>() {
-                home
-            } else {
-                away
-            }
-        } else if gh > ga {
+    /// Winner of a single-leg cup tie, with a strength-weighted shootout
+    /// when the score is level.
+    fn cup_winner(
+        home: usize,
+        away: usize,
+        gh: u8,
+        ga: u8,
+        teams: &[Team],
+        rng: &mut Pcg64Mcg,
+    ) -> usize {
+        if gh > ga {
+            return home;
+        }
+        if ga > gh {
+            return away;
+        }
+        let sa = teams[home].strength;
+        let sb = teams[away].strength;
+        if rng.gen::<f32>() < sa / (sa + sb) {
             home
         } else {
             away
         }
+    }
+
+    /// Play one two-legged tie inside the interactive cup: leg one at a's
+    /// ground, leg two at b's with the aggregate on the line, both legs
+    /// recorded as separate matches (stage tagged with the leg). Aggregate
+    /// winner; level ties go to a strength-weighted shootout.
+    #[allow(clippy::too_many_arguments)]
+    fn play_tie(
+        world: &mut World,
+        rng: &mut Pcg64Mcg,
+        matches: &mut Vec<WebMatchRecord>,
+        a: usize,
+        b: usize,
+        week: u32,
+        season: u16,
+        stage: &str,
+        round_no: usize,
+    ) -> Option<TieResult> {
+        let (g1a, g1b) = play_web_cup(
+            world,
+            rng,
+            matches,
+            a,
+            b,
+            week,
+            season,
+            UCL_LEAGUE_ID,
+            round_no,
+            format!("{} · 1st leg", stage),
+            Comp::Ucl,
+            (0, 0),
+        )?;
+        let (g2b, g2a) = play_web_cup(
+            world,
+            rng,
+            matches,
+            b,
+            a,
+            week,
+            season,
+            UCL_LEAGUE_ID,
+            round_no,
+            format!("{} · 2nd leg", stage),
+            Comp::Ucl,
+            (g1b, g1a),
+        )?;
+        let (ta, tb) = (g1a + g2a, g1b + g2b);
+        let winner = if ta > tb {
+            a
+        } else if tb > ta {
+            b
+        } else {
+            let sa = world.teams[a].strength;
+            let sb = world.teams[b].strength;
+            if rng.gen::<f32>() < sa / (sa + sb) {
+                a
+            } else {
+                b
+            }
+        };
+        Some(TieResult {
+            leg1: (g1a, g1b),
+            leg2: Some((g2a, g2b)),
+            winner,
+        })
     }
 
     impl WebState {
@@ -12409,6 +12692,10 @@ pub mod web_api {
                 world_by_database,
                 rng,
                 week: 0,
+                year: BASE_YEAR,
+                seasons_done: 0,
+                total_matches: 0,
+                last_intl: None,
                 schedules,
                 ucl,
                 matches: Vec::new(),
@@ -12450,6 +12737,20 @@ pub mod web_api {
         }
 
         fn simulate_one_week(&mut self) -> usize {
+            let season_len = self.total_rounds();
+            let ucl_done = self
+                .ucl
+                .as_ref()
+                .map(|c| c.knockout.last().map(|r| r.done).unwrap_or(true))
+                .unwrap_or(true);
+            // Season complete: every domestic round played and the Champions
+            // League final settled. The next step rolls the world forward
+            // instead of freezing at 38/38 — summer internationals (a World
+            // Cup in 2026/2030…), aging and regens, the transfer window, then
+            // a fresh season.
+            if season_len > 0 && self.week as usize >= season_len && ucl_done {
+                return self.rollover_season();
+            }
             let round_idx = self.week as usize;
             let mut played = 0usize;
             for sched_idx in 0..self.schedules.len() {
@@ -12485,12 +12786,15 @@ pub mod web_api {
                     self.matches.push(WebMatchRecord {
                         id,
                         week: self.week + 1,
+                        season: self.year,
                         league_idx: sched_idx,
                         round: round_idx + 1,
                         home,
                         away,
                         comp: Comp::League,
                         stage: String::new(),
+                        home_name: None,
+                        away_name: None,
                         outcome,
                     });
                     played += 1;
@@ -12505,15 +12809,154 @@ pub mod web_api {
                 );
             }
             played += self.simulate_ucl_week();
-            if played > 0 {
+            played += self.simulate_intl_week();
+            // Advance the week when anything happened, or when the Champions
+            // League still has rounds scheduled beyond the domestic season
+            // (so small-league worlds don't stall before the final).
+            let ucl_pending = self
+                .ucl
+                .as_ref()
+                .map(|c| c.knockout.iter().any(|r| !r.done && r.week >= self.week))
+                .unwrap_or(false);
+            if played > 0 || ucl_pending {
                 self.week += 1;
             }
             played
         }
 
+        /// Mid-season international breaks (the real FIFA calendar shape):
+        /// friendly windows 1-2 in the autumn break, 3-4 in the spring break.
+        /// Every friendly is recorded like any other match, so caps, goals
+        /// and ratings are visible on player pages and the match wire.
+        fn simulate_intl_week(&mut self) -> usize {
+            const AUTUMN_BREAK: u32 = 11; // week 12, one-based
+            const SPRING_BREAK: u32 = 24; // week 25, one-based
+            let rounds: &[u32] = if self.week == AUTUMN_BREAK {
+                &[0, 1]
+            } else if self.week == SPRING_BREAK {
+                &[2, 3]
+            } else {
+                return 0;
+            };
+            let week = self.week + 1;
+            let season = self.year;
+            let mut recorded = 0usize;
+            let WebState {
+                world,
+                matches,
+                rng,
+                ..
+            } = self;
+            let mut rec = |o: matchsim::MatchOutcome,
+                           home: &str,
+                           away: &str,
+                           comp: &str,
+                           stage: &str| {
+                let id = matches.len() + 1;
+                matches.push(WebMatchRecord {
+                    id,
+                    week,
+                    season,
+                    league_idx: INTL_LEAGUE_ID,
+                    round: 0,
+                    home: usize::MAX,
+                    away: usize::MAX,
+                    comp: Comp::Intl,
+                    stage: format!("{} · {}", comp, stage),
+                    home_name: Some(home.to_string()),
+                    away_name: Some(away.to_string()),
+                    outcome: o,
+                });
+                recorded += 1;
+            };
+            let sink: IntlSink = Some(&mut rec);
+            friendly_windows(world, rng, rounds, sink);
+            recorded
+        }
+
+        /// Close the finished season and open the next one: the summer major
+        /// tournament first (World Cup / Euros / continental cups — real
+        /// caps, goals and international runs land on every national-team
+        /// player, and every fixture is recorded in the match list), then
+        /// aging, retirements, regens and the transfer market, then a reset
+        /// world with fresh schedules and a new Champions League draw.
+        /// Match history is retained with a season tag so player pages keep
+        /// showing last season's run.
+        fn rollover_season(&mut self) -> usize {
+            let year = self.year;
+            let kind = intl_kind_for(year);
+            let week_base = self.total_rounds() as u32 + 1;
+            let season = self.year;
+            let WebState {
+                world,
+                matches,
+                rng,
+                ..
+            } = self;
+            let mut week_counter = week_base;
+            let mut rec = |o: matchsim::MatchOutcome,
+                           home: &str,
+                           away: &str,
+                           comp: &str,
+                           stage: &str| {
+                let id = matches.len() + 1;
+                matches.push(WebMatchRecord {
+                    id,
+                    week: week_counter,
+                    season,
+                    league_idx: INTL_LEAGUE_ID,
+                    round: 0,
+                    home: usize::MAX,
+                    away: usize::MAX,
+                    comp: Comp::Intl,
+                    stage: format!("{} · {}", comp, stage),
+                    home_name: Some(home.to_string()),
+                    away_name: Some(away.to_string()),
+                    outcome: o,
+                });
+                week_counter += 1;
+            };
+            let sink: IntlSink = Some(&mut rec);
+            let winner = summer_major_tournament(world, year, rng, sink);
+            if winner != "-" {
+                self.last_intl = Some((
+                    year,
+                    match kind {
+                        IntlKind::WorldCup => "World Cup".to_string(),
+                        IntlKind::Euros => "Euros".to_string(),
+                        IntlKind::AsianCup => "AFC Asian Cup".to_string(),
+                        IntlKind::CopaAmerica => "Copa América".to_string(),
+                        IntlKind::Afcon => "Africa Cup of Nations".to_string(),
+                        IntlKind::GoldCup => "Gold Cup".to_string(),
+                        IntlKind::None => "Internationals".to_string(),
+                    },
+                    winner,
+                ));
+            }
+            let (world, rng) = (&mut self.world, &mut self.rng);
+            age_and_regen(world, rng);
+            let _ = transfer_window(world, rng);
+            reset_season(&mut self.world);
+            self.week = 0;
+            self.year += 1;
+            self.seasons_done += 1;
+            self.schedules = self
+                .world
+                .league_teams
+                .iter()
+                .map(|teams| LeagueSchedule {
+                    rounds: make_schedule(teams),
+                })
+                .collect::<Vec<_>>();
+            self.ucl = build_ucl(&self.world, &mut self.rng);
+            0
+        }
+
         /// Play any Champions League fixtures scheduled for the current week.
-        /// Group matchdays run through the autumn, then single-leg knockout
-        /// rounds in spring. Results are stored alongside league matches so
+        /// The eight league-phase matchdays run through the autumn; in spring
+        /// the knockout play-off (9th-24th), Round of 16, quarter-finals and
+        /// semi-finals are two-legged ties played in one week, and the final
+        /// is a single leg. Results are stored alongside league matches so
         /// the same match list, player pages and team pages show them.
         fn simulate_ucl_week(&mut self) -> usize {
             let Some(mut cup) = self.ucl.take() else {
@@ -12521,34 +12964,42 @@ pub mod web_api {
             };
             let mut played = 0usize;
             if let Some(md) = cup
-                .group_weeks
+                .phase_weeks
                 .iter()
                 .position(|&w| w == self.week)
             {
-                let pairs = cup.group_pairs.clone();
-                for (g, rounds) in pairs.iter().enumerate() {
-                    let Some(round) = rounds.get(md) else {
-                        continue;
-                    };
-                    let stage = format!("Group {}", group_letter(g));
-                    for &(home, away) in round {
-                        if play_web_cup(
-                            &mut self.world,
-                            &mut self.rng,
-                            &mut self.matches,
-                            home,
-                            away,
-                            self.week + 1,
-                            UCL_LEAGUE_ID,
-                            md + 1,
-                            stage.clone(),
-                            Comp::Ucl,
-                        )
-                        .is_some()
-                        {
-                            played += 1;
-                        }
+                let pairs = cup.phase_pairs.clone();
+                let Some(round) = pairs.get(md) else {
+                    self.ucl = Some(cup);
+                    return played;
+                };
+                let stage = "League Phase".to_string();
+                for &(home, away) in round {
+                    if play_web_cup(
+                        &mut self.world,
+                        &mut self.rng,
+                        &mut self.matches,
+                        home,
+                        away,
+                        self.week + 1,
+                        self.year,
+                        UCL_LEAGUE_ID,
+                        md + 1,
+                        stage.clone(),
+                        Comp::Ucl,
+                        (0, 0),
+                    )
+                    .is_some()
+                    {
+                        played += 1;
                     }
+                }
+                // After the final matchday, freeze the league-phase table.
+                if md + 1 == cup.phase_weeks.len() {
+                    cup.standings = league_phase_rows(self, &cup.field)
+                        .into_iter()
+                        .map(|r| r.0)
+                        .collect();
                 }
             }
             if let Some(ki) = cup
@@ -12558,20 +13009,40 @@ pub mod web_api {
             {
                 if cup.knockout[ki].ties.is_empty() {
                     if ki == 0 {
-                        let mut seeds: Vec<(usize, usize)> = Vec::new();
-                        for group in &cup.groups {
-                            let order = group_order(&self.matches, group);
-                            if order.len() >= 2 {
-                                // Reaching the last 16 is the first knockout stage.
-                                set_cup_result(&mut self.world, order[0], 1);
-                                set_cup_result(&mut self.world, order[1], 1);
-                                seeds.push((order[0], order[1]));
-                            }
+                        // Knockout play-off: places 9-24, seeded so the best
+                        // runners-up meet the weakest survivors (9v24, 10v23…).
+                        let standings = if cup.standings.is_empty() {
+                            league_phase_rows(self, &cup.field)
+                                .into_iter()
+                                .map(|r| r.0)
+                                .collect::<Vec<_>>()
+                        } else {
+                            cup.standings.clone()
+                        };
+                        let direct = UCL_DIRECT.min(standings.len());
+                        let playoff = UCL_PLAYOFF.min(standings.len().saturating_sub(direct));
+                        // Reaching a knockout stage is the first honour code.
+                        for &t in standings.iter().take(direct + playoff) {
+                            set_cup_result(&mut self.world, t, 1);
                         }
                         let mut ties = Vec::new();
-                        for i in (0..seeds.len().saturating_sub(1)).step_by(2) {
-                            ties.push((seeds[i].0, seeds[i + 1].1));
-                            ties.push((seeds[i + 1].0, seeds[i].1));
+                        for i in 0..playoff / 2 {
+                            let hi = standings[direct + i];
+                            let lo = standings[direct + playoff - 1 - i];
+                            ties.push((hi, lo));
+                        }
+                        cup.knockout[ki].ties = ties;
+                    } else if ki == 1 {
+                        // Round of 16: the top 8 are seeded against the
+                        // play-off winners (best seed at home in the second
+                        // leg is approximated by playing the tie from the
+                        // seed's ground first).
+                        let standings = cup.standings.clone();
+                        let prev = cup.knockout[ki - 1].winners.clone();
+                        let direct = UCL_DIRECT.min(standings.len());
+                        let mut ties = Vec::new();
+                        for i in 0..direct.min(prev.len()) {
+                            ties.push((standings[direct - 1 - i], prev[i]));
                         }
                         cup.knockout[ki].ties = ties;
                     } else {
@@ -12590,21 +13061,54 @@ pub mod web_api {
                 let is_final = ki + 1 == cup.knockout.len();
                 let final_tie = if is_final { ties.first().copied() } else { None };
                 let mut winners = Vec::new();
-                for (home, away) in ties {
-                    if let Some((gh, ga)) = play_web_cup(
+                let mut results: Vec<Option<TieResult>> = Vec::new();
+                for &(home, away) in &ties {
+                    if is_final {
+                        // The final is a single leg at a neutral venue.
+                        if let Some((gh, ga)) = play_web_cup(
+                            &mut self.world,
+                            &mut self.rng,
+                            &mut self.matches,
+                            home,
+                            away,
+                            self.week + 1,
+                            self.year,
+                            UCL_LEAGUE_ID,
+                            100 + round,
+                            stage.clone(),
+                            Comp::Ucl,
+                            (0, 0),
+                        ) {
+                            let winner = cup_winner(
+                                home,
+                                away,
+                                gh,
+                                ga,
+                                &self.world.teams,
+                                &mut self.rng,
+                            );
+                            winners.push(winner);
+                            results.push(Some(TieResult {
+                                leg1: (gh, ga),
+                                leg2: None,
+                                winner,
+                            }));
+                            played += 1;
+                        }
+                    } else if let Some(tr) = play_tie(
                         &mut self.world,
                         &mut self.rng,
                         &mut self.matches,
                         home,
                         away,
                         self.week + 1,
-                        UCL_LEAGUE_ID,
+                        self.year,
+                        &stage,
                         100 + round,
-                        stage.clone(),
-                        Comp::Ucl,
                     ) {
-                        winners.push(cup_winner(home, away, gh, ga, &mut self.rng));
-                        played += 1;
+                        winners.push(tr.winner);
+                        results.push(Some(tr));
+                        played += 2;
                     }
                 }
                 if is_final {
@@ -12616,14 +13120,15 @@ pub mod web_api {
                         set_cup_result(&mut self.world, loser, 4);
                     }
                 } else {
-                    // R16 winners reach the QF (2), QF winners the SF (3),
-                    // SF winners the final (4).
-                    let tag = (ki + 2) as u8;
+                    // Play-off winners reach the R16 (1), R16 winners the QF
+                    // (2), QF winners the SF (3), SF winners the final (4).
+                    let tag = (ki + 1) as u8;
                     for &wn in &winners {
                         set_cup_result(&mut self.world, wn, tag);
                     }
                 }
                 cup.knockout[ki].winners = winners;
+                cup.knockout[ki].results = results;
                 cup.knockout[ki].done = true;
             }
             self.ucl = Some(cup);
@@ -12656,52 +13161,43 @@ pub mod web_api {
         home: usize,
         away: usize,
         week: u32,
+        season: u16,
         league_idx: usize,
         round: usize,
         stage: String,
         comp: Comp,
+        agg: (u8, u8),
     ) -> Option<(u8, u8)> {
         let outcome = play_detailed(
             home,
             away,
             comp,
             Venue::HomeA,
-            (0, 0),
+            agg,
             &mut world.teams,
             &mut world.pool,
             &world.params,
             rng,
         )?;
         let (gh, ga) = (outcome.goals_a, outcome.goals_b);
-        record_result(
-            &mut world.teams,
-            home,
-            away,
-            gh as u32,
-            ga as u32,
-        );
+        // Cup results are deliberately NOT folded into the domestic W/D/L
+        // records: league tables must reflect league matches only.
         let id = matches.len() + 1;
         matches.push(WebMatchRecord {
             id,
             week,
+            season,
             league_idx,
             round,
             home,
             away,
             comp,
             stage,
+            home_name: None,
+            away_name: None,
             outcome,
         });
         Some((gh, ga))
-    }
-
-    /// Order a Champions League group by points, goal difference, goals for,
-    /// then team id for a stable final tie-break.
-    fn group_order(matches: &[WebMatchRecord], group: &[usize]) -> Vec<usize> {
-        group_table_rows(matches, group)
-            .into_iter()
-            .map(|r| r.0)
-            .collect()
     }
 
     fn team_json(w: &World, ti: usize) -> Value {
@@ -13289,7 +13785,10 @@ pub mod web_api {
 
     fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
         let w = &state.world;
-        let league = if m.comp == Comp::Ucl {
+        let intl = m.comp == Comp::Intl;
+        let league = if intl {
+            "Internationals".to_string()
+        } else if m.comp == Comp::Ucl {
             "UEFA Champions League".to_string()
         } else {
             w.league_meta
@@ -13300,15 +13799,16 @@ pub mod web_api {
         json!({
             "id": m.id,
             "week": m.week,
+            "season": m.season,
             "round": m.round,
             "league_idx": m.league_idx,
             "league": league,
-            "competition": if m.comp == Comp::Ucl { "UEFA Champions League" } else { "League" },
+            "competition": if intl { "Internationals" } else if m.comp == Comp::Ucl { "UEFA Champions League" } else { "League" },
             "stage": m.stage,
             "home_team": m.home,
             "away_team": m.away,
-            "home": w.teams[m.home].name,
-            "away": w.teams[m.away].name,
+            "home": m.home_name.clone().unwrap_or_else(|| w.teams[m.home].name.clone()),
+            "away": m.away_name.clone().unwrap_or_else(|| w.teams[m.away].name.clone()),
             "home_goals": m.outcome.goals_a,
             "away_goals": m.outcome.goals_b,
             "xg": [m.outcome.xg_a, m.outcome.xg_b],
@@ -13372,7 +13872,11 @@ pub mod web_api {
             "ok": true,
             "service": "football-api",
             "version": "0.1.0",
-            "year": 2026,
+            "year": state.year,
+            "season": format!("{}-{}", state.year, (state.year + 1) % 100),
+            "seasons_done": state.seasons_done,
+            "total_matches": state.matches.len(),
+            "international": state.last_intl.as_ref().map(|(y, k, w)| json!({"year": y, "kind": k, "winner": w})),
             "week": state.week,
             "next_week": state.week + 1,
             "total_rounds": total_rounds,
@@ -13407,7 +13911,10 @@ pub mod web_api {
             .collect::<Vec<_>>();
         json!({
             "world": {
-                "year": 2026,
+                "year": state.year,
+                "season": format!("{}-{}", state.year, (state.year + 1) % 100),
+                "seasons_done": state.seasons_done,
+                "international": state.last_intl.as_ref().map(|(y, k, w)| json!({"year": y, "kind": k, "winner": w})),
                 "week": state.week,
                 "next_week": state.week + 1,
                 "players": w.pool.len(),
@@ -13506,37 +14013,43 @@ pub mod web_api {
         })
     }
 
-    /// Full Champions League view: group tables, knockout results and the
-    /// competition scoring chart. Returned by `/api/league/1000000` so the
-    /// normal league links and match rows can open it.
+    /// Full Champions League view: the single 36-team league-phase table
+    /// (with top-8 / play-off / eliminated status), the knockout bracket
+    /// (both legs and aggregates) and the competition scoring chart. Returned
+    /// by `/api/league/1000000` so the normal league links and match rows can
+    /// open it.
     fn ucl_detail_json(state: &WebState) -> Value {
         let w = &state.world;
         let Some(cup) = state.ucl.as_ref() else {
             return json!({"league": "UEFA Champions League", "confederation": "UEFA", "week": state.week, "groups": [], "knockout": [], "table": [], "scorers": [], "recent": []});
         };
-        let groups = cup
-            .groups
-            .iter()
+        let phase_done = cup.standings.len() == cup.field.len();
+        let table = league_phase_rows(state, &cup.field)
+            .into_iter()
             .enumerate()
-            .map(|(gi, group)| {
-                let rows = group_table_rows(&state.matches, group);
+            .map(|(pos, (team, p, won, drawn, lost, gf, ga, pts))| {
+                let status = if !phase_done {
+                    "League phase in progress"
+                } else if pos < UCL_DIRECT.min(cup.field.len()) {
+                    "Direct to Round of 16"
+                } else if pos < (UCL_DIRECT + UCL_PLAYOFF).min(cup.field.len()) {
+                    "Knockout play-off"
+                } else {
+                    "Eliminated"
+                };
                 json!({
-                    "name": format!("Group {}", group_letter(gi)),
-                    "teams": rows.iter().enumerate().map(|(pos, &(team, p, won, drawn, lost, gf, ga, pts))| {
-                        json!({
-                            "id": team,
-                            "name": w.teams[team].name,
-                            "position": pos + 1,
-                            "played": p,
-                            "won": won,
-                            "drawn": drawn,
-                            "lost": lost,
-                            "gf": gf,
-                            "ga": ga,
-                            "gd": gf as i32 - ga as i32,
-                            "pts": pts,
-                        })
-                    }).collect::<Vec<_>>(),
+                    "id": team,
+                    "name": w.teams[team].name,
+                    "position": pos + 1,
+                    "played": p,
+                    "won": won,
+                    "drawn": drawn,
+                    "lost": lost,
+                    "gf": gf,
+                    "ga": ga,
+                    "gd": gf as i32 - ga as i32,
+                    "pts": pts,
+                    "status": status,
                 })
             })
             .collect::<Vec<_>>();
@@ -13547,10 +14060,7 @@ pub mod web_api {
                 json!({
                     "stage": round.stage,
                     "week": round.week + 1,
-                    "teams": round.ties.iter().map(|&(h, a)| {
-                        let played = state.matches.iter().rev().find(|m| {
-                            m.comp == Comp::Ucl && m.stage == round.stage && m.home == h && m.away == a
-                        });
+                    "teams": round.ties.iter().zip(round.results.iter()).map(|(&(h, a), res)| {
                         let mut x = json!({
                             "home_id": h,
                             "away_id": a,
@@ -13558,10 +14068,29 @@ pub mod web_api {
                             "away": w.teams[a].name,
                             "home_goals": Value::Null,
                             "away_goals": Value::Null,
+                            "leg1": Value::Null,
+                            "leg2": Value::Null,
+                            "agg_home": Value::Null,
+                            "agg_away": Value::Null,
+                            "winner_id": Value::Null,
+                            "winner": Value::Null,
                         });
-                        if let Some(m) = played {
-                            x["home_goals"] = json!(m.outcome.goals_a);
-                            x["away_goals"] = json!(m.outcome.goals_b);
+                        if let Some(tr) = res {
+                            // Legs are stored from the tie's first-leg home
+                            // side (h) perspective.
+                            x["leg1"] = json!({"home_goals": tr.leg1.0, "away_goals": tr.leg1.1});
+                            x["home_goals"] = json!(tr.leg1.0);
+                            x["away_goals"] = json!(tr.leg1.1);
+                            if let Some((l2h, l2a)) = tr.leg2 {
+                                x["leg2"] = json!({"home_goals": l2a, "away_goals": l2h});
+                                x["agg_home"] = json!(tr.leg1.0 + l2h);
+                                x["agg_away"] = json!(tr.leg1.1 + l2a);
+                            } else {
+                                x["agg_home"] = json!(tr.leg1.0);
+                                x["agg_away"] = json!(tr.leg1.1);
+                            }
+                            x["winner_id"] = json!(tr.winner);
+                            x["winner"] = json!(w.teams[tr.winner].name);
                         }
                         x
                     }).collect::<Vec<_>>(),
@@ -13581,9 +14110,10 @@ pub mod web_api {
             "league": "UEFA Champions League",
             "confederation": "UEFA",
             "week": state.week,
-            "groups": groups,
+            "format": "36-club league phase (8 matchdays) · top 8 direct to the Round of 16 · 9th-24th two-legged play-off · two-legged knockouts · single-leg final",
+            "groups": [],
             "knockout": knockout,
-            "table": [],
+            "table": table,
             "scorers": scorers.into_iter().take(20).map(|i| player_detail_json(state, i)).collect::<Vec<_>>(),
             "recent": state.matches.iter().rev()
                 .filter(|m| m.comp == Comp::Ucl)
@@ -13591,46 +14121,6 @@ pub mod web_api {
                 .map(|m| match_summary(state, m))
                 .collect::<Vec<_>>(),
         })
-    }
-
-    fn group_table_rows(
-        matches: &[WebMatchRecord],
-        group: &[usize],
-    ) -> Vec<(usize, u16, u16, u16, u16, u16, u16, u16)> {
-        let mut rows: Vec<(usize, u16, u16, u16, u16, u16, u16, u16)> = group
-            .iter()
-            .map(|&t| (t, 0, 0, 0, 0, 0, 0, 0))
-            .collect();
-        for m in matches {
-            if m.comp != Comp::Ucl || !m.stage.starts_with("Group") {
-                continue;
-            }
-            let gh = m.outcome.goals_a as u16;
-            let ga = m.outcome.goals_b as u16;
-            for (team, gf, gaa) in [(m.home, gh, ga), (m.away, ga, gh)] {
-                if let Some(row) = rows.iter_mut().find(|r| r.0 == team) {
-                    row.1 += 1;
-                    row.5 += gf;
-                    row.6 += gaa;
-                    if gf > gaa {
-                        row.2 += 1;
-                        row.7 += 3;
-                    } else if gf == gaa {
-                        row.3 += 1;
-                        row.7 += 1;
-                    } else {
-                        row.4 += 1;
-                    }
-                }
-            }
-        }
-        rows.sort_by(|a, b| {
-            b.7.cmp(&a.7)
-                .then((b.5 as i32 - b.6 as i32).cmp(&(a.5 as i32 - a.6 as i32)))
-                .then(b.5.cmp(&a.5))
-                .then(a.0.cmp(&b.0))
-        });
-        rows
     }
 
     fn fixtures_json(state: &WebState, week_one_based: Option<usize>) -> Vec<Value> {        let week = week_one_based.unwrap_or(state.week.saturating_add(1) as usize);

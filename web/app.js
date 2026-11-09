@@ -22,7 +22,7 @@
     overview: null, leagues: [], fixtures: null, players: { players: [], total: 0 },
     page: 'home', mode: localStorage.getItem('fm-mode') || 'simulate',
     leagueIndex: 0, leagueTab: 'table', leagueData: null,
-    cupTab: 'groups', cupData: null,
+    cupTab: 'table', cupData: null,
     matchId: 0, matchTab: 'facts', matchData: null, matchLeagueData: null,
     playerHandle: '', playerData: null,
     playerQuery: '', sort: 'goals', scope: 'all', matchQuery: '', search: null, followedPlayers: JSON.parse(localStorage.getItem('fm-followed-players') || '[]'), followedLeagues: JSON.parse(localStorage.getItem('fm-followed-leagues') || '[]'),
@@ -72,7 +72,7 @@
     return json;
   }
 
-  function seasonDate(days) { const d = new Date(2026, 7, 1); d.setDate(d.getDate() + (days || 0)); return d; }
+  function seasonDate(days) { const y = Number(state.overview?.world?.year || 2026); const d = new Date(y, 7, 1); d.setDate(d.getDate() + (days || 0)); return d; }
   function fmtDate(days) { return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).format(seasonDate(days)); }
   function clockTime(days) { const hour = 9 + ((days * 37 + state.auto.dayOffset * 11) % 7); return `${String(hour).padStart(2, '0')}:00`; }
   function updateClock() {
@@ -81,7 +81,7 @@
     state.clockDays = Math.max(state.clockDays || 0, week * 7);
     const d = seasonDate(state.clockDays);
     const setText = (id, text) => { const el = $(id); if (el) el.textContent = text; };
-    setText('sim-year', String(d.getFullYear()));
+    setText('sim-year', String(w.year ?? d.getFullYear()));
     setText('sim-date', fmtDate(state.clockDays));
     setText('sim-week', `${week} / ${total}`);
     setText('sim-clock', clockTime(state.clockDays));
@@ -110,7 +110,7 @@
     const week = w?.week ?? 0;
     if (week === state.lastNewsWeek) return;
     state.lastNewsWeek = week;
-    if (week === 0) { addNews('The 2026 season is ready: 81 leagues and 655 clubs waiting for the opening round.'); return; }
+    if (week === 0) { addNews(The  season is ready: leagues loaded and the Champions League drawn. Press Play or Step week.); return; }
     const top = state.overview?.top_scorers?.[0];
     if (top) {
       const followed = (state.followedPlayers || []).includes(top.handle || top.id);
@@ -201,12 +201,21 @@
 
   function renderLeagues() {
     $('app').innerHTML = `<div class="page-head"><div><h1 style="margin:0">Leagues</h1><p class="small" style="margin:4px 0 0">Open any competition to see the live table, fixtures, matches and player stats.</p></div><span class="pill">${state.leagues.length} competitions</span></div>
-    <div class="grid cols-4"><button class="card league-card" data-league="${UCL_ID}"><div class="pill">UEFA</div><h3 style="margin-top:10px">UEFA Champions League</h3><p>32 clubs · 6 group matchdays<br>Knockout rounds in spring</p></button>${state.leagues.map((l) => `<button class="card league-card" data-league="${l.id}"><div class="pill">${esc(l.confederation || '')}</div><h3 style="margin-top:10px">${esc(l.name)}</h3><p>${l.teams} clubs · ${l.rounds} rounds<br>Leader: <strong>${esc(l.leader || '—')}</strong></p></button>`).join('')}</div>`;
+    <div class="grid cols-4"><button class="card league-card" data-league="${UCL_ID}"><div class="pill">UEFA</div><h3 style="margin-top:10px">UEFA Champions League</h3><p>36 clubs · 8 league-phase matchdays<br>Play-off + two-legged knockouts</p></button>${state.leagues.map((l) => `<button class="card league-card" data-league="${l.id}"><div class="pill">${esc(l.confederation || '')}</div><h3 style="margin-top:10px">${esc(l.name)}</h3><p>${l.teams} clubs · ${l.rounds} rounds<br>Leader: <strong>${esc(l.leader || '—')}</strong></p></button>`).join('')}</div>`;
   }
 
-  function cupGroupTable(group) {
-    const rows = (group.teams || []).map((r) => `<tr class="${r.position <= 2 ? 'advancing' : ''}"><td class="numeric">${r.position}</td><td class="club-cell"><button class="linklike" data-team="${r.id}"><strong>${esc(r.name)}</strong></button></td><td class="numeric">${r.played}</td><td class="numeric">${r.won}</td><td class="numeric">${r.drawn}</td><td class="numeric">${r.lost}</td><td class="numeric">${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="numeric"><strong>${r.pts}</strong></td></tr>`).join('');
-    return `<div class="card"><h3>${esc(group.name)}</h3><div class="table-wrap cup-group-table"><table><thead><tr><th>#</th><th>Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  function cupLeagueTable(table) {
+    if (!table?.length) return '<div class="empty">The league phase starts in the autumn.</div>';
+    return `<div class="table-wrap cup-group-table"><table><thead><tr><th>#</th><th>Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th><th>Status</th></tr></thead><tbody>
+      ${table.map((r) => `<tr class="${r.status === 'Direct to Round of 16' ? 'advancing' : ''}"><td class="numeric">${r.position}</td><td class="club-cell"><button class="linklike" data-team="${r.id}"><strong>${esc(r.name)}</strong></button></td><td class="numeric">${r.played}</td><td class="numeric">${r.won}</td><td class="numeric">${r.drawn}</td><td class="numeric">${r.lost}</td><td class="numeric">${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="numeric"><strong>${r.pts}</strong></td><td class="small">${esc(r.status)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+  }
+
+  function cupTieRow(t) {
+    const legs = t.leg1
+      ? `<div class="small" style="flex-basis:100%;text-align:center">${t.leg2 ? `1st leg ${t.leg1.home_goals}–${t.leg1.away_goals} · 2nd leg ${t.leg2.home_goals}–${t.leg2.away_goals} · ` : ''}${t.agg_home != null ? `Agg <strong>${t.agg_home}–${t.agg_away}</strong>` : ''}${t.winner ? ` · <strong>${esc(t.winner)}</strong> advance` : ''}</div>`
+      : '';
+    return `<div class="row" style="flex-wrap:wrap;justify-content:space-between">${legs}<span><button class="linklike" data-team="${t.home_id}">${esc(t.home)}</button></span><strong class="numeric">${t.home_goals == null ? '—' : `${t.home_goals} – ${t.away_goals}`}</strong><span style="text-align:right"><button class="linklike" data-team="${t.away_id}">${esc(t.away)}</button></span></div>`;
   }
 
   async function renderCupDetail() {
@@ -214,14 +223,13 @@
     $('app').innerHTML = SPINNER;
     const data = await api(`/api/league/${UCL_ID}`);
     state.cupData = data;
-    const tabs = [['groups', 'Groups'], ['knockout', 'Knockout'], ['scoring', 'Scoring'], ['matches', 'Matches']];
+    const tabs = [['table', 'League Phase'], ['knockout', 'Knockout'], ['scoring', 'Scoring'], ['matches', 'Matches']];
     let body = '';
-    if (state.cupTab === 'groups') {
-      body = (data.groups || []).length
-        ? `<div class="grid cols-2">${data.groups.map(cupGroupTable).join('')}</div>`
-        : '<div class="empty">Group stage has not been drawn yet.</div>';
+    if (state.cupTab === 'groups') state.cupTab = 'table';
+    if (state.cupTab === 'table') {
+      body = `<div class="card"><h3>League phase</h3><p class="small" style="margin-top:0">${esc(data.format || '')}</p>${cupLeagueTable(data.table)}</div>`;
     } else if (state.cupTab === 'knockout') {
-      body = (data.knockout || []).map((round) => `<div class="card"><h3>${esc(round.stage)}</h3><div class="row-list">${(round.teams || []).length ? round.teams.map((t) => `<div class="row"><span><button class="linklike" data-team="${t.home_id}">${esc(t.home)}</button></span><strong class="numeric">${t.home_goals == null ? '—' : `${t.home_goals} – ${t.away_goals}`}</strong><span style="text-align:right"><button class="linklike" data-team="${t.away_id}">${esc(t.away)}</button></span></div>`).join('') : '<div class="empty">Winners of the previous round will fill this stage.</div>'}</div></div>`).join('');
+      body = (data.knockout || []).map((round) => `<div class="card"><h3>${esc(round.stage)}</h3><div class="row-list">${(round.teams || []).length ? round.teams.map(cupTieRow).join('') : '<div class="empty">Winners of the previous round will fill this stage.</div>'}</div></div>`).join('');
     } else if (state.cupTab === 'scoring') {
       body = `<div class="card"><h3>Champions League scorers</h3>${(data.scorers || []).map((p) => `<div class="row"><span><button class="linklike" data-player="${esc(p.handle || p.id)}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${esc(p.nation)}</div></span><span class="badge">${p.ucl_goals} G · ${p.ucl_assists} A</span></div>`).join('') || '<div class="empty">No Champions League goals yet.</div>'}</div>`;
     } else {

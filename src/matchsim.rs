@@ -139,6 +139,7 @@ pub struct Event {
     pub assist: Option<usize>,
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct MatchOutcome {
     pub goals_a: u8,
     pub goals_b: u8,
@@ -1133,12 +1134,19 @@ fn drive(
     let elite_created = is_playmaker
         && atk.p[pa].attrs.dribbling >= 85
         && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 12.0;
+    // A genuinely elite dribbler carries sometimes regardless of role list:
+    // a great #8 or deep midfielder with 85+ dribbling (dribbling at or near
+    // his passing) still takes players on — without this branch, a
+    // non-playmaker role with equal attributes recorded 0 dribbles forever.
+    let elite_dribbler_any_role = atk.p[pa].attrs.dribbling >= 88
+        && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 8.0;
     let carry = (atk.eff(pa, &atk.dribble) > atk.eff(pa, &atk.passing) && rng.gen::<f32>() < 0.5)
         || (is_playmaker
             && atk.p[pa].attrs.dribbling >= 85
             && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 12.0
             && rng.gen::<f32>() < 0.35)
-        || (elite_created && rng.gen::<f32>() < 0.2);
+        || (elite_created && rng.gen::<f32>() < 0.2)
+        || (!is_playmaker && elite_dribbler_any_role && rng.gen::<f32>() < 0.12);
     // --- Track 3 physics: exposed flanks & the high line. -------------------
     // (a) A carrier operating in a wide channel the *opponent's shape* doesn't
     //     cover gets a real edge — a narrow diamond or back three concedes the
