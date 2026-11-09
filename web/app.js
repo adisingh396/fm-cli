@@ -401,7 +401,7 @@
     const recent = recentData.recent || [];
     $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">${esc(t.league || '')} · ${esc(t.nation || '')}</div><h1 style="margin:8px 0 4px">${esc(t.name || 'Team')}</h1><p class="small" style="margin:0">Rank ${managerData?.rank ?? '—'} · Strength ${number(t.strength ?? 0)} · ${t.squad ?? ''} players</p></div></div>
     <div class="grid cols-2">
-      <div class="card"><h3>Recent form</h3>${recent.length ? recent.slice(-5).map((m) => `<div class="row"><span><span class="badge ${m.result === 'W' ? 'green' : m.result === 'L' ? 'red' : ''}">${m.result}</span> ${esc(m.is_home ? m.home : m.away)} ${m.home_goals}–${m.away_goals} ${esc(m.is_home ? m.away : m.home)}</span><span class="small">Week ${m.week}</span></div>`).join('') : '<div class="empty">No matches yet.</div>'}</div>
+      <div class="card"><h3>Recent form</h3>${recent.length ? recent.slice(-5).map((m) => `<div class="row"><span><span class="badge ${m.result === 'W' ? 'green' : m.result === 'L' ? 'red' : ''}">${m.result}</span> ${esc(m.is_home ? m.home : m.away)} ${m.is_home ? `${m.home_goals}-${m.away_goals}` : `${m.away_goals}-${m.home_goals}`} ${esc(m.is_home ? m.away : m.home)}</span><span class="small">Week ${m.week}</span></div>`).join('') : '<div class="empty">No matches yet.</div>'}</div>
       <div class="card"><h3>Latest results</h3>${recent.length ? recent.map(matchRow).join('') : '<div class="empty">No results yet.</div>'}</div>
     </div>
     <div class="grid cols-2" style="margin-top:14px">
