@@ -48,3 +48,32 @@ Then, back on Vercel, set the frontend's **API endpoint** to your Box host
 the `?api=https://api.example.com` query parameter. The Rust backend already
 returns permissive CORS headers. If you'd rather keep everything on one host,
 the same Rust process serves the dashboard too at the API URL.
+
+## Player database endpoints
+
+The player laboratory merges two different universes:
+
+* the **live world pool** (players actually selected into the season world,
+  including fully generated world-only players); and
+* the **full `data/players.csv` roster** (every source player, including
+  full-database players never promoted into this world's active pool).
+
+```text
+GET /api/players
+GET /api/players?scope=all&sort=ovr&limit=250
+GET /api/players?scope=database&sort=ovr&limit=250
+GET /api/players?scope=world&sort=goals&limit=250
+GET /api/player/db:{PlayerId}
+GET /api/player/db/{PlayerId}
+GET /api/player/wp:{world-index}
+GET /api/player/world/{world-index}
+```
+
+`scope=all` defaults to a deduplicated merge: a source player that is also in
+the live world appears once as the live profile, with the original contract,
+personality, foot, traits and market value attached as `profile` and
+`source_attrs`. `scope=database` returns every matching source row, including
+source-only prospect records; `scope=world` returns the live generated and
+database-backed world players. Filters include `q`/`search`, `nation`,
+`league`, `position`, and `min_ovr`; sort options include `goals`, `assists`,
+`rating`, `apps`, `ovr`, `future`, `created`, `kp`, `tackles`, and `name`.

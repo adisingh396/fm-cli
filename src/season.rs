@@ -178,6 +178,11 @@ fn xi_of(w: &World, ti: usize) -> Vec<usize> {
 /// Agent state: morale and fatigue evolve with results and minutes and feed
 /// the effective rating that selection and match strength both use.
 struct WP {
+    /// Permanent ID in the source database when this world player was loaded
+    /// from `data/players.csv`. `None` identifies a fully generated world-only
+    /// profile (including freshly persisted simregen players before they are
+    /// reloaded from CSV in a later world).
+    db_id: Option<PlayerId>,
     name: String,
     nation: String,
     pos: Position,
@@ -1954,6 +1959,10 @@ fn inject_aditya_prodigy(
     let value = market_value(99, 15, Position::FWD);
     let idx = pool.len();
     pool.push(WP {
+        // `data/players.csv` represents Aditya in the normal loader; if the
+        // row is ever absent and a fresh focal player is synthesized, leave
+        // it world-only rather than pointing at a stale external identifier.
+        db_id: None,
         name: "Aditya Singh".to_string(),
         nation: "India".to_string(),
         pos: Position::FWD,
@@ -3511,6 +3520,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     let page = p.age.clamp(16, 40);
                     pidx.push(pool.len());
                     pool.push(WP {
+                        db_id: Some(p.id),
                         name: p.name.clone(),
                         nation: p.nation.clone(),
                         pos: p.position,
@@ -3729,6 +3739,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         let ovr = age_cap_ovr(gp.overall(), age, wonder);
                         pidx.push(pool.len());
                         pool.push(WP {
+                            db_id: None,
                             name,
                             nation: (*nation).to_string(),
                             pos,
@@ -3914,6 +3925,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                     let ovr = age_cap_ovr(gp.overall(), age, wonder);
                     pidx.push(pool.len());
                     pool.push(WP {
+                        db_id: None,
                         name: gp.name.clone(),
                         nation: gp.nation.clone(),
                         pos,
@@ -6639,6 +6651,7 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
     w.used_names.insert(name.clone());
     let idx = w.pool.len();
     w.pool.push(WP {
+        db_id: None,
         name,
         nation,
         pos,
@@ -12167,6 +12180,21 @@ pub mod web_api {
 
     struct WebState {
         world: World,
+        /// The complete `data/players.csv` roster, retained separately from the
+        /// selected world pool. This is what makes database-only prospects,
+        /// youth players and dormant source profiles searchable through the
+        /// player laboratory even when they were not promoted into the active
+        /// domestic world at build time.
+        database: Database,
+        /// Database position for every source `Player.id`.
+        database_index: std::collections::HashMap<PlayerId, usize>,
+        /// Source club position for every database player, reverse-derived
+        /// from `Club.squad` so CSV profiles always expose their club/league
+        /// even when the `Player.club` field itself is not materialized.
+        source_club_by_player: std::collections::HashMap<PlayerId, usize>,
+        /// Live world-pool index for every loaded source player whose exact
+        /// source ID survived the initial world build.
+        world_by_database: std::collections::HashMap<PlayerId, usize>,
         rng: Pcg64Mcg,
         week: u32,
         schedules: Vec<LeagueSchedule>,
@@ -12217,8 +12245,30 @@ pub mod web_api {
                     rounds: make_schedule(teams),
                 })
                 .collect::<Vec<_>>();
+            let database_index = db
+                .players()
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| (p.id, idx))
+                .collect::<std::collections::HashMap<_, _>>();
+            let source_club_by_player = db
+                .clubs()
+                .iter()
+                .enumerate()
+                .flat_map(|(club_idx, club)| club.squad.iter().map(move |pid| (*pid, club_idx)))
+                .collect::<std::collections::HashMap<_, _>>();
+            let world_by_database = world
+                .pool
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, p)| p.db_id.map(|id| (id, idx)))
+                .collect::<std::collections::HashMap<_, _>>();
             Self {
                 world,
+                database: db,
+                database_index,
+                source_club_by_player,
+                world_by_database,
                 rng,
                 week: 0,
                 schedules,
@@ -12346,6 +12396,7 @@ pub mod web_api {
 
     fn player_json(w: &World, i: usize) -> Value {
         let p = &w.pool[i];
+        let is_database_player = p.db_id.is_some();
         let club = w
             .teams
             .get(p.team)
@@ -12359,6 +12410,15 @@ pub mod web_api {
             .unwrap_or("");
         json!({
             "id": i,
+            "handle": format!("wp:{}", i),
+            "world_id": i,
+            "database_id": p.db_id,
+            "source": if is_database_player {
+                "live-database"
+            } else {
+                "generated-player"
+            },
+            "in_active_world": true,
             "name": p.name,
             "nation": p.nation,
             "position": p.pos.short(),
@@ -12410,6 +12470,174 @@ pub mod web_api {
                 "first_touch": p.attrs.first_touch,
             }
         })
+    }
+
+    fn attrs_json(attrs: &Attributes) -> Value {
+        json!({
+            "pace": attrs.pace,
+            "shooting": attrs.shooting,
+            "passing": attrs.passing,
+            "dribbling": attrs.dribbling,
+            "tackling": attrs.tackling,
+            "heading": attrs.heading,
+            "strength": attrs.strength,
+            "stamina": attrs.stamina,
+            "vision": attrs.vision,
+            "composure": attrs.composure,
+            "goalkeeping": attrs.goalkeeping,
+            "first_touch": attrs.first_touch,
+        })
+    }
+
+    fn source_club<'a>(state: &'a WebState, p: &Player) -> Option<&'a Club> {
+        p.club
+            .and_then(|cid| state.database.clubs().iter().find(|c| c.id == cid))
+            .or_else(|| {
+                state
+                    .source_club_by_player
+                    .get(&p.id)
+                    .and_then(|&idx| state.database.clubs().get(idx))
+            })
+    }
+
+    fn source_profile_json(state: &WebState, db_idx: usize) -> Value {
+        let p = &state.database.players()[db_idx];
+        let club = source_club(state, p);
+        json!({
+            "database_id": p.id,
+            "database_index": db_idx,
+            "name": p.name,
+            "age": p.age,
+            "nation": p.nation,
+            "position": p.position.short(),
+            "overall": p.overall(),
+            "seen_ovr": p.seen_ovr,
+            "potential": p.potential,
+            "attributes": attrs_json(&p.attrs),
+            "source_club": club.map(|c| c.name.as_str()).unwrap_or("unattached"),
+            "source_club_short": club.map(|c| c.short.as_str()).unwrap_or(""),
+            "source_league": club.map(|c| c.league.as_str()).unwrap_or(""),
+            "source_club_id": club.map(|c| c.id),
+            "value": p.value,
+            "wage": p.contract.wage,
+            "contract_years": p.contract.years,
+            "contract_expiry": p.contract_expiry,
+            "release_clause": p.release_clause,
+            "transfer_status": p.transfer_status,
+            "morale": p.morale,
+            "fitness": p.fitness,
+            "form": p.form,
+            "condition": p.condition,
+            "sharpness": p.sharpness,
+            "injury_days": p.injury_days,
+            "yellows": p.yellows,
+            "suspension": p.suspension,
+            "happiness": p.happiness,
+            "scout_knowledge": p.scout_knowledge,
+            "personality": p.personality.label(),
+            "foot": format!("{:?}", p.foot),
+            "weak_foot": p.weak_foot,
+            "skill_moves": p.skill_moves,
+            "traits": p.traits.iter().map(|t| t.label()).collect::<Vec<_>>(),
+            "height_cm": p.height_cm,
+            "season": {
+                "apps": p.stats.apps,
+                "goals": p.stats.goals,
+                "assists": p.stats.assists,
+                "rating": p.stats.avg_rating(),
+            },
+        })
+    }
+
+    /// Full live player detail. A database-backed world player carries its
+    /// original `data/players.csv` contract/personality/profile alongside the
+    /// evolving in-world attributes and statistics.
+    fn player_detail_json(state: &WebState, world_idx: usize) -> Value {
+        let mut out = player_json(&state.world, world_idx);
+        if let Some(db_id) = state.world.pool[world_idx].db_id {
+            if let Some(&db_idx) = state.database_index.get(&db_id) {
+                out["profile"] = source_profile_json(state, db_idx);
+                out["source_attrs"] = source_profile_json(state, db_idx)["attributes"].clone();
+            }
+        }
+        out
+    }
+
+    /// A database player in exactly the JSON shape used by the player
+    /// laboratory. When the same source player entered the live world, the
+    /// top-level stats are the live world stats and `live` exposes the whole
+    /// world profile verbatim. Otherwise the source row is returned with zero
+    /// in-world stats and the untouched source profile.
+    fn database_player_json(state: &WebState, db_idx: usize) -> Value {
+        let p = &state.database.players()[db_idx];
+        let world_idx = state.world_by_database.get(&p.id).copied();
+        let profile = source_profile_json(state, db_idx);
+        if let Some(widx) = world_idx {
+            let mut out = player_detail_json(state, widx);
+            out["id"] = json!(p.id);
+            out["handle"] = json!(format!("db:{}", p.id));
+            out["database_id"] = json!(p.id);
+            out["source"] = json!("database-player");
+            out["source_ovr"] = json!(p.overall());
+            out["source_club"] = profile["source_club"].clone();
+            out["source_league"] = profile["source_league"].clone();
+            out["live"] = out.clone();
+            out["profile"] = profile;
+            out
+        } else {
+            let club = profile["source_club"].clone();
+            let league = profile["source_league"].clone();
+            json!({
+                "id": p.id,
+                "handle": format!("db:{}", p.id),
+                "database_id": p.id,
+                "database_index": db_idx,
+                "world_id": Value::Null,
+                "in_active_world": false,
+                "source": "database-player",
+                "name": p.name,
+                "nation": p.nation,
+                "position": p.position.short(),
+                "club": club,
+                "source_club": profile["source_club"].clone(),
+                "league": league,
+                "source_league": profile["source_league"].clone(),
+                "age": p.age,
+                "ovr": p.overall(),
+                "source_ovr": p.overall(),
+                "pot": p.potential,
+                "apps": 0,
+                "goals": 0,
+                "assists": 0,
+                "rating": 0.0,
+                "shots": 0,
+                "sot": 0,
+                "key_passes": 0,
+                "big_chances": 0,
+                "passes": "0/0",
+                "dribbles": "0/0",
+                "tackles": 0,
+                "interceptions": 0,
+                "fouls": 0,
+                "saves": 0,
+                "clean_sheets": 0,
+                "fatigue": 0,
+                "morale": p.morale,
+                "intl_goals": 0,
+                "intl_assists": 0,
+                "career": {
+                    "apps": 0,
+                    "goals": 0,
+                    "assists": 0,
+                    "kp": 0,
+                    "ballons": 0,
+                    "path": [],
+                },
+                "attrs": profile["attributes"].clone(),
+                "profile": profile,
+                "live": Value::Null,
+            })
+        }
     }
 
     fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
@@ -12493,6 +12721,8 @@ pub mod web_api {
             "total_rounds": total_rounds,
             "remaining_rounds": state.remaining_rounds(),
             "matches_played": state.matches.len(),
+            "database_players": state.database.players().len(),
+            "database_clubs": state.database.clubs().len(),
             "seed": state.seed,
             "started": state.began,
         })
@@ -12524,6 +12754,8 @@ pub mod web_api {
                 "week": state.week,
                 "next_week": state.week + 1,
                 "players": w.pool.len(),
+                "database_players": state.database.players().len(),
+                "database_clubs": state.database.clubs().len(),
                 "teams": w.teams.len(),
                 "leagues": w.league_teams.len(),
                 "total_rounds": state.total_rounds(),
@@ -12531,7 +12763,10 @@ pub mod web_api {
                 "matches_played": played,
                 "seed": state.seed,
             },
-            "top_scorers": top.into_iter().map(|i| player_json(w, i)).collect::<Vec<_>>(),
+            "top_scorers": top
+                .into_iter()
+                .map(|i| player_detail_json(state, i))
+                .collect::<Vec<_>>(),
             "recent_matches": recent,
         })
     }
@@ -12600,7 +12835,11 @@ pub mod web_api {
                 x["position"] = json!(i + 1);
                 x
             }).collect::<Vec<_>>(),
-            "scorers": scorers.into_iter().take(20).map(|i| player_json(w, i)).collect::<Vec<_>>(),
+            "scorers": scorers
+                .into_iter()
+                .take(20)
+                .map(|i| player_detail_json(state, i))
+                .collect::<Vec<_>>(),
             "next_fixtures": fixtures,
             "recent": state.matches.iter().rev()
                 .filter(|m| m.league_idx == li)
@@ -12634,6 +12873,53 @@ pub mod web_api {
     }
 
     fn players_json(state: &WebState, query: &str) -> Value {
+        #[derive(Clone)]
+        enum PlayerCandidate {
+            World(usize),
+            Database(usize),
+        }
+
+        fn metric(state: &WebState, candidate: &PlayerCandidate) -> Value {
+            // Sort metrics are normalized to the same fields for the live
+            // world and the source database. Database-only players therefore
+            // sort by their untouched source profile instead of acquiring
+            // synthetic season output merely to become visible.
+            match candidate {
+                PlayerCandidate::World(i) => {
+                    let p = &state.world.pool[*i];
+                    json!({
+                        "goals": p.goals,
+                        "assists": p.assists,
+                        "rating": p.avg_rating(),
+                        "apps": p.apps,
+                        "kp": p.key_passes,
+                        "created": p.big_chances,
+                        "tackles": p.tackles + p.interceptions,
+                        "ovr": p.ovr,
+                        "pot": p.pot,
+                        "name": p.name,
+                        "source_rank": 0,
+                    })
+                }
+                PlayerCandidate::Database(i) => {
+                    let p = &state.database.players()[*i];
+                    json!({
+                        "goals": p.stats.goals,
+                        "assists": p.stats.assists,
+                        "rating": p.stats.avg_rating(),
+                        "apps": p.stats.apps,
+                        "kp": 0,
+                        "created": 0,
+                        "tackles": 0,
+                        "ovr": p.overall(),
+                        "pot": p.potential,
+                        "name": p.name,
+                        "source_rank": 1,
+                    })
+                }
+            }
+        }
+
         let w = &state.world;
         let q = query_value(query, "q")
             .or_else(|| query_value(query, "search"))
@@ -12652,6 +12938,11 @@ pub mod web_api {
             .and_then(|s| s.parse::<u8>().ok())
             .unwrap_or(0);
         let sort = query_value(query, "sort").unwrap_or_else(|| "goals".to_string());
+        let scope = query_value(query, "scope")
+            .unwrap_or_else(|| "all".to_string())
+            .to_lowercase();
+        let include_world = scope == "all" || scope == "world";
+        let include_database = scope == "all" || scope == "database";
         let limit = query_value(query, "limit")
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(250)
@@ -12660,53 +12951,211 @@ pub mod web_api {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
 
-        let mut ids: Vec<usize> = w
-            .pool
+        let world_ids: Vec<usize> = if include_world {
+            w.pool
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| {
+                    (q.is_empty()
+                        || p.name.to_lowercase().contains(&q)
+                        || p.nation.to_lowercase().contains(&q)
+                        || p.db_id
+                            .map(|id| id.to_string())
+                            .as_deref()
+                            .unwrap_or("")
+                            .contains(&q))
+                        && (nation.is_empty() || p.nation.to_lowercase().contains(&nation))
+                        && (league_name.is_empty()
+                            || w.teams
+                                .get(p.team)
+                                .and_then(|t| w.league_meta.get(t.league_idx))
+                                .map(|m| m.label.to_lowercase())
+                                .map(|l| l.contains(&league_name))
+                                .unwrap_or(false))
+                        && (position.is_empty() || p.pos.short().eq_ignore_ascii_case(&position))
+                        && p.ovr >= min_ovr
+                })
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let world_total = world_ids.len();
+
+        let database_ids: Vec<usize> = if include_database {
+            state
+                .database
+                .players()
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| {
+                    let club = source_club(state, p);
+                    let club_name = club.map(|c| c.name.to_lowercase()).unwrap_or_default();
+                    let club_league = club.map(|c| c.league.to_lowercase()).unwrap_or_default();
+                    (q.is_empty()
+                        || p.name.to_lowercase().contains(&q)
+                        || p.nation.to_lowercase().contains(&q)
+                        || club_name.contains(&q)
+                        || club_league.contains(&q)
+                        || p.id.to_string().contains(&q))
+                        && (nation.is_empty() || p.nation.to_lowercase().contains(&nation))
+                        && (league_name.is_empty()
+                            || club_name.contains(&league_name)
+                            || club_league.contains(&league_name))
+                        && (position.is_empty()
+                            || p.position.short().eq_ignore_ascii_case(&position))
+                        && p.overall() >= min_ovr
+                })
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let database_total = database_ids.len();
+        let database_active_total = database_ids
             .iter()
-            .enumerate()
-            .filter(|(_, p)| !p.retired)
-            .filter(|(_, p)| {
-                (q.is_empty()
-                    || p.name.to_lowercase().contains(&q)
-                    || p.nation.to_lowercase().contains(&q))
-                    && (nation.is_empty() || p.nation.to_lowercase().contains(&nation))
-                    && (league_name.is_empty()
-                        || w.teams
-                            .get(p.team)
-                            .and_then(|t| w.league_meta.get(t.league_idx))
-                            .map(|m| m.label.to_lowercase())
-                            .map(|l| l.contains(&league_name))
-                            .unwrap_or(false))
-                    && (position.is_empty() || p.pos.short().eq_ignore_ascii_case(&position))
-                    && p.ovr >= min_ovr
+            .filter(|&&i| {
+                state
+                    .world_by_database
+                    .contains_key(&state.database.players()[i].id)
             })
-            .map(|(i, _)| i)
-            .collect();
-        ids.sort_by(|&a, &b| {
-            let (x, y) = (&w.pool[a], &w.pool[b]);
+            .count();
+        let database_only_total = database_total.saturating_sub(database_active_total);
+
+        let mut candidates: Vec<PlayerCandidate> = Vec::with_capacity(world_total + database_total);
+        let active_world_ids: std::collections::HashSet<usize> =
+            world_ids.iter().copied().collect();
+        candidates.extend(world_ids.into_iter().map(PlayerCandidate::World));
+        for i in database_ids {
+            let id = state.database.players()[i].id;
+            // In `all`, the live world representation already carries the
+            // exact source profile through `profile`; avoid a duplicate row
+            // for the same database identity. If the live candidate was
+            // filtered out by a world-specific filter, retain the database
+            // representation so the player remains discoverable.
+            if !scope.eq_ignore_ascii_case("database")
+                && state
+                    .world_by_database
+                    .get(&id)
+                    .is_some_and(|world_idx| active_world_ids.contains(world_idx))
+            {
+                continue;
+            }
+            candidates.push(PlayerCandidate::Database(i));
+        }
+
+        candidates.sort_by(|a, b| {
+            let x = metric(state, a);
+            let y = metric(state, b);
             let ord = match sort.as_str() {
-                "rating" => y
-                    .avg_rating()
-                    .partial_cmp(&x.avg_rating())
+                "rating" => y["rating"]
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .partial_cmp(&x["rating"].as_f64().unwrap_or(0.0))
                     .unwrap_or(std::cmp::Ordering::Equal),
-                "apps" => y.apps.cmp(&x.apps),
-                "assists" => y.assists.cmp(&x.assists).then(y.goals.cmp(&x.goals)),
-                "kp" => y.key_passes.cmp(&x.key_passes),
-                "created" => y.big_chances.cmp(&x.big_chances),
-                "tackles" => (y.tackles + y.interceptions).cmp(&(x.tackles + x.interceptions)),
-                "future" => y.pot.cmp(&x.pot).then(y.ovr.cmp(&x.ovr)),
-                _ => y.goals.cmp(&x.goals).then(y.assists.cmp(&x.assists)),
+                "apps" => y["apps"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["apps"].as_u64().unwrap_or(0)),
+                "assists" => y["assists"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["assists"].as_u64().unwrap_or(0))
+                    .then(
+                        y["goals"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .cmp(&x["goals"].as_u64().unwrap_or(0)),
+                    ),
+                "kp" => y["kp"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["kp"].as_u64().unwrap_or(0)),
+                "created" => y["created"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["created"].as_u64().unwrap_or(0)),
+                "tackles" => y["tackles"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["tackles"].as_u64().unwrap_or(0)),
+                "future" => y["pot"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["pot"].as_u64().unwrap_or(0))
+                    .then(
+                        y["ovr"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .cmp(&x["ovr"].as_u64().unwrap_or(0)),
+                    ),
+                "ovr" | "overall" => y["ovr"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["ovr"].as_u64().unwrap_or(0))
+                    .then(
+                        y["pot"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .cmp(&x["pot"].as_u64().unwrap_or(0)),
+                    ),
+                "name" => x["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(y["name"].as_str().unwrap_or("")),
+                _ => y["goals"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&x["goals"].as_u64().unwrap_or(0))
+                    .then(
+                        y["assists"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .cmp(&x["assists"].as_u64().unwrap_or(0)),
+                    ),
             };
-            ord.then(y.ovr.cmp(&x.ovr)).then(x.name.cmp(&y.name))
+            ord.then(
+                x["ovr"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&y["ovr"].as_u64().unwrap_or(0)),
+            )
+            .then(
+                x["source_rank"]
+                    .as_u64()
+                    .unwrap_or(99)
+                    .cmp(&y["source_rank"].as_u64().unwrap_or(99)),
+            )
+            .then(
+                x["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(y["name"].as_str().unwrap_or("")),
+            )
         });
-        let total = ids.len();
-        let page = ids
+
+        let total = candidates.len();
+        let page = candidates
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(|i| player_json(w, i))
+            .map(|candidate| match candidate {
+                PlayerCandidate::World(i) => player_detail_json(state, i),
+                PlayerCandidate::Database(i) => database_player_json(state, i),
+            })
             .collect::<Vec<_>>();
-        json!({"total": total, "offset": offset, "limit": limit, "players": page})
+        json!({
+            "total": total,
+            "world_total": world_total,
+            "database_total": database_total,
+            "database_active_total": database_active_total,
+            "database_only_total": database_only_total,
+            "offset": offset,
+            "limit": limit,
+            "scope": scope,
+            "sort": sort,
+            "players": page,
+        })
     }
 
     fn match_detail_json(state: &WebState, id: usize) -> Option<Value> {
@@ -12822,7 +13271,9 @@ pub mod web_api {
             reader.read_exact(&mut body).ok()?;
         }
         let mut split = target.splitn(2, '?');
-        let path = split.next().unwrap_or("/").to_string();
+        // Percent-decode the path so browser-encoded stable handles such as
+        // `db%3A123` and `wp%3A45` route identically to `db:123`/`wp:45`.
+        let path = url_decode(split.next().unwrap_or("/"));
         let query = split.next().unwrap_or_default().to_string();
         Some((
             method,
@@ -12951,13 +13402,39 @@ pub mod web_api {
             let s = state.lock().unwrap();
             players_json(&s, &query)
         } else if path.starts_with("/api/player/") {
-            let id = path
-                .trim_start_matches("/api/player/")
-                .parse::<usize>()
-                .unwrap_or(0);
+            let rest = path.trim_start_matches("/api/player/");
             let s = state.lock().unwrap();
-            if id < s.world.pool.len() {
-                player_json(&s.world, id)
+            // Stable handles are deliberate: `db:{PlayerId}` and
+            // `wp:{world-index}` cannot collide with the legacy bare world
+            // index. `db/{id}` and `world/{id}` are equivalent readable
+            // variants for deep links from the browser.
+            if let Some(database_id) = rest
+                .strip_prefix("db:")
+                .or_else(|| rest.strip_prefix("db/"))
+                .and_then(|v| v.parse::<PlayerId>().ok())
+            {
+                match s.database_index.get(&database_id) {
+                    Some(&db_idx) => database_player_json(&s, db_idx),
+                    None => json!({"error": "database player not found"}),
+                }
+            } else if let Some(world_id) = rest
+                .strip_prefix("world:")
+                .or_else(|| rest.strip_prefix("wp:"))
+                .or_else(|| rest.strip_prefix("world/"))
+                .or_else(|| rest.strip_prefix("wp/"))
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                if world_id < s.world.pool.len() {
+                    player_detail_json(&s, world_id)
+                } else {
+                    json!({"error": "player not found"})
+                }
+            } else if let Ok(id) = rest.parse::<usize>() {
+                if id < s.world.pool.len() {
+                    player_detail_json(&s, id)
+                } else {
+                    json!({"error": "player not found"})
+                }
             } else {
                 json!({"error": "player not found"})
             }
@@ -13067,6 +13544,7 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     fn mkp(name: &str, pos: Position, v: u8, age: u8, pot: u8, team: usize, homegrown: bool) -> WP {
         WP {
+            db_id: None,
             name: name.to_string(),
             nation: "Testland".to_string(),
             pos,

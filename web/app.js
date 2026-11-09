@@ -15,7 +15,7 @@
     return location.origin && location.origin !== 'null' ? location.origin : DEFAULT_API;
   }
   let API = storedApi();
-  let state = { overview: null, leagues: [], players: { players: [], total: 0 }, page: 'overview', leagueIndex: 0, playerQuery: '', sort: 'goals', matchQuery: '' };
+  let state = { overview: null, leagues: [], players: { players: [], total: 0 }, page: 'overview', leagueIndex: 0, playerQuery: '', sort: 'goals', scope: 'all', matchQuery: '' };
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => new Intl.NumberFormat().format(n ?? 0);
@@ -61,11 +61,17 @@
       </div>`).join('')}</div>`;
   }
   function playerCard(p) {
-    return `<button class="player-tile card" data-player="${p.id}">
-      <strong>${esc(p.name)}</strong>
+    const handle = esc(p.handle || p.id);
+    const sourceLabel = p.source === 'database-player' ? 'Source database' : p.source === 'live-database' ? 'Live + source profile' : 'Generated world player';
+    const sourceDetail = p.database_id ? ` · ID ${p.database_id}` : '';
+    const status = p.in_active_world === false ? ' · not in active world' : '';
+    return `<button class="player-tile card" data-player="${handle}">
+      <span class="pill">${sourceLabel}</span>
+      <strong style="margin-top:9px">${esc(p.name)}</strong>
       <span>${esc(p.club)} · ${esc(p.nation)}</span>
       <span style="margin-top:9px"><span class="badge">OVR ${p.ovr}</span> <span class="badge">G ${p.goals} · A ${p.assists}</span></span>
-      <span style="margin-top:8px">Avg rating ${number(p.rating)} · POT ${p.pot} · Age ${p.age}</span>
+      <span style="margin-top:8px">Avg rating ${number(p.rating)} · POT ${p.pot} · Age ${p.age}${sourceDetail}${status}</span>
+      <span>${esc(p.league || '')}</span>
     </button>`;
   }
 
@@ -79,8 +85,8 @@
         <div><div class="pill good">Live · week ${w.week ?? 0}</div><h2>One interconnected world. Eleven million decisions at a time.</h2><p>Simulate one week at a time, inspect every match, and zoom into every player. Ballon narratives, national teams, regional cups, transfers, national pools and the data lab all share the same underlying world state.</p></div>
         <div class="hero-metrics">
           ${kpi('Players', fmt(w.players), 'world pool')}
+          ${kpi('Database players', fmt(w.database_players), `${fmt(w.database_clubs)} source clubs`)}
           ${kpi('Teams', fmt(w.teams), 'active clubs')}
-          ${kpi('Leagues', fmt(w.leagues), 'full domestic worlds')}
           ${kpi('Matches played', fmt(w.matches_played), `round ${w.week ?? 0} complete`)}
         </div>
       </div>
@@ -92,7 +98,7 @@
           <div class="row"><span>Domestic leagues</span><strong>${fmt(w.leagues)}</strong></div>
           <div class="row"><span>Season seed</span><strong>${esc(w.seed ?? '')}</strong></div>
         </div></div>
-        <div class="card"><h3>Top scorers</h3>${top.length ? `<div class="row-list">${top.slice(0, 6).map((p, i) => `<div class="row"><span>${i+1}. <button class="linklike" data-player="${p.id}">${esc(p.name)}</button><div class="small">${esc(p.club)}</div></span><strong>${p.goals} goals</strong></div>`).join('')}</div>` : '<p>No scorer data yet.</p>'}</div>
+        <div class="card"><h3>Top scorers</h3>${top.length ? `<div class="row-list">${top.slice(0, 6).map((p, i) => `<div class="row"><span>${i+1}. <button class="linklike" data-player="${esc(p.handle || p.id)}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${esc(p.league || '')}</div></span><strong>${p.goals} goals</strong></div>`).join('')}</div>` : '<p>No scorer data yet.</p>'}</div>
       </div>
       <div class="grid cols-2"><div class="card"><h2>Latest match signals</h2>${scoreboard(state.overview?.recent_matches || [], 8)}</div>
       <div class="card"><h2>Your next decision</h2><p>Open a match and inspect the 22 start-line stat lines, expected goals, shot quality, possession, events and ratings. Open a player to see season, career and attribute detail.</p><button data-page="fixtures">Open fixtures</button> <button data-page="players">Open player laboratory</button></div></div>`;
@@ -126,7 +132,7 @@
         <div class="card" style="grid-column:span 2"><h2>League table</h2><div class="table-wrap"><table><thead><tr><th>#</th><th>Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>
         ${table.map((r) => `<tr><td class="numeric">${r.position}</td><td><strong>${esc(r.name)}</strong><div class="small">${esc(r.nation)}</div></td><td class="numeric">${r.table.played}</td><td class="numeric">${r.table.won}</td><td class="numeric">${r.table.drawn}</td><td class="numeric">${r.table.lost}</td><td class="numeric">${r.table.gf}</td><td class="numeric">${r.table.ga}</td><td class="numeric">${r.table.gd}</td><td class="numeric"><strong>${r.table.pts}</strong></td></tr>`).join('')}
         </tbody></table></div></div>
-        <div class="card"><h3>Scoring leaders</h3>${scorers.slice(0, 12).map((p) => `<div class="row"><span><button data-player="${p.id}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${p.apps} apps</div></span><strong>${p.goals} G · ${p.assists} A</strong></div>`).join('') || '<p>No league scorer data.</p>'}</div>
+        <div class="card"><h3>Scoring leaders</h3>${scorers.slice(0, 12).map((p) => `<div class="row"><span><button data-player="${esc(p.handle || p.id)}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${p.apps} apps</div></span><strong>${p.goals} G · ${p.assists} A</strong></div>`).join('') || '<p>No league scorer data.</p>'}</div>
       </div>
       <div class="grid cols-2"><div class="card"><h2>Next fixtures</h2>${(data.next_fixtures || []).map((f) => `<div class="row"><span>${esc(f.home)} vs ${esc(f.away)}</span><span class="pill">scheduled</span></div>`).join('') || '<p>No fixtures remain.</p>'}</div>
       <div class="card"><h2>Recent league matches</h2>${scoreboard(data.recent || [], 14)}</div></div>`;
@@ -154,13 +160,15 @@
 
   function renderPlayers() {
     $('view-title').textContent = 'Player laboratory';
-    $('view-subtitle').textContent = 'Search any generated or real player across the 23k-player database.';
+    $('view-subtitle').textContent = 'Every source-database prospect plus every generated world player, with live in-season detail where one exists.';
     const p = state.players;
+    const census = p.database_total ? `${fmt(p.database_total)} database profiles · ${fmt(p.database_only_total || 0)} source-only · ${fmt(p.database_active_total || 0)} live in the world` : `${fmt(p.total || 0)} results`;
     $('app').innerHTML = `<div class="card"><div class="toolbar">
-      <input id="player-q" placeholder="Search name or nation…" value="${esc(state.playerQuery)}"/>
-      <select id="player-sort"><option value="goals" ${state.sort === 'goals' ? 'selected' : ''}>Goals</option><option value="assists" ${state.sort === 'assists' ? 'selected' : ''}>Assists</option><option value="rating" ${state.sort === 'rating' ? 'selected' : ''}>Average rating</option><option value="ovr" ${state.sort === 'ovr' ? 'selected' : ''}>Overall</option><option value="future" ${state.sort === 'future' ? 'selected' : ''}>Potential</option><option value="created" ${state.sort === 'created' ? 'selected' : ''}>Chances created</option><option value="kp" ${state.sort === 'kp' ? 'selected' : ''}>Key passes</option></select>
+      <input id="player-q" placeholder="Search name, nation, club, league or ID…" value="${esc(state.playerQuery)}"/>
+      <select id="player-scope"><option value="all" ${state.scope === 'all' ? 'selected' : ''}>All players</option><option value="database" ${state.scope === 'database' ? 'selected' : ''}>Full database</option><option value="world" ${state.scope === 'world' ? 'selected' : ''}>Live world only</option></select>
+      <select id="player-sort"><option value="goals" ${state.sort === 'goals' ? 'selected' : ''}>Goals</option><option value="assists" ${state.sort === 'assists' ? 'selected' : ''}>Assists</option><option value="rating" ${state.sort === 'rating' ? 'selected' : ''}>Average rating</option><option value="ovr" ${state.sort === 'ovr' ? 'selected' : ''}>Overall</option><option value="future" ${state.sort === 'future' ? 'selected' : ''}>Potential</option><option value="created" ${state.sort === 'created' ? 'selected' : ''}>Chances created</option><option value="kp" ${state.sort === 'kp' ? 'selected' : ''}>Key passes</option><option value="apps" ${state.sort === 'apps' ? 'selected' : ''}>Appearances</option><option value="name" ${state.sort === 'name' ? 'selected' : ''}>Name</option></select>
       <button id="load-players">Search players</button>
-      <span class="pill">${fmt(p.total || 0)} results</span>
+      <span class="pill">${fmt(p.total || 0)} results · ${census}</span>
     </div><div class="player-grid">${(p.players || []).map(playerCard).join('') || '<div class="empty">No players match.</div>'}</div></div>`;
     bindDynamic();
   }
@@ -240,7 +248,8 @@
   async function loadPlayers() {
     state.playerQuery = $('player-q')?.value || '';
     state.sort = $('player-sort')?.value || 'goals';
-    const qs = new URLSearchParams({ q: state.playerQuery, sort: state.sort, limit: '250' });
+    state.scope = $('player-scope')?.value || 'all';
+    const qs = new URLSearchParams({ q: state.playerQuery, sort: state.sort, scope: state.scope, limit: '250' });
     state.players = await api(`/api/players?${qs}`);
     renderPlayers();
   }
@@ -264,35 +273,54 @@
   }
 
   async function openPlayer(id) {
-    const p = await api(`/api/player/${id}`);
+    const raw = String(id || '');
+    const endpoint = raw.includes(':') ? `/api/player/${encodeURIComponent(raw)}` : `/api/player/${raw}`;
+    const p = await api(endpoint);
+    const live = p.live || p;
+    const profile = p.profile || {};
+    const profileTraits = Array.isArray(profile.traits) && profile.traits.length ? profile.traits.join(', ') : 'None listed';
+    const sourceProfile = p.profile ? `<div class="card"><h3>Source database dossier</h3><div class="row-list">
+      <div class="row"><span>Database ID</span><strong>${profile.database_id ?? p.database_id ?? '—'}</strong></div>
+      <div class="row"><span>Source club / league</span><strong style="text-align:right">${esc(profile.source_club || 'Unattached')}<br><span class="small">${esc(profile.source_league || 'No league listed')}</span></strong></div>
+      <div class="row"><span>Original rating / potential</span><strong>${profile.overall ?? '—'} / ${profile.potential ?? '—'} (card ${profile.seen_ovr ?? '—'})</strong></div>
+      <div class="row"><span>Market value</span><strong>${fmt(profile.value ?? 0)}</strong></div>
+      <div class="row"><span>Wage / contract</span><strong>${fmt(profile.wage ?? 0)} · ${profile.contract_years ?? 0} yrs</strong></div>
+      <div class="row"><span>Foot / weak foot / skill</span><strong>${esc(profile.foot || '—')} · ${profile.weak_foot ?? '—'} · ${profile.skill_moves ?? '—'}</strong></div>
+      <div class="row"><span>Personality</span><strong>${esc(profile.personality || '—')}</strong></div>
+      <div class="row"><span>Height / traits</span><strong style="text-align:right">${profile.height_cm ? `${profile.height_cm} cm` : 'Unknown'}<br><span class="small">${esc(profileTraits)}</span></strong></div>
+      <div class="row"><span>Fitness / sharpness / condition</span><strong>${profile.fitness ?? '—'} · ${profile.sharpness ?? '—'} · ${profile.condition ?? '—'}</strong></div>
+      <div class="row"><span>Scout knowledge / happiness</span><strong>${profile.scout_knowledge ?? '—'} · ${profile.happiness ?? '—'}</strong></div>
+    </div></div>` : `<div class="card"><h3>Source database dossier</h3><p>This player is generated directly in the simulation world and has no original CSV dossier.</p></div>`;
     openDrawer(`
-      <div class="pill">${esc(p.nation)} · ${esc(p.club)}</div>
-      <h2 style="margin:12px 0">${esc(p.name)}</h2>
+      <div class="pill">${esc(live.nation)} · ${esc(live.club)} · ${p.in_active_world === false ? 'Source-only' : 'Live world'}</div>
+      <h2 style="margin:12px 0">${esc(live.name)}</h2>
       <div class="grid cols-4">
-        ${kpi('Overall', p.ovr, `potential ${p.pot}`)}
-        ${kpi('Age', p.age, `${esc(p.position)} · ${esc(p.league)}`)}
-        ${kpi('Apps / goals', `${p.apps} / ${p.goals}`, `${p.assists} assists`)}
-        ${kpi('Average rating', number(p.rating), `${p.key_passes} key passes`)}
+        ${kpi('Current overall', live.ovr, `potential ${live.pot}`)}
+        ${kpi('Age', live.age, `${esc(live.position)} · ${esc(live.league)}`)}
+        ${kpi('Apps / goals', `${live.apps} / ${live.goals}`, `${live.assists} assists`)}
+        ${kpi('Average rating', number(live.rating), `${live.key_passes} key passes`)}
       </div>
       <div class="detail-grid">
-        <div class="card"><h3>Attributes</h3>${Object.entries(p.attrs || {}).map(([k, v]) => `<div class="row"><span style="text-transform:capitalize">${esc(k.replaceAll('_',' '))}</span><strong>${v}</strong></div><div class="bar"><i style="width:${Math.min(100, Number(v) * 1.01)}%"></i></div>`).join('')}</div>
+        <div class="card"><h3>Attributes</h3>${Object.entries(live.attrs || {}).map(([k, v]) => `<div class="row"><span style="text-transform:capitalize">${esc(k.replaceAll('_',' '))}</span><strong>${v}</strong></div><div class="bar"><i style="width:${Math.min(100, Number(v) * 1.01)}%"></i></div>`).join('')}</div>
         <div><div class="card"><h3>Season microdata</h3><div class="row-list">
-          <div class="row"><span>Shots</span><strong>${p.shots} (${p.sot} on target)</strong></div>
-          <div class="row"><span>Big chances created</span><strong>${p.big_chances}</strong></div>
-          <div class="row"><span>Passes</span><strong>${esc(p.passes)}</strong></div>
-          <div class="row"><span>Dribbles</span><strong>${esc(p.dribbles)}</strong></div>
-          <div class="row"><span>Tackles + interceptions</span><strong>${p.tackles + p.interceptions}</strong></div>
-          <div class="row"><span>Saves / clean sheets</span><strong>${p.saves} / ${p.clean_sheets}</strong></div>
-          <div class="row"><span>Fatigue / morale</span><strong>${p.fatigue} / ${p.morale}</strong></div>
+          <div class="row"><span>Shots</span><strong>${live.shots} (${live.sot} on target)</strong></div>
+          <div class="row"><span>Big chances created</span><strong>${live.big_chances}</strong></div>
+          <div class="row"><span>Passes</span><strong>${esc(live.passes)}</strong></div>
+          <div class="row"><span>Dribbles</span><strong>${esc(live.dribbles)}</strong></div>
+          <div class="row"><span>Tackles + interceptions</span><strong>${live.tackles + live.interceptions}</strong></div>
+          <div class="row"><span>Saves / clean sheets</span><strong>${live.saves} / ${live.clean_sheets}</strong></div>
+          <div class="row"><span>Fatigue / morale</span><strong>${live.fatigue} / ${live.morale}</strong></div>
+          <div class="row"><span>International output</span><strong>${live.intl_goals ?? 0} goals · ${live.intl_assists ?? 0} assists</strong></div>
         </div></div>
         <div class="card"><h3>Career</h3><div class="row-list">
-          <div class="row"><span>Apps</span><strong>${fmt(p.career?.apps ?? 0)}</strong></div>
-          <div class="row"><span>Goals</span><strong>${fmt(p.career?.goals ?? 0)}</strong></div>
-          <div class="row"><span>Assists</span><strong>${fmt(p.career?.assists ?? 0)}</strong></div>
-          <div class="row"><span>Key passes</span><strong>${fmt(p.career?.kp ?? 0)}</strong></div>
-          <div class="row"><span>Ballon d'Ors</span><strong>${p.career?.ballons ?? 0}</strong></div>
-          <div class="row"><span>Club path</span><strong style="max-width:65%;text-align:right">${esc((p.career?.path || []).join(' → ') || 'No move yet')}</strong></div>
-        </div></div></div>
+          <div class="row"><span>Apps</span><strong>${fmt(live.career?.apps ?? 0)}</strong></div>
+          <div class="row"><span>Goals</span><strong>${fmt(live.career?.goals ?? 0)}</strong></div>
+          <div class="row"><span>Assists</span><strong>${fmt(live.career?.assists ?? 0)}</strong></div>
+          <div class="row"><span>Key passes</span><strong>${fmt(live.career?.kp ?? 0)}</strong></div>
+          <div class="row"><span>Ballon d'Ors</span><strong>${live.career?.ballons ?? 0}</strong></div>
+          <div class="row"><span>Club path</span><strong style="max-width:65%;text-align:right">${esc((live.career?.path || []).join(' → ') || 'No move yet')}</strong></div>
+        </div></div>
+        ${sourceProfile}
       </div>`);
   }
 
@@ -325,6 +353,7 @@
     $('load-players')?.addEventListener('click', loadPlayers);
     $('player-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPlayers(); });
     $('player-sort')?.addEventListener('change', loadPlayers);
+    $('player-scope')?.addEventListener('change', loadPlayers);
   }
 
   document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
