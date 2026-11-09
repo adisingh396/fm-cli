@@ -1116,37 +1116,29 @@ fn drive(
     let pres = def.eff(pd, &def.defend) * if man_marked { exec } else { 1.0 };
     // Isolated duels resolve steeply on the raw gap (no help to hide behind);
     // zonal duels stay saturated.
-    // Number-10s (Advanced / Deep-Lying Playmakers whose dribbling is
-    // near their passing) carry the ball into the next phase sometimes
-    // rather than always playing it — without this, a generational #10
-    // recorded 0 dribbles a tournament, which no observer would ever
-    // believe. Scoped to playmaker roles + genuinely elite dribbling so
-    // midfield volume (and the shot-volume guard) is untouched.
-    let is_playmaker = matches!(
-        atk.p[pa].role,
-        Role::AdvancedPlaymaker
-            | Role::DeepLyingPlaymaker
-            | Role::FalseNine
-            | Role::InsideForward
-            | Role::ShadowStriker
-            | Role::Winger
-    );
-    let elite_created = is_playmaker
-        && atk.p[pa].attrs.dribbling >= 85
-        && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 12.0;
-    // A genuinely elite dribbler carries sometimes regardless of role list:
-    // a great #8 or deep midfielder with 85+ dribbling (dribbling at or near
-    // his passing) still takes players on — without this branch, a
-    // non-playmaker role with equal attributes recorded 0 dribbles forever.
-    let elite_dribbler_any_role = atk.p[pa].attrs.dribbling >= 88
-        && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 8.0;
-    let carry = (atk.eff(pa, &atk.dribble) > atk.eff(pa, &atk.passing) && rng.gen::<f32>() < 0.5)
-        || (is_playmaker
-            && atk.p[pa].attrs.dribbling >= 85
-            && atk.eff(pa, &atk.dribble) >= atk.eff(pa, &atk.passing) - 12.0
-            && rng.gen::<f32>() < 0.35)
-        || (elite_created && rng.gen::<f32>() < 0.2)
-        || (!is_playmaker && elite_dribbler_any_role && rng.gen::<f32>() < 0.12);
+    // Carry appetite is a pure skill ladder, independent of role and
+    // position: the dribbling attribute decides who takes players on. A
+    // 90-dribbling winger, a deep-lying #8 or even a ball-playing defender
+    // with that control will beat men when the attribute says so; a
+    // 60-dribbling striker never becomes a carrier just because his shirt
+    // says "winger". Dribbling at or above a player's own passing means the
+    // ball at feet is genuinely his best way forward, so he backs himself
+    // often; below that he carries like a real footballer — occasionally
+    // when the skill justifies it.
+    let drib_skill = atk.eff(pa, &atk.dribble);
+    let vs_passing = drib_skill - atk.eff(pa, &atk.passing);
+    // Raw skill bands (the attribute itself, not the fatigue-scaled
+    // effective value, so a 90-dribbling veteran still dribbles like one):
+    // the appetite is positional-blind, only the attribute decides.
+    let raw_drib = atk.p[pa].attrs.dribbling as f32;
+    let vs_passing = drib_skill - atk.eff(pa, &atk.passing);
+    let carry = if vs_passing > 0.0 {
+        rng.gen::<f32>() < 0.5
+    } else if raw_drib >= 85.0 {
+        rng.gen::<f32>() < 0.12
+    } else {
+        raw_drib >= 75.0 && vs_passing >= -4.0 && rng.gen::<f32>() < 0.06
+    };
     // --- Track 3 physics: exposed flanks & the high line. -------------------
     // (a) A carrier operating in a wide channel the *opponent's shape* doesn't
     //     cover gets a real edge — a narrow diamond or back three concedes the

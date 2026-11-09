@@ -110,7 +110,7 @@
     const week = w?.week ?? 0;
     if (week === state.lastNewsWeek) return;
     state.lastNewsWeek = week;
-    if (week === 0) { addNews(The  season is ready: leagues loaded and the Champions League drawn. Press Play or Step week.); return; }
+    if (week === 0) { addNews(`The ${state.overview?.world?.year ?? 2026} season is ready: leagues loaded and the Champions League drawn. Press Play or Step week.`); return; }
     const top = state.overview?.top_scorers?.[0];
     if (top) {
       const followed = (state.followedPlayers || []).includes(top.handle || top.id);
@@ -153,12 +153,16 @@
     }
     return [...map.entries()].sort((a, b) => a[0] - b[0]);
   }
+  // National-team sides have no club page: render their names as plain text.
+  function sideName(id, name) {
+    return id == null || id >= 1000000 ? esc(name) : `<button class="linklike" data-team="${id}">${esc(name)}</button>`;
+  }
   function matchRow(m) {
     return `<div class="match-row" data-match="${m.id}" role="button" tabindex="0" aria-label="${esc(m.home)} ${m.home_goals} to ${m.away_goals} ${esc(m.away)}">
       <span class="status">FT</span>
-      <span class="home"><button class="linklike" data-team="${m.home_team}">${esc(m.home)}</button>${crest(m.home)}</span>
+      <span class="home">${sideName(m.home_team, m.home)}${crest(m.home)}</span>
       <span class="score">${m.home_goals} - ${m.away_goals}</span>
-      <span class="away">${crest(m.away)}<button class="linklike" data-team="${m.away_team}">${esc(m.away)}</button></span>
+      <span class="away">${crest(m.away)}${sideName(m.away_team, m.away)}</span>
     </div>`;
   }
   function fixtureRow(f) {
