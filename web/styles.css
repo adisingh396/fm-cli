@@ -100,7 +100,10 @@ nav button.active { background: #182019; border-left-color: var(--gold); color: 
 .sidebar-card strong { font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
 .sidebar-card.small { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .actions { display: grid; gap: 7px; }
-.actions button { width: 100%; }
+.actions button, .actions select { width: 100%; }
+#play-pause { background: #185c38; border-color: #2f8a58; color: #eef7f0; font-weight: 800; }
+#play-pause[aria-pressed="true"] { background: #5a3f1d; border-color: #b58c3f; }
+.control-label { color: var(--faint); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
 .kpi-label { color: var(--faint); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
 #api-status { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .sidebar-card input { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; }
@@ -113,6 +116,25 @@ header p { color: var(--muted); margin: 0; }
 .header-actions { display: flex; gap: 9px; align-items: end; flex-wrap: wrap; justify-content: flex-end; }
 .header-actions input { width: min(360px, 28vw); min-height: 42px; }
 .header-actions button { min-height: 42px; }
+.clock-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+  background: #0e120e;
+}
+.clock-metric { padding: 11px 14px; border-right: 1px solid var(--line); }
+.clock-metric:last-child { border-right: 0; }
+.clock-metric strong { display: block; margin-top: 5px; font-size: 15px; font-variant-numeric: tabular-nums; }
+.news-strip {
+  display: flex; gap: 12px; align-items: baseline;
+  margin: 0 0 16px; padding: 9px 12px;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  background: #0d110d; color: #d8dfda;
+}
+.news-label { color: var(--gold); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; white-space: nowrap; }
+#news-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #app { animation: fade .22s ease-out; }
 @keyframes fade { from { opacity: .55; } to { opacity: 1; } }
 
@@ -211,6 +233,10 @@ tbody tr:hover { background: #152017; }
   main { margin: 0; width: 100%; }
   .hero, .grid.cols-2, .grid.cols-3, .grid.cols-4, .detail-grid { grid-template-columns: 1fr; }
   header { align-items: stretch; flex-direction: column; }
+  .clock-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .clock-metric:nth-child(2) { border-right: 0; }
+  .clock-metric:nth-child(1), .clock-metric:nth-child(2) { border-bottom: 1px solid var(--line); }
+  .news-strip { align-items: flex-start; flex-direction: column; gap: 4px; }
   .header-actions input { width: 100%; }
   .player-tile { grid-template-columns: 1fr; gap: 5px; }
 }

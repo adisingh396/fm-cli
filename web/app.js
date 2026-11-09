@@ -17,7 +17,7 @@
     return location.origin && location.origin !== 'null' ? location.origin : DEFAULT_API;
   }
   let API = storedApi();
-  let state = { overview: null, leagues: [], players: { players: [], total: 0 }, page: 'overview', leagueIndex: 0, playerQuery: '', sort: 'goals', scope: 'all', matchQuery: '' };
+  let state = { overview: null, leagues: [], players: { players: [], total: 0 }, page: 'overview', leagueIndex: 0, playerQuery: '', sort: 'goals', scope: 'all', matchQuery: '', clockDays: 0, lastNewsWeek: -1, news: [], newsIndex: 0, auto: { running: false, inFlight: false, timer: null, speed: 'week', dayOffset: 0 } };
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => new Intl.NumberFormat().format(n ?? 0);
@@ -50,6 +50,53 @@
     if (!res.ok) throw new Error(json.error || json.raw || `HTTP ${res.status}`);
     return json;
   }
+
+  function seasonDate(days) {
+    const d = new Date(2026, 7, 1);
+    d.setDate(d.getDate() + (days || 0));
+    return d;
+  }
+  function fmtDate(days) {
+    return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).format(seasonDate(days));
+  }
+  function clockTime(days) {
+    const hour = 9 + ((days * 37 + state.auto.dayOffset * 11) % 7);
+    return `${String(hour).padStart(2, '0')}:00`;
+  }
+  function updateClock() {
+    const w = state.overview?.world || {};
+    const week = w.week ?? 0;
+    const total = w.total_rounds ?? 38;
+    state.clockDays = Math.max(state.clockDays || 0, week * 7);
+    const d = seasonDate(state.clockDays);
+    const setText = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+    setText('sim-year', String(d.getFullYear()));
+    setText('sim-date', fmtDate(state.clockDays));
+    setText('sim-week', `${week} / ${total}`);
+    setText('sim-clock', clockTime(state.clockDays));
+    setText('world-week', `Week ${week}`);
+    setText('world-meta', `${fmtDate(state.clockDays)} · ${fmt(w.matches_played ?? 0)} matches played`);
+  }
+  function addNews(text) {
+    if (!text) return;
+    if (state.news.some((n) => n.text === text)) return;
+    state.news.unshift({ date: fmtDate(state.clockDays), text });
+    state.news = state.news.slice(0, 24);
+    state.newsIndex = 0;
+    renderNews();
+  }
+  function renderNews() {
+    const el = $('news-line');
+    if (!el) return;
+    const item = state.news[state.newsIndex % Math.max(1, state.news.length)];
+    el.textContent = item ? `${item.date} — ${item.text}` : 'Waiting for the first round…';
+  }
+  function rotateNews() {
+    if (!state.news.length) return;
+    state.newsIndex = (state.newsIndex + 1) % state.news.length;
+    renderNews();
+  }
+  setInterval(rotateNews, 4200);
 
   function kpi(label, value, note) {
     return `<div class="metric"><span class="kpi-label">${esc(label)}</span><strong>${esc(value)}</strong><span>${esc(note || '')}</span></div>`;
@@ -92,8 +139,8 @@
           ${kpi('Matches played', fmt(w.matches_played), `round ${w.week ?? 0} complete`)}
         </div>
       </div>
-      <div class="grid cols-3">
-        <div class="card"><h3>World control</h3><p>Advance the same shared calendar across every domestic league. Every played match retains its start XI, event timeline and per-player stat line.</p><div class="actions"><button id="hero-sim">Simulate week</button><button id="hero-sim5" class="secondary">Simulate 5 weeks</button></div></div>
+      <div class="grid cols-4">
+        <div class="card"><h3>World control</h3><p>Advance the same shared calendar across every domestic league. Every played match retains its start XI, event timeline and per-player stat line.</p><div class="actions"><button id="hero-sim">Step week</button><button id="hero-sim5" class="secondary">Step 5</button></div></div>
         <div class="card"><h3>World DNA</h3><div class="row-list">
           <div class="row"><span>Players</span><strong>${fmt(w.players)}</strong></div>
           <div class="row"><span>Active clubs</span><strong>${fmt(w.teams)}</strong></div>
@@ -101,6 +148,7 @@
           <div class="row"><span>Season seed</span><strong>${esc(w.seed ?? '')}</strong></div>
         </div></div>
         <div class="card"><h3>Top scorers</h3>${top.length ? `<div class="row-list">${top.slice(0, 6).map((p, i) => `<div class="row"><span>${i+1}. <button class="linklike" data-player="${esc(p.handle || p.id)}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${esc(p.league || '')}</div></span><strong>${p.goals} goals</strong></div>`).join('')}</div>` : '<p>No scorer data yet.</p>'}</div>
+        <div class="card"><h3>News wire</h3>${state.news.length ? `<div class="row-list">${state.news.slice(0, 7).map((n) => `<div class="row"><span>${esc(n.text)}</span><span class="small">${esc(n.date)}</span></div>`).join('')}</div>` : '<p>Simulate a round to populate the wire.</p>'}</div>
       </div>
       <div class="grid cols-2"><div class="card"><h2>Latest match signals</h2>${scoreboard(state.overview?.recent_matches || [], 8)}</div>
       <div class="card"><h2>How to inspect the world</h2><p>Open any match to see the 22 starter lines, expected goals, shot mix, possession and events. Open any player to see attributes, season microdata, career totals and the source-database dossier.</p><button data-page="fixtures">Open fixtures</button> <button data-page="players">Open player laboratory</button></div></div>`;
@@ -180,7 +228,7 @@
     $('view-subtitle').textContent = 'Rhythm of the season: domestic rounds, continental tournaments and the international calendar.';
     const w = state.overview?.world || {};
     $('app').innerHTML = `<div class="grid cols-3">
-      <div class="card"><h3>Current spoke</h3><p style="font-size:32px;line-height:1">Week ${w.week ?? 0}</p><p>${w.remaining_rounds ?? 0} domestic rounds remain across the world’s main leagues.</p></div>
+      <div class="card"><h3>Current spoke</h3><p style="font-size:32px;line-height:1">Week ${w.week ?? 0}</p><p>${fmtDate(state.clockDays)} · ${w.remaining_rounds ?? 0} domestic rounds remain across the world’s main leagues.</p></div>
       <div class="card"><h3>World Cup</h3><p>Qualification shaped by the new integrated federation pools. India must still earn it over decades.</p></div>
       <div class="card"><h3>Continentals</h3><p>Euros, Copa América, AFCON, Gold Cup and AFC Asian Cup now rotate through the calendar.</p></div>
     </div>
@@ -199,6 +247,24 @@
     if (page === 'calendar') renderCalendar();
   }
 
+  function appendNews(w) {
+    const week = w?.week ?? 0;
+    if (week === state.lastNewsWeek) return;
+    state.lastNewsWeek = week;
+    if (week === 0) {
+      addNews('The 2026 season is ready: 81 leagues and 655 clubs waiting for the opening round.');
+      return;
+    }
+    const top = state.overview?.top_scorers?.[0];
+    if (top) addNews(`${top.name} leads the golden race in ${top.league || 'the world'} with ${top.goals} goals.`);
+    (state.overview?.recent_matches || []).slice(0, 4).forEach((m) => {
+      addNews(`${m.home} ${m.home_goals}–${m.away_goals} ${m.away} · ${m.league}`);
+    });
+    (state.leagues || []).slice(0, 3).forEach((l) => {
+      if (l.leader && l.leader !== '—') addNews(`${l.name}: ${l.leader} lead the table.`);
+    });
+  }
+
   async function refreshAll() {
     const [overview, leagues, fixtures] = await Promise.all([
       api('/api/overview'),
@@ -209,27 +275,81 @@
     state.leagues = leagues.leagues || [];
     state.fixtures = fixtures;
     const w = overview.world || {};
-    $('world-week').textContent = `Week ${w.week ?? 0}`;
-    $('world-meta').textContent = `${fmt(w.teams)} clubs · ${fmt(w.leagues)} leagues · ${fmt(w.matches_played)} matches played`;
+    updateClock();
     setStatus(`Connected · API ${API}`, true);
+    appendNews(w);
     setPage(state.page || 'overview');
   }
 
   async function simulate(weeks = 1) {
-    if ($('simulate-week')) $('simulate-week').disabled = true;
+    if (state.auto.inFlight) return;
+    state.auto.inFlight = true;
+    const sw = $('simulate-week');
+    const pp = $('play-pause');
+    if (sw) sw.disabled = true;
+    if (pp) pp.disabled = true;
     try {
       const res = await api('/api/simulate/week', { method: 'POST', body: { weeks }, timeout: 300000 });
       toast(`Simulated ${res.matches_played} matches — now week ${res.week}.`);
       await refreshAll();
       if (state.page === 'matches') loadMatches();
     } catch (e) { toast(e.message, true); }
-    finally { const b = $('simulate-week'); if (b) b.disabled = false; }
+    finally {
+      state.auto.inFlight = false;
+      if (sw) sw.disabled = false;
+      if (pp) pp.disabled = false;
+    }
+  }
+
+  function setPlaying(running) {
+    state.auto.running = running;
+    const pp = $('play-pause');
+    if (pp) {
+      pp.textContent = running ? '⏸ Pause' : '▶ Play';
+      pp.setAttribute('aria-pressed', String(running));
+    }
+    if (state.auto.timer) {
+      clearInterval(state.auto.timer);
+      state.auto.timer = null;
+    }
+    if (!running) return;
+    const tickMs = 850;
+    state.auto.timer = setInterval(() => {
+      if (state.auto.inFlight) return;
+      const speed = state.auto.speed || 'week';
+      const w = state.overview?.world || {};
+      if ((w.remaining_rounds ?? 0) <= 0) { setPlaying(false); return; }
+      if (speed === 'day') {
+        state.auto.dayOffset += 1;
+        if (state.auto.dayOffset % 7 === 0) {
+          state.clockDays = (w.week + 1) * 7;
+          simulate(1);
+        } else {
+          state.clockDays += 1;
+          updateClock();
+        }
+      } else if (speed === 'month') {
+        const before = seasonDate(state.clockDays);
+        let weeks = 1;
+        while (weeks < 5 && seasonDate(state.clockDays + weeks * 7).getMonth() === before.getMonth()) weeks += 1;
+        simulate(Math.min(weeks, w.remaining_rounds ?? weeks));
+      } else {
+        simulate(1);
+      }
+    }, tickMs);
   }
 
   async function resetWorld() {
     if (!confirm('Reset to a fresh 2026 world? Unsaved weekly progress will be replaced.')) return;
     try {
+      setPlaying(false);
       await api('/api/world/reset', { method: 'POST', body: { seed: Date.now() }, timeout: 300000 });
+      state.clockDays = 0;
+      state.auto.dayOffset = 0;
+      state.lastNewsWeek = -1;
+      state.news = [];
+      state.newsIndex = 0;
+      renderNews();
       toast('Fresh world built.');
       await refreshAll();
     } catch (e) { toast(e.message, true); }
@@ -335,17 +455,27 @@
   }
   function closeDrawer() { document.querySelector('.detail-drawer')?.remove(); document.querySelector('.scrim')?.remove(); }
 
+  function bindOnce(el, evt, handler, key) {
+    if (!el) return;
+    const prop = `bound_${key || evt}`;
+    if (el.dataset[prop]) return;
+    el.dataset[prop] = '1';
+    el.addEventListener(evt, handler);
+  }
+
   function bindDynamic() {
     document.querySelectorAll('[data-match]').forEach((el) => el.addEventListener('click', () => openMatch(el.dataset.match)));
     document.querySelectorAll('[data-player]').forEach((el) => el.addEventListener('click', () => openPlayer(el.dataset.player)));
     document.querySelectorAll('[data-page]').forEach((el) => el.addEventListener('click', () => setPage(el.dataset.page)));
-    $('simulate-week')?.addEventListener('click', () => simulate(1));
-    $('simulate-five')?.addEventListener('click', () => simulate(5));
+    bindOnce($('simulate-week'), 'click', () => simulate(1), 'week');
+    bindOnce($('simulate-five'), 'click', () => simulate(5), 'five');
+    bindOnce($('play-pause'), 'click', () => setPlaying(!state.auto.running), 'playpause');
+    bindOnce($('auto-speed'), 'change', (e) => { state.auto.speed = e.target.value; }, 'speed');
     $('hero-sim')?.addEventListener('click', () => simulate(1));
     $('hero-sim5')?.addEventListener('click', () => simulate(5));
     $('calendar-sim')?.addEventListener('click', () => simulate(1));
     $('calendar-sim5')?.addEventListener('click', () => simulate(5));
-    $('reset-world')?.addEventListener('click', resetWorld);
+    bindOnce($('reset-world'), 'click', resetWorld, 'reset');
     $('load-fixtures')?.addEventListener('click', () => {
       const q = $('fixture-league-filter').value.toLowerCase();
       document.querySelectorAll('.match-card').forEach((el) => { el.style.display = !q || el.textContent.toLowerCase().includes(q) ? 'block' : 'none'; });
@@ -359,9 +489,13 @@
   }
 
   document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
-  $('simulate-week').addEventListener('click', () => simulate(1));
-  $('simulate-five').addEventListener('click', () => simulate(5));
-  $('reset-world').addEventListener('click', resetWorld);
+  bindOnce($('simulate-week'), 'click', () => simulate(1), 'week');
+  bindOnce($('simulate-five'), 'click', () => simulate(5), 'five');
+  bindOnce($('play-pause'), 'click', () => setPlaying(!state.auto.running), 'playpause');
+  bindOnce($('auto-speed'), 'change', (e) => { state.auto.speed = e.target.value; }, 'speed');
+  bindOnce($('reset-world'), 'click', resetWorld, 'reset');
+  updateClock();
+  renderNews();
   $('refresh').addEventListener('click', async () => { try { await refreshAll(); if (state.page === 'players') await loadPlayers(); if (state.page === 'matches') await loadMatches(); toast('Dashboard refreshed.'); } catch (e) { toast(e.message, true); } });
   $('global-search').addEventListener('keydown', async (e) => { if (e.key === 'Enter') { state.playerQuery = e.target.value; state.page='players'; await loadPlayers(); } });
   $('save-api').addEventListener('click', () => {

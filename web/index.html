@@ -33,8 +33,15 @@
       <strong id="world-week">—</strong>
       <span id="world-meta">Connecting…</span>
       <div class="actions">
-        <button id="simulate-week">Simulate week</button>
-        <button id="simulate-five" class="secondary">Simulate 5 weeks</button>
+        <button id="play-pause" aria-pressed="false">▶ Play</button>
+        <label class="control-label" for="auto-speed">Auto step</label>
+        <select id="auto-speed" aria-label="Auto simulation speed">
+          <option value="day">Per day</option>
+          <option value="week" selected>Per week</option>
+          <option value="month">Per month</option>
+        </select>
+        <button id="simulate-week" class="secondary">Step week</button>
+        <button id="simulate-five" class="ghost">Step 5</button>
         <button id="reset-world" class="ghost">New world</button>
       </div>
     </div>
@@ -60,6 +67,13 @@
         <button id="refresh">Refresh data</button>
       </div>
     </header>
+    <div class="clock-strip" aria-label="Simulation clock">
+      <div class="clock-metric"><span class="kpi-label">Season</span><strong id="sim-year">2026</strong></div>
+      <div class="clock-metric"><span class="kpi-label">Date</span><strong id="sim-date">Sat 01 Aug 2026</strong></div>
+      <div class="clock-metric"><span class="kpi-label">Round</span><strong id="sim-week">0 / 38</strong></div>
+      <div class="clock-metric"><span class="kpi-label">Clock</span><strong id="sim-clock">09:00</strong></div>
+    </div>
+    <div class="news-strip" aria-label="Latest simulated news"><span class="news-label">News wire</span><span id="news-line">Waiting for the first round…</span></div>
     <section id="app" aria-live="polite"></section>
   </main>
 
