@@ -198,6 +198,12 @@ tbody tr:hover { background: #152017; }
 .attr-bar i { display: block; height: 100%; background: var(--green); }
 .motive { display: grid; grid-template-columns: 106px 1fr 42px; gap: 8px; align-items: center; }
 .table-compact { min-width: 0; }
+.cup-group-table table { min-width: 0; table-layout: fixed; }
+.cup-group-table th, .cup-group-table td { padding: 8px 6px; font-size: 12px; }
+.cup-group-table th:first-child, .cup-group-table td:first-child { width: 22px; }
+.cup-group-table th:nth-child(n+3), .cup-group-table td:nth-child(n+3) { width: 34px; text-align: right; }
+.cup-group-table .club-cell { white-space: normal; line-height: 1.2; }
+.cup-group-table tr.advancing td:first-child { box-shadow: inset 3px 0 0 var(--green); }
 
 .manager-head { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center; }
 .squad-table-wrap { overflow-x: auto; }

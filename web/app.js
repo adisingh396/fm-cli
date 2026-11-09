@@ -205,9 +205,8 @@
   }
 
   function cupGroupTable(group) {
-    return `<div class="card"><h3>${esc(group.name)}</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>
-      ${(group.teams || []).map((r) => `<tr><td class="numeric">${r.position}</td><td><button class="linklike" data-team="${r.id}"><strong>${esc(r.name)}</strong></button></td><td class="numeric">${r.played}</td><td class="numeric">${r.won}</td><td class="numeric">${r.drawn}</td><td class="numeric">${r.lost}</td><td class="numeric">${r.gf}</td><td class="numeric">${r.ga}</td><td class="numeric">${r.gd}</td><td class="numeric"><strong>${r.pts}</strong></td></tr>`).join('')}
-    </tbody></table></div></div>`;
+    const rows = (group.teams || []).map((r) => `<tr class="${r.position <= 2 ? 'advancing' : ''}"><td class="numeric">${r.position}</td><td class="club-cell"><button class="linklike" data-team="${r.id}"><strong>${esc(r.name)}</strong></button></td><td class="numeric">${r.played}</td><td class="numeric">${r.won}</td><td class="numeric">${r.drawn}</td><td class="numeric">${r.lost}</td><td class="numeric">${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="numeric"><strong>${r.pts}</strong></td></tr>`).join('');
+    return `<div class="card"><h3>${esc(group.name)}</h3><div class="table-wrap cup-group-table"><table><thead><tr><th>#</th><th>Club</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }
 
   async function renderCupDetail() {
