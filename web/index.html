@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Crouton Alpha football observatory: live simulated leagues, fixtures, match detail and a 23k-player laboratory." />
-  <meta name="theme-color" content="#0a0d0a" />
+  <meta name="description" content="Crouton Alpha football observatory: live simulated leagues, fixtures, match detail, player laboratory and manager mode." />
+  <meta name="theme-color" content="#0b0b0c" />
   <title>Crouton Alpha — Football Observatory</title>
   <link rel="icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/styles.css" />
@@ -12,70 +12,88 @@
 </head>
 <body>
   <a class="skip-link" href="#app">Skip to dashboard</a>
-  <aside id="sidebar" aria-label="Dashboard controls">
-    <div class="brand">
-      <div class="mark" aria-hidden="true">CA</div>
-      <div>
-        <div class="brand-title">Crouton Alpha</div>
-        <div class="brand-sub">Football Observatory</div>
-      </div>
-    </div>
-    <nav aria-label="Primary">
-      <button data-page="overview" class="active">Overview</button>
-      <button data-page="leagues">Leagues</button>
-      <button data-page="fixtures">Fixtures</button>
-      <button data-page="matches">Match centre</button>
-      <button data-page="players">Player laboratory</button>
-      <button data-page="calendar">Season calendar</button>
-    </nav>
-    <div class="sidebar-card">
-      <span class="kpi-label">World state</span>
-      <strong id="world-week">—</strong>
-      <span id="world-meta">Connecting…</span>
-      <div class="actions">
-        <button id="play-pause" aria-pressed="false">▶ Play</button>
-        <label class="control-label" for="auto-speed">Auto step</label>
-        <select id="auto-speed" aria-label="Auto simulation speed">
-          <option value="day">Per day</option>
-          <option value="week" selected>Per week</option>
-          <option value="month">Per month</option>
-        </select>
-        <button id="simulate-week" class="secondary">Step week</button>
-        <button id="simulate-five" class="ghost">Step 5</button>
-        <button id="reset-world" class="ghost">New world</button>
-      </div>
-    </div>
-    <div class="sidebar-card">
-      <span class="kpi-label">API endpoint</span>
-      <input id="api-base" aria-label="API endpoint" spellcheck="false" placeholder="https://plasma-checks-league-trinity.trycloudflare.com" />
-      <button id="save-api" class="secondary">Use endpoint</button>
-      <span id="api-status">Not connected</span>
-    </div>
-    <div class="sidebar-card small">
-      A live season world with weekly fixture progression, per-player match detail, league tables, and a 23k-player database.
-    </div>
-  </aside>
 
-  <main>
-    <header>
-      <div>
-        <h1 id="view-title">Overview</h1>
-        <p id="view-subtitle">The whole simulated world, from title races to one-off bit-part players.</p>
+  <header class="topbar">
+    <div class="brand"><span class="logo">CA</span><span class="brand-name">CROUTON&nbsp;ALPHA</span></div>
+    <label class="global-search">
+      <span aria-hidden="true">⌕</span>
+      <input id="global-search" aria-label="Global player search" placeholder="Search" />
+      <kbd>Ctrl K</kbd>
+    </label>
+    <nav class="topnav" aria-label="Primary">
+      <button data-page="home" class="nav-link active">Home</button>
+      <button data-page="matches" class="nav-link">Matches</button>
+      <button data-page="fixtures" class="nav-link">Fixtures</button>
+      <button data-page="calendar" class="nav-link">Calendar</button>
+      <button data-page="leagues" class="nav-link">Leagues</button>
+      <button data-page="players" class="nav-link">Players</button>
+    </nav>
+    <div class="top-actions">
+      <div class="mode-toggle" role="group" aria-label="Mode">
+        <button id="mode-sim" class="active">Simulate</button>
+        <button id="mode-manager">Manager</button>
       </div>
-      <div class="header-actions">
-        <input id="global-search" aria-label="Global player search" placeholder="Search player, club, league…" />
-        <button id="refresh">Refresh data</button>
-      </div>
-    </header>
-    <div class="clock-strip" aria-label="Simulation clock">
-      <div class="clock-metric"><span class="kpi-label">Season</span><strong id="sim-year">2026</strong></div>
-      <div class="clock-metric"><span class="kpi-label">Date</span><strong id="sim-date">Sat 01 Aug 2026</strong></div>
-      <div class="clock-metric"><span class="kpi-label">Round</span><strong id="sim-week">0 / 38</strong></div>
-      <div class="clock-metric"><span class="kpi-label">Clock</span><strong id="sim-clock">09:00</strong></div>
+      <button id="play-pause" aria-pressed="false">▶ Play</button>
+      <select id="auto-speed" aria-label="Auto simulation speed">
+        <option value="day">Per day</option>
+        <option value="week" selected>Per week</option>
+        <option value="month">Per month</option>
+      </select>
     </div>
-    <div class="news-strip" aria-label="Latest simulated news"><span class="news-label">News wire</span><span id="news-line">Waiting for the first round…</span></div>
-    <section id="app" aria-live="polite"></section>
-  </main>
+  </header>
+
+  <div class="shell">
+    <aside class="rail left-rail" aria-label="Leagues and simulation controls">
+      <section class="rail-panel">
+        <h2>Top leagues</h2>
+        <div id="top-leagues" class="league-list"></div>
+        <button id="all-leagues" class="all-leagues">All leagues ▾</button>
+      </section>
+
+      <section class="rail-panel sim-panel">
+        <h2>Simulation</h2>
+        <div class="clock-grid">
+          <div><span class="kpi-label">Season</span><strong id="sim-year">2026</strong></div>
+          <div><span class="kpi-label">Round</span><strong id="sim-week">0 / 38</strong></div>
+          <div class="wide"><span class="kpi-label">Date</span><strong id="sim-date">Sat 01 Aug 2026</strong></div>
+          <div><span class="kpi-label">Clock</span><strong id="sim-clock">09:00</strong></div>
+          <div><span class="kpi-label">World</span><strong id="world-week">Week 0</strong></div>
+        </div>
+        <p id="world-meta" class="rail-note">Connecting…</p>
+        <div class="actions">
+          <button id="simulate-week" class="secondary">Step week</button>
+          <button id="simulate-five" class="ghost">Step 5</button>
+          <button id="reset-world" class="ghost">New world</button>
+        </div>
+      </section>
+
+      <section class="rail-panel">
+        <h2>API endpoint</h2>
+        <input id="api-base" aria-label="API endpoint" spellcheck="false" placeholder="https://plasma-checks-league-trinity.trycloudflare.com" />
+        <button id="save-api" class="secondary wide-btn">Use endpoint</button>
+        <span id="api-status" class="rail-note">Not connected</span>
+      </section>
+    </aside>
+
+    <main id="app" class="content" aria-live="polite"></main>
+
+    <aside class="rail right-rail" aria-label="News">
+      <section class="rail-panel news-panel">
+        <div class="rail-head"><h2>News</h2><span id="news-date" class="rail-note"></span></div>
+        <div id="news-list" class="news-list"></div>
+        <button class="see-more" data-page="calendar">See more</button>
+      </section>
+      <section class="rail-panel">
+        <h2>What to open</h2>
+        <div class="hint-list">
+          <button data-page="leagues">League tables</button>
+          <button data-page="matches">Match centre</button>
+          <button data-page="players">Player laboratory</button>
+          <button data-page="manager">Manager mode</button>
+        </div>
+      </section>
+    </aside>
+  </div>
 
   <noscript><div style="padding:24px">This dashboard requires JavaScript to load the live simulation API.</div></noscript>
   <div id="toast" role="status"></div>

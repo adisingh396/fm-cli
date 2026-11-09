@@ -12394,6 +12394,147 @@ pub mod web_api {
         })
     }
 
+    fn manager_team_json(state: &WebState, ti: usize) -> Value {
+        let w = &state.world;
+        let Some(t) = w.teams.get(ti) else {
+            return json!({"error": "team not found"});
+        };
+        let table = league_table(state, t.league_idx);
+        let rank = table.iter().position(|&x| x == ti).map(|i| i + 1);
+        let mut squad = t.players.clone();
+        squad.sort_by(|&a, &b| {
+            w.pool[b]
+                .ovr
+                .cmp(&w.pool[a].ovr)
+                .then(w.pool[a].name.cmp(&w.pool[b].name))
+        });
+        let players = squad
+            .iter()
+            .map(|&i| {
+                let mut p = player_detail_json(state, i);
+                let mind = w.minds.get(i);
+                p["motives"] = json!({
+                    "ambition": mind.map(|m| m.ambition).unwrap_or(0.0),
+                    "loyalty": mind.map(|m| m.loyalty).unwrap_or(0.0),
+                    "greed": mind.map(|m| m.greed).unwrap_or(0.0),
+                    "professionalism": mind.map(|m| m.professionalism).unwrap_or(0.0),
+                    "unhappy": mind.map(|m| m.unhappy).unwrap_or(false),
+                    "requested": mind.map(|m| m.requested).unwrap_or(false),
+                    "contract_happiness": mind.map(|m| m.contract_happiness).unwrap_or(0.65),
+                    "morale_target": mind.map(|m| m.morale_target()).unwrap_or(65),
+                });
+                p
+            })
+            .collect::<Vec<_>>();
+        let next_round = state.week as usize;
+        let next_fixtures = state.schedules[t.league_idx]
+            .rounds
+            .get(next_round)
+            .filter(|pairs| pairs.iter().any(|(h, a)| *h == ti || *a == ti))
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .filter(|(h, a)| *h == ti || *a == ti)
+                    .map(|(h, a)| json!({"home": w.teams[*h].name, "away": w.teams[*a].name, "league": state.league_name(t.league_idx), "week": state.week + 1}))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        json!({
+            "team": team_json(w, ti),
+            "rank": rank,
+            "shape": {"def": t.shape.0, "mid": t.shape.1, "fwd": t.shape.2},
+            "finance": {"budget": t.budget, "cash": t.cash, "wealth": t.wealth, "revenue_last": t.revenue_last, "wage_cap": t.budget.saturating_sub(t.cash)},
+            "mini_table": table.iter().take(8).map(|&idx| team_json(w, idx)).collect::<Vec<_>>(),
+            "next_fixtures": next_fixtures,
+            "players": players,
+            "actions": ["team_talk", "rest", "boost", "promise", "train"],
+        })
+    }
+
+    fn manager_action_json(state: &mut WebState, body: &Value) -> Value {
+        let team_idx = body.get("team").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let action = body
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("team_talk");
+        let player_idx = body
+            .get("player")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+        if team_idx >= state.world.teams.len() {
+            return json!({"error": "team not found"});
+        }
+        let squad = state.world.teams[team_idx].players.clone();
+        let mut affected = 0usize;
+        match action {
+            "team_talk" => {
+                for &i in &squad {
+                    let p = &mut state.world.pool[i];
+                    p.morale = p.morale.min(85).saturating_add(5);
+                    affected += 1;
+                }
+                for &i in &squad {
+                    if let Some(mind) = state.world.minds.get_mut(i) {
+                        if state.world.pool[i].morale >= 60 {
+                            mind.unhappy = false;
+                        }
+                    }
+                }
+            }
+            "rest" => {
+                for &i in &squad {
+                    let p = &mut state.world.pool[i];
+                    p.fatigue = p.fatigue.saturating_sub(25);
+                    p.morale = p.morale.min(85).saturating_add(2);
+                    affected += 1;
+                }
+            }
+            "shape" => {
+                let def = body.get("def").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+                let mid = body.get("mid").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+                let fwd = body.get("fwd").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+                if def + mid + fwd != 10 || def == 0 || mid == 0 || fwd == 0 {
+                    return json!({"error": "formation must be 10 outfielders"});
+                }
+                state.world.teams[team_idx].shape = (def, mid, fwd);
+                affected = 1;
+            }
+            "boost" | "promise" | "train" => {
+                let Some(pi) = player_idx else {
+                    return json!({"error": "player required for this action"});
+                };
+                if !squad.contains(&pi) {
+                    return json!({"error": "player not in selected squad"});
+                }
+                let p = &mut state.world.pool[pi];
+                match action {
+                    "boost" => {
+                        p.morale = p.morale.min(90).saturating_add(10);
+                        affected = 1;
+                    }
+                    "promise" => {
+                        p.morale = p.morale.min(90).saturating_add(8);
+                        if let Some(mind) = state.world.minds.get_mut(pi) {
+                            mind.unhappy = false;
+                            mind.requested = false;
+                            mind.contract_happiness = (mind.contract_happiness + 0.2).min(1.0);
+                        }
+                        affected = 1;
+                    }
+                    _ => {
+                        p.fatigue = p.fatigue.saturating_add(8).min(100);
+                        p.morale = p.morale.min(88).saturating_add(4);
+                        affected = 1;
+                    }
+                }
+            }
+            _ => return json!({"error": "unknown manager action"}),
+        }
+        let mut out = manager_team_json(state, team_idx);
+        out["action"] = json!({"performed": action, "affected": affected, "team": team_idx});
+        out
+    }
+
     fn player_json(w: &World, i: usize) -> Value {
         let p = &w.pool[i];
         let is_database_player = p.db_id.is_some();
@@ -13438,6 +13579,22 @@ pub mod web_api {
             } else {
                 json!({"error": "player not found"})
             }
+        } else if path == "/api/manager/clubs" {
+            let s = state.lock().unwrap();
+            let clubs = (0..s.world.teams.len())
+                .map(|i| team_json(&s.world, i))
+                .collect::<Vec<_>>();
+            json!({"clubs": clubs, "count": clubs.len()})
+        } else if path == "/api/manager/team" {
+            let team = query_value(&query, "team")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0);
+            let s = state.lock().unwrap();
+            manager_team_json(&s, team)
+        } else if path == "/api/manager/action" && method.eq_ignore_ascii_case("POST") {
+            let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
+            let mut s = state.lock().unwrap();
+            manager_action_json(&mut s, &payload)
         } else if path == "/api/careers" {
             match std::fs::read_to_string("sim_dump/careers.json") {
                 Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(json!({"raw": text})),
