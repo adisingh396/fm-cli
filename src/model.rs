@@ -136,6 +136,13 @@ pub struct Player {
     pub attrs: Attributes,
     /// Latent ceiling (1..=99); attributes grow toward this while young.
     pub potential: u8,
+    /// The dataset's own card rating (overall_rating column) when loaded
+    /// from the FC dump; 0 for generated players. The sim's attribute
+    /// formula is deliberately attribute-first, but a 39-year-old legends
+    /// card shouldn't crater below ~2 points of its database grade just
+    /// because the formula weights stamina and tackling.
+    #[serde(default)]
+    pub seen_ovr: u8,
     pub contract: Contract,
     /// 0..=100 morale.
     pub morale: u8,
@@ -262,7 +269,11 @@ fn default_happiness() -> u8 {
 
 impl Player {
     pub fn overall(&self) -> u8 {
-        self.attrs.overall(self.position)
+        let base = self.attrs.overall(self.position);
+        // Respect the database card: a legend's rating never falls more
+        // than 2 points below its dataset grade, even when the attribute
+        // formula punishes ageing legs.
+        base.max(self.seen_ovr.saturating_sub(2))
     }
 
     /// Effective ability for the match engine: overall modulated by fitness/morale/form.
@@ -598,11 +609,13 @@ impl Default for TeamInstructions {
 impl TeamInstructions {
     /// Net (attack_mult, defense_mult) from the dials. Original tuning.
     pub fn modifiers(&self) -> (f32, f32) {
-        let atk = 1.0 + (self.tempo as f32 - 50.0) * 0.001
+        let atk = 1.0
+            + (self.tempo as f32 - 50.0) * 0.001
             + (self.directness as f32 - 50.0) * 0.001
             + (self.width as f32 - 50.0) * 0.0005
             - (self.time_wasting as f32 - 50.0) * 0.001;
-        let def = 1.0 + (self.pressing as f32 - 50.0) * 0.0015
+        let def = 1.0
+            + (self.pressing as f32 - 50.0) * 0.0015
             + (self.defensive_line as f32 - 50.0) * 0.001
             - (self.tempo as f32 - 50.0) * 0.0005;
         (atk.clamp(0.85, 1.20), def.clamp(0.85, 1.20))

@@ -28,10 +28,7 @@ pub fn role_suitability(role: Role, pos: Position) -> f32 {
     match (role, pos) {
         (Role::Goalkeeper | Role::SweeperKeeper, Position::GK) => 1.0,
         (
-            Role::CentralDefender
-            | Role::BallPlayingDefender
-            | Role::FullBack
-            | Role::WingBack,
+            Role::CentralDefender | Role::BallPlayingDefender | Role::FullBack | Role::WingBack,
             Position::DEF,
         ) => 1.0,
         (
@@ -44,10 +41,7 @@ pub fn role_suitability(role: Role, pos: Position) -> f32 {
             Position::MID,
         ) => 1.0,
         (
-            Role::ShadowStriker
-            | Role::TargetMan
-            | Role::Poacher
-            | Role::FalseNine,
+            Role::ShadowStriker | Role::TargetMan | Role::Poacher | Role::FalseNine,
             Position::FWD,
         ) => 1.0,
         // Competent cross-line picks.
@@ -98,17 +92,13 @@ pub fn role_rating(a: &Attributes, role: Role) -> f32 {
         Role::Anchor => {
             w(a.tackling) * 0.4 + w(a.strength) * 0.25 + w(a.stamina) * 0.2 + w(a.vision) * 0.15
         }
-        Role::DeepLyingPlaymaker => {
-            w(a.passing) * 0.4 + w(a.vision) * 0.35 + w(a.composure) * 0.25
-        }
+        Role::DeepLyingPlaymaker => w(a.passing) * 0.4 + w(a.vision) * 0.35 + w(a.composure) * 0.25,
         Role::BoxToBox => {
             w(a.stamina) * 0.3 + w(a.strength) * 0.2 + w(a.tackling) * 0.25 + w(a.passing) * 0.25
         }
         Role::Winger => w(a.pace) * 0.35 + w(a.dribbling) * 0.35 + w(a.passing) * 0.3,
         Role::InsideForward => w(a.dribbling) * 0.35 + w(a.shooting) * 0.35 + w(a.pace) * 0.3,
-        Role::AdvancedPlaymaker => {
-            w(a.passing) * 0.4 + w(a.vision) * 0.35 + w(a.dribbling) * 0.25
-        }
+        Role::AdvancedPlaymaker => w(a.passing) * 0.4 + w(a.vision) * 0.35 + w(a.dribbling) * 0.25,
         Role::ShadowStriker => w(a.shooting) * 0.4 + w(a.dribbling) * 0.3 + w(a.pace) * 0.3,
         Role::TargetMan => w(a.heading) * 0.35 + w(a.strength) * 0.35 + w(a.shooting) * 0.3,
         Role::Poacher => w(a.shooting) * 0.5 + w(a.composure) * 0.3 + w(a.pace) * 0.2,
@@ -445,11 +435,21 @@ mod tests {
     fn best_role_picks_false_nine_for_a_creative_forward() {
         // A technical forward pushed up top should resolve to a False Nine,
         // not a Poacher — the whole point of the tactical experiment.
-        let creator = attrs(&[("passing", 92), ("vision", 92), ("dribbling", 88), ("shooting", 55)]);
+        let creator = attrs(&[
+            ("passing", 92),
+            ("vision", 92),
+            ("dribbling", 88),
+            ("shooting", 55),
+        ]);
         let (role, _) = best_role_for(&creator, Position::FWD, 3);
         assert_eq!(role, Role::FalseNine);
 
-        let finisher = attrs(&[("shooting", 94), ("pace", 88), ("composure", 82), ("passing", 50)]);
+        let finisher = attrs(&[
+            ("shooting", 94),
+            ("pace", 88),
+            ("composure", 82),
+            ("passing", 50),
+        ]);
         let (role, _) = best_role_for(&finisher, Position::FWD, 3);
         assert_eq!(role, Role::Poacher);
     }

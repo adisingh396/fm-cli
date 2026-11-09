@@ -146,7 +146,9 @@ mod tests {
         // Rolled traits vary across individuals (the raw material of
         // different behavior; decisions themselves run through the net).
         let mut rng = Pcg64Mcg::new(12);
-        let rots: Vec<f32> = (0..20).map(|_| Manager::new_random(&mut rng, &Params::default()).rotation).collect();
+        let rots: Vec<f32> = (0..20)
+            .map(|_| Manager::new_random(&mut rng, &Params::default()).rotation)
+            .collect();
         assert!(rots.iter().any(|&r| (r - rots[0]).abs() > 1e-6));
     }
 

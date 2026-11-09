@@ -71,7 +71,8 @@ fn playable_leagues(db: &Database) -> Vec<(String, Vec<ClubId>)> {
             by.entry(c.league.clone()).or_default().push(c.id);
         }
     }
-    let mut v: Vec<(String, Vec<ClubId>)> = by.into_iter().filter(|(_, ids)| ids.len() >= 8).collect();
+    let mut v: Vec<(String, Vec<ClubId>)> =
+        by.into_iter().filter(|(_, ids)| ids.len() >= 8).collect();
     v.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     v
 }
@@ -96,8 +97,12 @@ fn pick_league(db: &Database) -> Option<(String, Vec<ClubId>)> {
 }
 
 fn club_players<'a>(db: &'a Database, club: &Club) -> Vec<&'a Player> {
-    let idx: HashMap<PlayerId, usize> =
-        db.players().iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+    let idx: HashMap<PlayerId, usize> = db
+        .players()
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.id, i))
+        .collect();
     club.squad
         .iter()
         .filter_map(|pid| idx.get(pid).map(|&i| &db.players()[i]))
@@ -133,7 +138,12 @@ fn build_xi(players: &[&Player], id_base: usize) -> (Vec<MatchPlayer>, Vec<Strin
     for (line, count) in lines {
         let mut cands: Vec<(f32, usize)> = (0..players.len())
             .filter(|&i| !used[i])
-            .map(|i| (engine::best_role_for(&players[i].attrs, players[i].position, line).1, i))
+            .map(|i| {
+                (
+                    engine::best_role_for(&players[i].attrs, players[i].position, line).1,
+                    i,
+                )
+            })
             .collect();
         cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         for (_, i) in cands.into_iter().take(count) {
@@ -168,7 +178,9 @@ fn club_dials(rep: u8) -> (f32, f32) {
 // ── Live single match ──────────────────────────────────────────────────
 
 fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
-    let Some((_lname, ids)) = pick_league(db) else { return };
+    let Some((_lname, ids)) = pick_league(db) else {
+        return;
+    };
     let mut clubs: Vec<Club> = ids
         .iter()
         .filter_map(|id| db.clubs().iter().find(|c| c.id == *id).cloned())
@@ -176,10 +188,19 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
     clubs.sort_by(|a, b| b.reputation.cmp(&a.reputation).then(a.name.cmp(&b.name)));
     println!("\n  Clubs:");
     for (i, c) in clubs.iter().enumerate() {
-        println!("  {:>2}. {} (Rep {})", i + 1, clip(&c.name, 30), c.reputation);
+        println!(
+            "  {:>2}. {} (Rep {})",
+            i + 1,
+            clip(&c.name, 30),
+            c.reputation
+        );
     }
-    let Some(h) = read_idx("\n  Home club #: ") else { return };
-    let Some(a) = read_idx("  Away club #: ") else { return };
+    let Some(h) = read_idx("\n  Home club #: ") else {
+        return;
+    };
+    let Some(a) = read_idx("  Away club #: ") else {
+        return;
+    };
     if h == 0 || a == 0 || h > clubs.len() || a > clubs.len() || h == a {
         println!("  Invalid pick.");
         pause();
@@ -198,8 +219,28 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
     let (axi, anames) = build_xi(&ap, 1000);
     let (h_amb, h_q) = club_dials(home.reputation);
     let (a_amb, a_q) = club_dials(away.reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_h = Side {
+        players: &hxi,
+        ambition: h_amb,
+        quality: h_q,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
+    let mut side_a = Side {
+        players: &axi,
+        ambition: a_amb,
+        quality: a_q,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
@@ -240,21 +281,31 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
                 };
                 println!(
                     "  {:>2}'  \u{26bd} GOAL{} — {} {}-{}  {}{}",
-                    e.minute, dead, clip(who, 18), sh, sa, clip(&name_of(e.actor), 18), assist
+                    e.minute,
+                    dead,
+                    clip(who, 18),
+                    sh,
+                    sa,
+                    clip(&name_of(e.actor), 18),
+                    assist
                 );
             }
             EventKind::Injury => {
                 let side = if e.side_a { &home.name } else { &away.name };
                 println!(
                     "  {:>2}'  \u{1fa79} Injury — {} ({}) forced off",
-                    e.minute, clip(&name_of(e.actor), 18), clip(side, 14)
+                    e.minute,
+                    clip(&name_of(e.actor), 18),
+                    clip(side, 14)
                 );
             }
             EventKind::RedCard => {
                 let side = if e.side_a { &home.name } else { &away.name };
                 println!(
                     "  {:>2}'  \u{1f7e5} RED CARD — {} ({}) is sent off",
-                    e.minute, clip(&name_of(e.actor), 18), clip(side, 14)
+                    e.minute,
+                    clip(&name_of(e.actor), 18),
+                    clip(side, 14)
                 );
             }
             EventKind::Penalty => {}
@@ -267,7 +318,13 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
         println!("  A goalless watch — chances came and went.");
     }
     println!("\n  ── FULL TIME ──");
-    println!("  {} {} - {} {}", clip(&home.name, 22), o.goals_a, o.goals_b, clip(&away.name, 22));
+    println!(
+        "  {} {} - {} {}",
+        clip(&home.name, 22),
+        o.goals_a,
+        o.goals_b,
+        clip(&away.name, 22)
+    );
     println!(
         "  Possession {}%-{}%   Shots {}-{}   xG {:.1}-{:.1}",
         o.poss_a,
@@ -306,7 +363,11 @@ fn print_sheet(team: &str, side_a: bool, stats: &[MatchStats], name_of: &dyn Fn(
     println!("  │ Player               │ Min │ G │ A │ Sh │ KP │ Drb │ Tkl │ Rate │");
     println!("  ├──────────────────────┼─────┼───┼───┼────┼────┼─────┼─────┼──────┤");
     let mut rows: Vec<&MatchStats> = stats.iter().filter(|s| s.side_a == side_a).collect();
-    rows.sort_by(|a, b| b.rating.partial_cmp(&a.rating).unwrap_or(std::cmp::Ordering::Equal));
+    rows.sort_by(|a, b| {
+        b.rating
+            .partial_cmp(&a.rating)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     for s in rows {
         println!(
             "  │ {:<21}│ {:>3} │ {:>1} │ {:>1} │ {:>2} │ {:>2} │ {:>3} │ {:>3} │ {:>4.1} │",
@@ -377,7 +438,9 @@ impl Row {
 }
 
 fn spectate_season(db: &Database, rng: &mut Pcg64Mcg) {
-    let Some((lname, ids)) = pick_league(db) else { return };
+    let Some((lname, ids)) = pick_league(db) else {
+        return;
+    };
     // Build a compact local world: clubs + a flat player pool for this league.
     let mut clubs: Vec<Club> = ids
         .iter()
@@ -395,8 +458,12 @@ fn spectate_season(db: &Database, rng: &mut Pcg64Mcg) {
     }
 
     // Flat pool: lines[club] = Vec<Line indices>. Build per-club player refs.
-    let pidx: HashMap<PlayerId, usize> =
-        db.players().iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+    let pidx: HashMap<PlayerId, usize> = db
+        .players()
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.id, i))
+        .collect();
     let mut lines: Vec<Line> = Vec::new();
     let mut club_lines: Vec<Vec<usize>> = vec![Vec::new(); n];
     for (ci, c) in clubs.iter().enumerate() {
@@ -430,7 +497,11 @@ fn spectate_season(db: &Database, rng: &mut Pcg64Mcg) {
 
     let mut table: Vec<Row> = clubs
         .iter()
-        .map(|c| Row { name: c.name.clone(), rep: c.reputation, ..Default::default() })
+        .map(|c| Row {
+            name: c.name.clone(),
+            rep: c.reputation,
+            ..Default::default()
+        })
         .collect();
 
     println!(
@@ -446,7 +517,16 @@ fn spectate_season(db: &Database, rng: &mut Pcg64Mcg) {
             for i in 0..n / 2 {
                 let (x, y) = (order[i], order[n - 1 - i]);
                 let (home, away) = if leg == 0 { (x, y) } else { (y, x) };
-                play_and_record(&clubs, &club_lines, &attrs, &mut lines, &mut table, home, away, rng);
+                play_and_record(
+                    &clubs,
+                    &club_lines,
+                    &attrs,
+                    &mut lines,
+                    &mut table,
+                    home,
+                    away,
+                    rng,
+                );
             }
             let last = order.pop().unwrap();
             order.insert(1, last);
@@ -475,18 +555,32 @@ fn play_and_record(
     }
     let (h_amb, h_q) = club_dials(clubs[home].reputation);
     let (a_amb, a_q) = club_dials(clubs[away].reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_h = Side {
+        players: &hxi,
+        ambition: h_amb,
+        quality: h_q,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
+    let mut side_a = Side {
+        players: &axi,
+        ambition: a_amb,
+        quality: a_q,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
-    let o = matchsim::simulate(
-        &side_h,
-        &side_a,
-        Venue::HomeA,
-        (0, 0),
-        rng,
-    );
+    let o = matchsim::simulate(&side_h, &side_a, Venue::HomeA, (0, 0), rng);
     // Standings.
     table[home].p += 1;
     table[away].p += 1;
@@ -510,7 +604,11 @@ fn play_and_record(
     }
     // Fold per-player lines.
     for s in &o.stats {
-        let line_i = if s.side_a { hmap.get(&s.id) } else { amap.get(&s.id) };
+        let line_i = if s.side_a {
+            hmap.get(&s.id)
+        } else {
+            amap.get(&s.id)
+        };
         let Some(&li) = line_i else { continue };
         let l = &mut lines[li];
         l.apps += 1;
@@ -546,7 +644,18 @@ fn local_xi(
         let (role, _) = engine::best_role_for(&a, pos, line);
         let id = id_base + xi.len();
         map.insert(id, li);
-        xi.push(MatchPlayer { id, pos, role, attrs: a, start_fatigue: 0.0, form: 1.0, traits: Vec::new(), weak_foot: 3, foot: crate::model::Foot::Right });    };
+        xi.push(MatchPlayer {
+            id,
+            pos,
+            role,
+            attrs: a,
+            start_fatigue: 0.0,
+            form: 1.0,
+            traits: Vec::new(),
+            weak_foot: 3,
+            foot: crate::model::Foot::Right,
+        });
+    };
     for (line, count) in shape {
         let mut cands: Vec<(f32, usize)> = (0..club_line_idxs.len())
             .filter(|&s| !used[s])
@@ -596,22 +705,48 @@ fn browse_season(
         println!("  8. Back");
         match read_idx("\n  Choose: ") {
             Some(1) => show_table(table),
-            Some(2) => leader_board(lines, "Top scorers", |l| l.goals as f32, |l| format!("{}g {}a", l.goals, l.assists)),
-            Some(3) => leader_board(lines, "Most assists", |l| l.assists as f32, |l| format!("{}a {}g", l.assists, l.goals)),
+            Some(2) => leader_board(
+                lines,
+                "Top scorers",
+                |l| l.goals as f32,
+                |l| format!("{}g {}a", l.goals, l.assists),
+            ),
+            Some(3) => leader_board(
+                lines,
+                "Most assists",
+                |l| l.assists as f32,
+                |l| format!("{}a {}g", l.assists, l.goals),
+            ),
             Some(4) => {
-                let mut idx: Vec<usize> = (0..lines.len()).filter(|&i| lines[i].rating_apps >= 15).collect();
-                idx.sort_by(|&a, &b| lines[b].avg().partial_cmp(&lines[a].avg()).unwrap_or(std::cmp::Ordering::Equal));
+                let mut idx: Vec<usize> = (0..lines.len())
+                    .filter(|&i| lines[i].rating_apps >= 15)
+                    .collect();
+                idx.sort_by(|&a, &b| {
+                    lines[b]
+                        .avg()
+                        .partial_cmp(&lines[a].avg())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 println!("\n  Top rated (≥15 apps):");
                 for &i in idx.iter().take(15) {
                     let l = &lines[i];
                     println!(
                         "   {:>5.2}  {:<22} {:<20} {}g {}a",
-                        l.avg(), clip(&l.name, 22), clip(&clubs[l.club].name, 20), l.goals, l.assists
+                        l.avg(),
+                        clip(&l.name, 22),
+                        clip(&clubs[l.club].name, 20),
+                        l.goals,
+                        l.assists
                     );
                 }
                 pause();
             }
-            Some(5) => leader_board(lines, "Most chances created", |l| l.big_chances as f32, |l| format!("{} big, {} KP", l.big_chances, l.key_passes)),
+            Some(5) => leader_board(
+                lines,
+                "Most chances created",
+                |l| l.big_chances as f32,
+                |l| format!("{} big, {} KP", l.big_chances, l.key_passes),
+            ),
             Some(6) => view_club(clubs, club_lines, lines),
             Some(7) => watch_from_season(clubs, db, rng),
             _ => return,
@@ -622,7 +757,9 @@ fn browse_season(
 fn show_table(table: &[Row]) {
     let mut idx: Vec<usize> = (0..table.len()).collect();
     idx.sort_by(|&a, &b| {
-        table[b].pts().cmp(&table[a].pts())
+        table[b]
+            .pts()
+            .cmp(&table[a].pts())
             .then(table[b].gd().cmp(&table[a].gd()))
             .then(table[b].gf.cmp(&table[a].gf))
     });
@@ -633,20 +770,42 @@ fn show_table(table: &[Row]) {
         let r = &table[i];
         println!(
             "  │ {:>2} │ {:<21}│ {:>2} │ {:>2} │ {:>2} │ {:>2} │ {:>3} │ {:>3} │",
-            rank + 1, clip(&r.name, 21), r.p, r.w, r.d, r.l, r.gd(), r.pts()
+            rank + 1,
+            clip(&r.name, 21),
+            r.p,
+            r.w,
+            r.d,
+            r.l,
+            r.gd(),
+            r.pts()
         );
     }
     println!("  └────┴──────────────────────┴────┴────┴────┴────┴─────┴─────┘");
     pause();
 }
 
-fn leader_board(lines: &[Line], title: &str, key: impl Fn(&Line) -> f32, extra: impl Fn(&Line) -> String) {
+fn leader_board(
+    lines: &[Line],
+    title: &str,
+    key: impl Fn(&Line) -> f32,
+    extra: impl Fn(&Line) -> String,
+) {
     let mut idx: Vec<usize> = (0..lines.len()).collect();
-    idx.sort_by(|&a, &b| key(&lines[b]).partial_cmp(&key(&lines[a])).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_by(|&a, &b| {
+        key(&lines[b])
+            .partial_cmp(&key(&lines[a]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     println!("\n  {}:", title);
     for &i in idx.iter().take(15) {
         let l = &lines[i];
-        println!("   {:<24} {:<6.1}  avg {:.2}   {}", clip(&l.name, 24), key(l), l.avg(), extra(l));
+        println!(
+            "   {:<24} {:<6.1}  avg {:.2}   {}",
+            clip(&l.name, 24),
+            key(l),
+            l.avg(),
+            extra(l)
+        );
     }
     pause();
 }
@@ -656,7 +815,9 @@ fn view_club(clubs: &[Club], club_lines: &[Vec<usize>], lines: &[Line]) {
     for (i, c) in clubs.iter().enumerate() {
         println!("  {:>2}. {}", i + 1, clip(&c.name, 30));
     }
-    let Some(c) = read_idx("\n  Club #: ") else { return };
+    let Some(c) = read_idx("\n  Club #: ") else {
+        return;
+    };
     if c == 0 || c > clubs.len() {
         return;
     }
@@ -695,8 +856,12 @@ fn watch_from_season(clubs: &[Club], db: &Database, rng: &mut Pcg64Mcg) {
     for (i, c) in clubs.iter().enumerate() {
         println!("  {:>2}. {}", i + 1, clip(&c.name, 30));
     }
-    let Some(h) = read_idx("\n  Home #: ") else { return };
-    let Some(a) = read_idx("  Away #: ") else { return };
+    let Some(h) = read_idx("\n  Home #: ") else {
+        return;
+    };
+    let Some(a) = read_idx("  Away #: ") else {
+        return;
+    };
     if h == 0 || a == 0 || h > clubs.len() || a > clubs.len() || h == a {
         return;
     }
@@ -713,18 +878,32 @@ fn watch_from_season(clubs: &[Club], db: &Database, rng: &mut Pcg64Mcg) {
     let (axi, anames) = build_xi(&ap, 1000);
     let (h_amb, h_q) = club_dials(home.reputation);
     let (a_amb, a_q) = club_dials(away.reputation);
-    let mut side_h = Side { players: &hxi, ambition: h_amb, quality: h_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
-    let mut side_a = Side { players: &axi, ambition: a_amb, quality: a_q, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    let mut side_h = Side {
+        players: &hxi,
+        ambition: h_amb,
+        quality: h_q,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
+    let mut side_a = Side {
+        players: &axi,
+        ambition: a_amb,
+        quality: a_q,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
     let (th, ta) = matchsim::threat_ratio(&side_h, &side_a);
     side_h.threat = th;
     side_a.threat = ta;
-    let o = matchsim::simulate(
-        &side_h,
-        &side_a,
-        Venue::HomeA,
-        (0, 0),
-        rng,
-    );
+    let o = matchsim::simulate(&side_h, &side_a, Venue::HomeA, (0, 0), rng);
     let name_of = |id: usize| -> String {
         if id >= 1000 {
             anames.get(id - 1000).cloned().unwrap_or_default()
@@ -744,14 +923,47 @@ fn watch_from_season(clubs: &[Club], db: &Database, rng: &mut Pcg64Mcg) {
                 sa += 1;
             }
             let who = if e.side_a { &home.name } else { &away.name };
-            let assist = e.assist.map(|i| format!(" (assist {})", clip(&name_of(i), 16))).unwrap_or_default();
-            let dead = if e.kind == EventKind::SetPiece { " (db)" } else { "" };
-            println!("  {:>2}'  \u{26bd} {}{} {}-{}  {}{}", e.minute, clip(who, 16), dead, sh, sa, clip(&name_of(e.actor), 16), assist);
+            let assist = e
+                .assist
+                .map(|i| format!(" (assist {})", clip(&name_of(i), 16)))
+                .unwrap_or_default();
+            let dead = if e.kind == EventKind::SetPiece {
+                " (db)"
+            } else {
+                ""
+            };
+            println!(
+                "  {:>2}'  \u{26bd} {}{} {}-{}  {}{}",
+                e.minute,
+                clip(who, 16),
+                dead,
+                sh,
+                sa,
+                clip(&name_of(e.actor), 16),
+                assist
+            );
         } else if e.kind == EventKind::Injury {
-            println!("  {:>2}'  \u{1fa79} {} injured", e.minute, clip(&name_of(e.actor), 16));
+            println!(
+                "  {:>2}'  \u{1fa79} {} injured",
+                e.minute,
+                clip(&name_of(e.actor), 16)
+            );
         }
     }
-    println!("  FT: {} {}-{} {}   (xG {:.1}-{:.1}, poss {}%, corners {}-{}, set-piece goals {}-{})", clip(&home.name, 18), o.goals_a, o.goals_b, clip(&away.name, 18), o.xg_a, o.xg_b, o.poss_a, o.corners_a, o.corners_b, o.sp_goals_a, o.sp_goals_b);
+    println!(
+        "  FT: {} {}-{} {}   (xG {:.1}-{:.1}, poss {}%, corners {}-{}, set-piece goals {}-{})",
+        clip(&home.name, 18),
+        o.goals_a,
+        o.goals_b,
+        clip(&away.name, 18),
+        o.xg_a,
+        o.xg_b,
+        o.poss_a,
+        o.corners_a,
+        o.corners_b,
+        o.sp_goals_a,
+        o.sp_goals_b
+    );
     print_sheet(&home.name, true, &o.stats, &name_of);
     print_sheet(&away.name, false, &o.stats, &name_of);
     pause();

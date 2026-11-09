@@ -21,6 +21,8 @@
 //! Player data: the 2026 players database (see `data/players.csv`), an EA FC-style
 //! dump mapping onto the shared 0-100 attribute scale.
 
+#![recursion_limit = "384"]
+
 mod cup;
 mod data;
 mod deals;
@@ -156,7 +158,9 @@ impl GameState {
     }
 
     fn next_fixture(&self) -> Option<&Fixture> {
-        self.fixtures.iter().find(|f| !f.played && (f.home == self.club.id || f.away == self.club.id))
+        self.fixtures
+            .iter()
+            .find(|f| !f.played && (f.home == self.club.id || f.away == self.club.id))
     }
 
     fn add_news(&mut self, text: String) {
@@ -259,7 +263,8 @@ fn main_menu() -> MenuAction {
     }
 }
 
-fn select_difficulty() -> Difficulty {    print_header("SELECT DIFFICULTY");
+fn select_difficulty() -> Difficulty {
+    print_header("SELECT DIFFICULTY");
     println!("\n  1.  Amateur       (boosted performance)");
     println!("  2.  Intermediate  (balanced)");
     println!("  3.  Professional  (realistic challenge)");
@@ -280,14 +285,23 @@ fn run_season_sandbox() {
     println!("\n  How many years to simulate? (1 = detailed single season,");
     let years = read_number("  up to 100 for a dynasty report) [default 10]: ");
     let years = if years <= 0 { 10 } else { years.min(100) } as u16;
-    println!("\n  Loading database and simulating {} season(s) (~{} matches)...",
-        years, years as u32 * 2100);
+    println!(
+        "\n  Loading database and simulating {} season(s) (~{} matches)...",
+        years,
+        years as u32 * 2100
+    );
     io::stdout().flush().unwrap();
     let db = Database::load();
-    let seed = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    // The focal-player scenario is a controlled experiment: a fixed seed so
+    // reruns reproduce the same career and the same focal JSON.
+    let seed = if std::env::var("FM_ADITY_PRODIGY").ok().as_deref() == Some("1") {
+        20_260_101
+    } else {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
     let report = if years == 1 {
         season::simulate_full_season(&db, seed)
     } else {
@@ -327,19 +341,36 @@ fn run_calibration() {
         .as_secs();
     let best = tune::calibrate(&db, gens, 6, 3, seed);
     match best.save() {
-        Ok(()) => println!("\n  Best parameters saved to tuned_params.json — future sims use them."),
+        Ok(()) => {
+            println!("\n  Best parameters saved to tuned_params.json — future sims use them.")
+        }
         Err(e) => println!("\n  Could not save tuned_params.json: {}", e),
     }
     match net::write_ml_export(&best, "ml_export/ml_models.json") {
-        Ok(()) => println!("\n  Model package exported to ml_export/ml_models.json (GPU-ready weight tables)."),
+        Ok(()) => println!(
+            "\n  Model package exported to ml_export/ml_models.json (GPU-ready weight tables)."
+        ),
         Err(e) => println!("\n  Could not export models: {}", e),
     }
     let validation = tune::validate_best(&db, &best, 3, seed);
-    println!("\n  Holdout validation (3 unseen seeds x 3 seasons): loss {:.3}", validation.loss);
-    println!("  Champion points: {:.1} ± {:.1}", validation.mean_champ_pts, validation.champ_pts_sd);
+    println!(
+        "\n  Holdout validation (3 unseen seeds x 3 seasons): loss {:.3}",
+        validation.loss
+    );
+    println!(
+        "  Champion points: {:.1} ± {:.1}",
+        validation.mean_champ_pts, validation.champ_pts_sd
+    );
     println!("  Golden boot: {:.1}", validation.mean_boot);
-    println!("  UCL elite rate: {:.0}%  Ballon elite rate: {:.0}%", validation.ucl_elite_rate * 100.0, validation.ballon_elite_rate * 100.0);
-    println!("  Deals: {:.1}  Mean record fee {:.1}m", validation.mean_deals, validation.mean_max_fee);
+    println!(
+        "  UCL elite rate: {:.0}%  Ballon elite rate: {:.0}%",
+        validation.ucl_elite_rate * 100.0,
+        validation.ballon_elite_rate * 100.0
+    );
+    println!(
+        "  Deals: {:.1}  Mean record fee {:.1}m",
+        validation.mean_deals, validation.mean_max_fee
+    );
     press_enter();
 }
 
@@ -419,7 +450,10 @@ fn new_game() -> Option<GameState> {
     }
 
     let mut club = league_clubs[cchoice - 1].clone();
-    let renamed = read_text(&format!("  Rename your club (Enter to keep '{}'):", club.name));
+    let renamed = read_text(&format!(
+        "  Rename your club (Enter to keep '{}'):",
+        club.name
+    ));
     if !renamed.is_empty() {
         club.name = renamed;
     }
@@ -427,9 +461,18 @@ fn new_game() -> Option<GameState> {
 
     // World squads come from the database pool (real clubs, latest ratings),
     // topped up with generated players where a source roster runs short.
-    let mut rng = Pcg64Mcg::new(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128);
-    let db_index: HashMap<PlayerId, usize> =
-        db.players().iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+    let mut rng = Pcg64Mcg::new(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u128,
+    );
+    let db_index: HashMap<PlayerId, usize> = db
+        .players()
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.id, i))
+        .collect();
     let mut used_db: HashSet<PlayerId> = HashSet::new();
     let mut players = Vec::new();
     let mut next_id: PlayerId = 1;
@@ -503,10 +546,14 @@ fn new_game() -> Option<GameState> {
                 have[pos_slot(p.position)] += 1;
             }
         }
-        for (slot, (pos, want)) in
-            [(Position::GK, 2), (Position::DEF, 6), (Position::MID, 6), (Position::FWD, 4)]
-                .into_iter()
-                .enumerate()
+        for (slot, (pos, want)) in [
+            (Position::GK, 2),
+            (Position::DEF, 6),
+            (Position::MID, 6),
+            (Position::FWD, 4),
+        ]
+        .into_iter()
+        .enumerate()
         {
             while have[slot] < want && squad_ids.len() < 23 {
                 let mut p = Gen::new(rng.gen()).player(pos, strength);
@@ -545,7 +592,9 @@ fn new_game() -> Option<GameState> {
     state.next_player_id = next_id;
     // Budgets + board expectation derived from reputation (original rules).
     {
-        let weekly_wages: i64 = state.players.iter()
+        let weekly_wages: i64 = state
+            .players
+            .iter()
             .filter(|p| p.club == Some(state.club.id))
             .map(|p| p.contract.wage as i64)
             .sum();
@@ -562,7 +611,10 @@ fn new_game() -> Option<GameState> {
     state.fixtures = generate_fixtures(&state.league);
 
     // Add opening news
-    state.add_news(format!("{} season starts! Good luck managing {}.", state.season, state.club.name));
+    state.add_news(format!(
+        "{} season starts! Good luck managing {}.",
+        state.season, state.club.name
+    ));
     state.add_news("Pre-season transfers completed. Squad assembled.".to_string());
 
     press_enter();
@@ -683,14 +735,21 @@ fn generate_fixtures(league: &[Club]) -> Vec<Fixture> {
 
 fn game_loop(mut state: GameState) {
     loop {
-        print_header(&format!("SEASON {} · WEEK {} · DAY {} · {}", state.season, state.week, state.day, state.club.name));
-        println!("\n  💰 Budget: {}   ⭐ Rep: {}   🏟️  Capacity: {}",
+        print_header(&format!(
+            "SEASON {} · WEEK {} · DAY {} · {}",
+            state.season, state.week, state.day, state.club.name
+        ));
+        println!(
+            "\n  💰 Budget: {}   ⭐ Rep: {}   🏟️  Capacity: {}",
             format_currency(state.club.balance),
             state.club.reputation,
-            state.club.stadium_capacity);
-        println!("  📋 Squad Size: {}   📊 League Pos: {}",
+            state.club.stadium_capacity
+        );
+        println!(
+            "  📋 Squad Size: {}   📊 League Pos: {}",
             state.club.squad.len(),
-            get_league_position(&state));
+            get_league_position(&state)
+        );
 
         println!("\n  ── MAIN MENU ──");
         println!("  1.  Match Centre (Play Next Match)");
@@ -748,11 +807,24 @@ fn match_centre(state: &mut GameState) {
         }
     };
 
-    let home_name = state.league.iter().find(|c| c.id == fixture.home).map(|c| c.name.clone()).unwrap_or_default();
-    let away_name = state.league.iter().find(|c| c.id == fixture.away).map(|c| c.name.clone()).unwrap_or_default();
+    let home_name = state
+        .league
+        .iter()
+        .find(|c| c.id == fixture.home)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    let away_name = state
+        .league
+        .iter()
+        .find(|c| c.id == fixture.away)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
 
     print_header("MATCH CENTRE");
-    println!("\n  Round {}: {} vs {}", fixture.round, home_name, away_name);
+    println!(
+        "\n  Round {}: {} vs {}",
+        fixture.round, home_name, away_name
+    );
     println!("  Venue: {}", home_name);
     println!("\n  1.  Simulate Match (Auto)");
     println!("  2.  View Team Sheet");
@@ -802,7 +874,8 @@ fn build_career_side(
     let refs: Vec<&Player> = squad.iter().collect();
     let xi = resolve_lineup(&refs, tactic, lineup);
     let to_mp = |p: &Player, role: Role| -> matchsim::MatchPlayer {
-        let fatigue = ((100u16.saturating_sub(p.condition as u16)) as f32 / 100.0 * 0.55).clamp(0.0, 0.6);
+        let fatigue =
+            ((100u16.saturating_sub(p.condition as u16)) as f32 / 100.0 * 0.55).clamp(0.0, 0.6);
         let form = (p.effective() / (p.overall().max(1) as f32)).clamp(0.8, 1.2);
         matchsim::MatchPlayer {
             id: p.id as usize,
@@ -900,8 +973,18 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
     let away_tactic = club_tactic(state, fixture.away);
     let home_line = club_lineup(state, fixture.home);
     let away_line = club_lineup(state, fixture.away);
-    let home_name = state.league.iter().find(|c| c.id == fixture.home).map(|c| c.name.clone()).unwrap_or_default();
-    let away_name = state.league.iter().find(|c| c.id == fixture.away).map(|c| c.name.clone()).unwrap_or_default();
+    let home_name = state
+        .league
+        .iter()
+        .find(|c| c.id == fixture.home)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    let away_name = state
+        .league
+        .iter()
+        .find(|c| c.id == fixture.away)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
     let involves_human = fixture.home == state.club.id || fixture.away == state.club.id;
 
     // Pre-match team talk (original morale mechanic): only for human matches.
@@ -924,7 +1007,13 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
         // Store the talk choice effect as a small morale swing applied below.
     }
 
-    let mut rng = Pcg64Mcg::new(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128 ^ fixture.round as u128);
+    let mut rng = Pcg64Mcg::new(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u128
+            ^ fixture.round as u128,
+    );
 
     // Apply difficulty boost
     let diff_boost = state.difficulty.match_boost();
@@ -970,10 +1059,14 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
     let (a_xi, a_bench) = build_career_side(&away_squad, &away_tactic, &away_line);
     let h_shape = tactics::shape(home_tactic.formation, &home_tactic.instructions);
     let a_shape = tactics::shape(away_tactic.formation, &away_tactic.instructions);
-    let (mut h_amb, mut h_q) =
-        (mentality_ambition(home_tactic.mentality), 0.9 + (home_rep as f32 / 100.0) * 0.25);
-    let (mut a_amb, mut a_q) =
-        (mentality_ambition(away_tactic.mentality), 0.9 + (away_rep as f32 / 100.0) * 0.25);
+    let (mut h_amb, mut h_q) = (
+        mentality_ambition(home_tactic.mentality),
+        0.9 + (home_rep as f32 / 100.0) * 0.25,
+    );
+    let (mut a_amb, mut a_q) = (
+        mentality_ambition(away_tactic.mentality),
+        0.9 + (away_rep as f32 / 100.0) * 0.25,
+    );
     if involves_human {
         if fixture.home == state.club.id {
             h_q *= diff_boost * talk_mult;
@@ -1031,7 +1124,10 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
         let home_side = e.side_a;
         let text = match e.kind {
             matchsim::EventKind::Goal | matchsim::EventKind::Penalty => {
-                let assist = e.assist.map(|a| name_of(a)).filter(|a| *a != name_of(e.actor));
+                let assist = e
+                    .assist
+                    .map(|a| name_of(a))
+                    .filter(|a| *a != name_of(e.actor));
                 match assist {
                     Some(a) => format!(
                         "GOAL {} — {} ⚽ (assist: {})",
@@ -1097,15 +1193,26 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
 
     // Add news
     if home_goals > away_goals {
-        state.add_news(format!("{} beat {} {}-{} (xG {:.1}-{:.1}).", home_name, away_name, home_goals, away_goals, home_xg, away_xg));
+        state.add_news(format!(
+            "{} beat {} {}-{} (xG {:.1}-{:.1}).",
+            home_name, away_name, home_goals, away_goals, home_xg, away_xg
+        ));
     } else if away_goals > home_goals {
-        state.add_news(format!("{} won {}-{} at {} (xG {:.1}-{:.1}).", away_name, away_goals, home_goals, home_name, away_xg, home_xg));
+        state.add_news(format!(
+            "{} won {}-{} at {} (xG {:.1}-{:.1}).",
+            away_name, away_goals, home_goals, home_name, away_xg, home_xg
+        ));
     } else {
-        state.add_news(format!("{} and {} drew {}-{} (xG {:.1}-{:.1}).", home_name, away_name, home_goals, away_goals, home_xg, away_xg));
+        state.add_news(format!(
+            "{} and {} drew {}-{} (xG {:.1}-{:.1}).",
+            home_name, away_name, home_goals, away_goals, home_xg, away_xg
+        ));
     }
 
     // Prize money / wage costs
-    let prize_money = 50000 + (home_goals.max(away_goals) as u64) * 25000 + (if home_goals != away_goals { 100000 } else { 0 });
+    let prize_money = 50000
+        + (home_goals.max(away_goals) as u64) * 25000
+        + (if home_goals != away_goals { 100000 } else { 0 });
     state.club.balance += prize_money as i64 / 2; // Home team gets more
 
     // Advance week
@@ -1113,8 +1220,14 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
 
     // Display result
     print_header("MATCH RESULT");
-    println!("\n  {} {} - {} {}", home_name, home_goals, away_goals, away_name);
-    println!("  xG: {:.1} - {:.1}   Shots: {} - {}", home_xg, away_xg, shots_h, shots_a);
+    println!(
+        "\n  {} {} - {} {}",
+        home_name, home_goals, away_goals, away_name
+    );
+    println!(
+        "  xG: {:.1} - {:.1}   Shots: {} - {}",
+        home_xg, away_xg, shots_h, shots_a
+    );
     println!("\n  ── Events ──");
     if events.is_empty() {
         println!("  No goals. Goalless draw.");
@@ -1123,7 +1236,10 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
             println!("  {}' {}", e.minute, e.text);
         }
     }
-    println!("\n  Prize Money: {} (Home)", format_currency(prize_money as i64));
+    println!(
+        "\n  Prize Money: {} (Home)",
+        format_currency(prize_money as i64)
+    );
     println!("  Wage Costs:  -{}", format_currency(25000));
     println!("\n  New Balance: {}", format_currency(state.club.balance));
 
@@ -1136,12 +1252,14 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
         if human_won {
             println!("\n  Victory! Morale and confidence rise.");
             state.club.morale = (state.club.morale as i16 + 5).clamp(0, 100) as u8;
-            state.club.board_confidence = (state.club.board_confidence as i16 + 3).clamp(0, 100) as u8;
+            state.club.board_confidence =
+                (state.club.board_confidence as i16 + 3).clamp(0, 100) as u8;
             state.club.fan_confidence = (state.club.fan_confidence as i16 + 4).clamp(0, 100) as u8;
         } else if human_lost {
             println!("\n  Defeat. Morale and confidence dip.");
             state.club.morale = (state.club.morale as i16 - 5).clamp(0, 100) as u8;
-            state.club.board_confidence = (state.club.board_confidence as i16 - 3).clamp(0, 100) as u8;
+            state.club.board_confidence =
+                (state.club.board_confidence as i16 - 3).clamp(0, 100) as u8;
             state.club.fan_confidence = (state.club.fan_confidence as i16 - 4).clamp(0, 100) as u8;
         } else {
             println!("\n  Draw. Morale steady.");
@@ -1217,7 +1335,11 @@ fn tick_club_after_match(
             p.stats.rating_sum += (r * 10.0).round() as u32;
             p.form = ((p.form as i16 + ((r - 6.7) * 8.0) as i16).clamp(-100, 100)) as i8;
             // Injuries scale with condition, sharpness and pressing.
-            if rng.gen_bool(engine::injury_probability(p.condition, p.sharpness, pressing)) {
+            if rng.gen_bool(engine::injury_probability(
+                p.condition,
+                p.sharpness,
+                pressing,
+            )) {
                 p.injury_days = rng.gen_range(3..=21);
             }
         }
@@ -1288,18 +1410,58 @@ fn simulate_rest_of_round(state: &mut GameState, round: u16, rng: &mut Pcg64Mcg)
                 }
             }
         }
-        let hn = state.league.iter().find(|c| c.id == home_id).map(|c| c.name.clone()).unwrap_or_default();
-        let an = state.league.iter().find(|c| c.id == away_id).map(|c| c.name.clone()).unwrap_or_default();
-        let hr = state.league.iter().find(|c| c.id == home_id).map(|c| c.reputation).unwrap_or(50);
-        let ar = state.league.iter().find(|c| c.id == away_id).map(|c| c.reputation).unwrap_or(50);
+        let hn = state
+            .league
+            .iter()
+            .find(|c| c.id == home_id)
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        let an = state
+            .league
+            .iter()
+            .find(|c| c.id == away_id)
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        let hr = state
+            .league
+            .iter()
+            .find(|c| c.id == home_id)
+            .map(|c| c.reputation)
+            .unwrap_or(50);
+        let ar = state
+            .league
+            .iter()
+            .find(|c| c.id == away_id)
+            .map(|c| c.reputation)
+            .unwrap_or(50);
         lines.push(format!("{} {}-{} {}", hn, hg, ag, an));
         // Upset: winner rated 15+ reputation below the loser. Rout: margin 4+.
         if (hw && hr + 15 < ar) || (aw && ar + 15 < hr) {
-            let (w, l) = if hw { (hn.clone(), an.clone()) } else { (an.clone(), hn.clone()) };
-            state.add_news(format!("UPSET: {} beat {} {}-{}.", w, l, hg.max(ag), hg.min(ag)));
+            let (w, l) = if hw {
+                (hn.clone(), an.clone())
+            } else {
+                (an.clone(), hn.clone())
+            };
+            state.add_news(format!(
+                "UPSET: {} beat {} {}-{}.",
+                w,
+                l,
+                hg.max(ag),
+                hg.min(ag)
+            ));
         } else if hg.max(ag) >= hg.min(ag) + 4 && hg != ag {
-            let (w, l) = if hw { (hn.clone(), an.clone()) } else { (an.clone(), hn.clone()) };
-            state.add_news(format!("Rout: {} thrashed {} {}-{}.", w, l, hg.max(ag), hg.min(ag)));
+            let (w, l) = if hw {
+                (hn.clone(), an.clone())
+            } else {
+                (an.clone(), hn.clone())
+            };
+            state.add_news(format!(
+                "Rout: {} thrashed {} {}-{}.",
+                w,
+                l,
+                hg.max(ag),
+                hg.min(ag)
+            ));
         }
         // Sack cycle: confidence collapse after 5+ played games -> new manager,
         // new tactics, reset confidence (original merry-go-round, names omitted).
@@ -1307,8 +1469,17 @@ fn simulate_rest_of_round(state: &mut GameState, round: u16, rng: &mut Pcg64Mcg)
             if cid == state.club.id {
                 continue;
             }
-            let played = state.fixtures.iter().filter(|f| f.played && (f.home == cid || f.away == cid)).count();
-            let conf = state.league.iter().find(|c| c.id == cid).map(|c| c.board_confidence).unwrap_or(60);
+            let played = state
+                .fixtures
+                .iter()
+                .filter(|f| f.played && (f.home == cid || f.away == cid))
+                .count();
+            let conf = state
+                .league
+                .iter()
+                .find(|c| c.id == cid)
+                .map(|c| c.board_confidence)
+                .unwrap_or(60);
             if conf < 25 && played >= 5 {
                 if let Some(c) = state.league.iter_mut().find(|c| c.id == cid) {
                     let nf = Formation::all()[rng.gen_range(0..Formation::all().len())];
@@ -1318,7 +1489,12 @@ fn simulate_rest_of_round(state: &mut GameState, round: u16, rng: &mut Pcg64Mcg)
                     c.board_confidence = 55;
                     c.morale = 70;
                     let nm = c.name.clone();
-                    state.add_news(format!("{} sack their manager after {} games; new boss switches to {}.", nm, played, nf.label()));
+                    state.add_news(format!(
+                        "{} sack their manager after {} games; new boss switches to {}.",
+                        nm,
+                        played,
+                        nf.label()
+                    ));
                 }
             }
         }
@@ -1405,7 +1581,12 @@ fn resolve_lineup<'a>(
                 .iter()
                 .find(|(s, _, _)| *s == slot)
                 .map(|(_, r, d)| (*r, *d))
-                .unwrap_or_else(|| (engine::best_role_for(&p.attrs, p.position, line).0, Duty::Support));
+                .unwrap_or_else(|| {
+                    (
+                        engine::best_role_for(&p.attrs, p.position, line).0,
+                        Duty::Support,
+                    )
+                });
             xi.push((p, role, duty));
         }
     }
@@ -1482,7 +1663,14 @@ fn view_team_sheet(state: &mut GameState, home_id: ClubId, away_id: ClubId) {
         println!("\n  {} Squad:", home.name);
         for pid in &home.squad {
             if let Some(p) = state.players.iter().find(|p| p.id == *pid) {
-                println!("    #{} {} ({}|{}) - OVR: {}", p.id, p.name, p.position.short(), p.age, p.overall());
+                println!(
+                    "    #{} {} ({}|{}) - OVR: {}",
+                    p.id,
+                    p.name,
+                    p.position.short(),
+                    p.age,
+                    p.overall()
+                );
             }
         }
     }
@@ -1490,7 +1678,14 @@ fn view_team_sheet(state: &mut GameState, home_id: ClubId, away_id: ClubId) {
         println!("\n  {} Squad:", away.name);
         for pid in &away.squad {
             if let Some(p) = state.players.iter().find(|p| p.id == *pid) {
-                println!("    #{} {} ({}|{}) - OVR: {}", p.id, p.name, p.position.short(), p.age, p.overall());
+                println!(
+                    "    #{} {} ({}|{}) - OVR: {}",
+                    p.id,
+                    p.name,
+                    p.position.short(),
+                    p.age,
+                    p.overall()
+                );
             }
         }
     }
@@ -1499,20 +1694,44 @@ fn view_team_sheet(state: &mut GameState, home_id: ClubId, away_id: ClubId) {
 
 fn set_tactics(state: &mut GameState, club_id: ClubId) {
     loop {
-        let club_name = state.league.iter().find(|c| c.id == club_id).map(|c| c.name.clone())
+        let club_name = state
+            .league
+            .iter()
+            .find(|c| c.id == club_id)
+            .map(|c| c.name.clone())
             .unwrap_or_else(|| state.club.name.clone());
         let (formation, mentality, instr) = if state.club.id == club_id {
-            (state.club.tactic.formation, state.club.tactic.mentality, state.club.tactic.instructions)
+            (
+                state.club.tactic.formation,
+                state.club.tactic.mentality,
+                state.club.tactic.instructions,
+            )
         } else {
             match state.league.iter().find(|c| c.id == club_id) {
-                Some(c) => (c.tactic.formation, c.tactic.mentality, c.tactic.instructions),
+                Some(c) => (
+                    c.tactic.formation,
+                    c.tactic.mentality,
+                    c.tactic.instructions,
+                ),
                 None => return,
             }
         };
         print_header("SET TACTICS");
-        println!("\n  {}: {} ({})", club_name, formation.label(), mentality.label());
-        println!("  Instructions: tempo {} / direct {} / pressing {} / line {} / width {} / waste {}",
-            instr.tempo, instr.directness, instr.pressing, instr.defensive_line, instr.width, instr.time_wasting);
+        println!(
+            "\n  {}: {} ({})",
+            club_name,
+            formation.label(),
+            mentality.label()
+        );
+        println!(
+            "  Instructions: tempo {} / direct {} / pressing {} / line {} / width {} / waste {}",
+            instr.tempo,
+            instr.directness,
+            instr.pressing,
+            instr.defensive_line,
+            instr.width,
+            instr.time_wasting
+        );
         println!("\n  1.  Formation");
         println!("  2.  Mentality (7 levels)");
         println!("  3.  Instructions (tempo/direct/press/line/width/waste 0-100)");
@@ -1537,7 +1756,13 @@ fn set_tactics(state: &mut GameState, club_id: ClubId) {
             2 => {
                 println!("\n  Mentalities:");
                 for (i, m) in Mentality::all().iter().enumerate() {
-                    println!("  {}. {} (ATK:{:.2} DEF:{:.2})", i + 1, m.label(), m.modifiers().0, m.modifiers().1);
+                    println!(
+                        "  {}. {} (ATK:{:.2} DEF:{:.2})",
+                        i + 1,
+                        m.label(),
+                        m.modifiers().0,
+                        m.modifiers().1
+                    );
                 }
                 print!("  Set mentality (1-{}): ", Mentality::all().len());
                 io::stdout().flush().unwrap();
@@ -1548,7 +1773,10 @@ fn set_tactics(state: &mut GameState, club_id: ClubId) {
             }
             3 => {
                 let v = read_text("  Enter 6 values tempo direct pressing line width waste (0-100, space separated):");
-                let nums: Vec<u8> = v.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                let nums: Vec<u8> = v
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
                 if nums.len() == 6 {
                     apply_tactic(state, club_id, |t| {
                         t.instructions.tempo = nums[0].min(100);
@@ -1568,11 +1796,23 @@ fn set_tactics(state: &mut GameState, club_id: ClubId) {
                 for (i, r) in Role::all().iter().enumerate() {
                     println!("  {}. {}", i + 1, r.label());
                 }
-                print!("  Slot index (0-10), role (1-{}), duty 1=Def 2=Sup 3=Att, space separated: ", Role::all().len());
+                print!(
+                    "  Slot index (0-10), role (1-{}), duty 1=Def 2=Sup 3=Att, space separated: ",
+                    Role::all().len()
+                );
                 io::stdout().flush().unwrap();
                 let v = read_text("");
-                let nums: Vec<usize> = v.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-                if nums.len() == 3 && nums[0] <= 10 && nums[1] >= 1 && nums[1] <= Role::all().len() && nums[2] >= 1 && nums[2] <= 3 {
+                let nums: Vec<usize> = v
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                if nums.len() == 3
+                    && nums[0] <= 10
+                    && nums[1] >= 1
+                    && nums[1] <= Role::all().len()
+                    && nums[2] >= 1
+                    && nums[2] <= 3
+                {
                     let role = Role::all()[nums[1] - 1];
                     let duty = Duty::all()[nums[2] - 1];
                     apply_tactic(state, club_id, |t| {
@@ -1756,7 +1996,10 @@ fn assign_slot_player(state: &mut GameState) {
         "  Enter: slot (0-{}) and player ID, space separated:",
         slot_count - 1
     ));
-    let nums: Vec<u32> = v.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    let nums: Vec<u32> = v
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     if nums.len() != 2 || nums[0] as usize >= slot_count {
         println!("  Invalid input.");
         press_enter();
@@ -1798,7 +2041,10 @@ fn set_slot_role(state: &mut GameState) {
         slots.len() - 1,
         all.len()
     ));
-    let nums: Vec<usize> = v.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    let nums: Vec<usize> = v
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     if nums.len() != 3
         || nums[0] >= slots.len()
         || nums[1] < 1
@@ -1830,14 +2076,26 @@ fn set_slot_role(state: &mut GameState) {
 fn squad_manager(state: &mut GameState) {
     loop {
         print_header("SQUAD MANAGER");
-        println!("\n  Squad for {} (Budget: {})", state.club.name, format_currency(state.club.balance));
+        println!(
+            "\n  Squad for {} (Budget: {})",
+            state.club.name,
+            format_currency(state.club.balance)
+        );
         println!("  ┌─────┬────────────────────┬─────┬──────┬──────┬──────────┐");
         println!("  │ ID  │ Name               │ Pos │ Age  │ OVR  │ Value    │");
         println!("  ├─────┼────────────────────┼─────┼──────┼──────┼──────────┤");
         for p in &state.players {
             if p.club == Some(state.club.id) {
                 let val = format_currency(p.value as i64);
-                println!("  │ {:>3} │ {:<18} │ {:>3} │ {:>4} │ {:>4} │ {:>8} │", p.id, p.name, p.position.short(), p.age, p.overall(), val);
+                println!(
+                    "  │ {:>3} │ {:<18} │ {:>3} │ {:>4} │ {:>4} │ {:>8} │",
+                    p.id,
+                    p.name,
+                    p.position.short(),
+                    p.age,
+                    p.overall(),
+                    val
+                );
             }
         }
         println!("  └─────┴────────────────────┴─────┴──────┴──────┴──────────┘");
@@ -1857,7 +2115,11 @@ fn squad_manager(state: &mut GameState) {
                 print!("  Enter player ID: ");
                 io::stdout().flush().unwrap();
                 let pid: PlayerId = read_choice() as PlayerId;
-                if let Some(p) = state.players.iter().find(|p| p.id == pid && p.club == Some(state.club.id)) {
+                if let Some(p) = state
+                    .players
+                    .iter()
+                    .find(|p| p.id == pid && p.club == Some(state.club.id))
+                {
                     show_player_details(p);
                 } else {
                     println!("  Player not found!");
@@ -1874,13 +2136,31 @@ fn squad_manager(state: &mut GameState) {
 
 fn show_player_details(p: &Player) {
     print_header(&format!("PLAYER DETAILS - {}", p.name));
-    println!("  Position: {}  |  Age: {}  |  Nationality: Gen", p.position.short(), p.age);
-    println!("  Overall: {}  |  Potential: {}  |  Personality: {}", p.overall(), p.potential, p.personality.label());
+    println!(
+        "  Position: {}  |  Age: {}  |  Nationality: Gen",
+        p.position.short(),
+        p.age
+    );
+    println!(
+        "  Overall: {}  |  Potential: {}  |  Personality: {}",
+        p.overall(),
+        p.potential,
+        p.personality.label()
+    );
     println!("  Effective: {:.1}", p.effective());
     println!("\n  ── Attributes ──");
-    println!("  Pace:{}, Shooting:{}, Passing:{}, Dribbling:{}", p.attrs.pace, p.attrs.shooting, p.attrs.passing, p.attrs.dribbling);
-    println!("  Tackling:{}, Heading:{}, Strength:{}, Stamina:{}", p.attrs.tackling, p.attrs.heading, p.attrs.strength, p.attrs.stamina);
-    println!("  Vision:{}, Composure:{}, GK:{}, FT:{}", p.attrs.vision, p.attrs.composure, p.attrs.goalkeeping, p.attrs.first_touch);
+    println!(
+        "  Pace:{}, Shooting:{}, Passing:{}, Dribbling:{}",
+        p.attrs.pace, p.attrs.shooting, p.attrs.passing, p.attrs.dribbling
+    );
+    println!(
+        "  Tackling:{}, Heading:{}, Strength:{}, Stamina:{}",
+        p.attrs.tackling, p.attrs.heading, p.attrs.strength, p.attrs.stamina
+    );
+    println!(
+        "  Vision:{}, Composure:{}, GK:{}, FT:{}",
+        p.attrs.vision, p.attrs.composure, p.attrs.goalkeeping, p.attrs.first_touch
+    );
     println!("\n  ── Best Roles (attribute fit, out-of-position cost included) ──");
     let mut fits: Vec<(Role, f32)> = Role::all()
         .iter()
@@ -1891,15 +2171,36 @@ fn show_player_details(p: &Player) {
         println!("  {:<24} {:>3.0}", r.label(), f.round());
     }
     println!("\n  ── Form ──");
-    println!("  Morale: {}%  |  Fitness: {}%  |  Form: {}", p.morale, p.fitness, p.form);
-    println!("  Condition: {}%  |  Sharpness: {}%  |  Happiness: {}%", p.condition, p.sharpness, p.happiness);
-    println!("  Injury: {} days  |  Yellows: {}  |  Suspension: {} match(es)", p.injury_days, p.yellows, p.suspension);
-    println!("  Contract expiry: {}  |  Release clause: {}", p.contract_expiry,
-        p.release_clause.map(|v| format_currency(v as i64)).unwrap_or_else(|| "-".to_string()));
-    println!("  Contract: {} weeks/yr, {} years left", format_currency(p.contract.wage as i64), p.contract.years);
+    println!(
+        "  Morale: {}%  |  Fitness: {}%  |  Form: {}",
+        p.morale, p.fitness, p.form
+    );
+    println!(
+        "  Condition: {}%  |  Sharpness: {}%  |  Happiness: {}%",
+        p.condition, p.sharpness, p.happiness
+    );
+    println!(
+        "  Injury: {} days  |  Yellows: {}  |  Suspension: {} match(es)",
+        p.injury_days, p.yellows, p.suspension
+    );
+    println!(
+        "  Contract expiry: {}  |  Release clause: {}",
+        p.contract_expiry,
+        p.release_clause
+            .map(|v| format_currency(v as i64))
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "  Contract: {} weeks/yr, {} years left",
+        format_currency(p.contract.wage as i64),
+        p.contract.years
+    );
     println!("  Value: {}", format_currency(p.value as i64));
     println!("\n  ── Season Stats ──");
-    println!("  Apps: {}, Goals: {}, Assists: {}", p.stats.apps, p.stats.goals, p.stats.assists);
+    println!(
+        "  Apps: {}, Goals: {}, Assists: {}",
+        p.stats.apps, p.stats.goals, p.stats.assists
+    );
     println!("  Avg Rating: {:.1}", p.stats.avg_rating());
     press_enter();
 }
@@ -1908,7 +2209,10 @@ fn sell_player(state: &mut GameState) {
     print!("  Enter player ID to sell: ");
     io::stdout().flush().unwrap();
     let pid: PlayerId = read_choice() as PlayerId;
-    let idx = state.players.iter().position(|p| p.id == pid && p.club == Some(state.club.id));
+    let idx = state
+        .players
+        .iter()
+        .position(|p| p.id == pid && p.club == Some(state.club.id));
     if let Some(i) = idx {
         let name = state.players[i].name.clone();
         let value = state.players[i].value as i64;
@@ -1920,8 +2224,15 @@ fn sell_player(state: &mut GameState) {
             state.club.balance += value;
             state.club.squad.retain(|&id| id != pid);
             state.players[i].club = None;
-            state.add_news(format!("{} sold to another club for {}!", name, format_currency(value)));
-            println!("  Sold! New balance: {}", format_currency(state.club.balance));
+            state.add_news(format!(
+                "{} sold to another club for {}!",
+                name,
+                format_currency(value)
+            ));
+            println!(
+                "  Sold! New balance: {}",
+                format_currency(state.club.balance)
+            );
         }
     } else {
         println!("  Player not found or not in squad!");
@@ -1939,7 +2250,10 @@ fn renew_contract(state: &mut GameState) {
     print!("  Enter player ID to renew: ");
     io::stdout().flush().unwrap();
     let pid: PlayerId = read_choice() as PlayerId;
-    let idx = state.players.iter().position(|p| p.id == pid && p.club == Some(state.club.id));
+    let idx = state
+        .players
+        .iter()
+        .position(|p| p.id == pid && p.club == Some(state.club.id));
     let Some(i) = idx else {
         println!("  Player not found or not in squad!");
         press_enter();
@@ -1948,8 +2262,12 @@ fn renew_contract(state: &mut GameState) {
     let name = state.players[i].name.clone();
     let current = state.players[i].contract.wage;
     let demand = ((current as f64 * 1.1) as u32).max(1500);
-    println!("\n  {} earns {}/wk. Agent demands {}/wk.", name,
-        format_currency(current as i64), format_currency(demand as i64));
+    println!(
+        "\n  {} earns {}/wk. Agent demands {}/wk.",
+        name,
+        format_currency(current as i64),
+        format_currency(demand as i64)
+    );
     let wage = read_number("  Wage offer per week (0 = walk away): ") as u32;
     if wage == 0 || wage < demand * 9 / 10 {
         println!("  Talks break down. {} is unhappy.", name);
@@ -1966,7 +2284,12 @@ fn renew_contract(state: &mut GameState) {
     state.players[i].contract_expiry = state.season + years as u16;
     state.players[i].morale = (state.players[i].morale + 8).min(100);
     state.players[i].happiness = (state.players[i].happiness + 10).min(100);
-    state.add_news(format!("{} signs a new {}-year deal ({}k/wk).", name, years, wage / 1000));
+    state.add_news(format!(
+        "{} signs a new {}-year deal ({}k/wk).",
+        name,
+        years,
+        wage / 1000
+    ));
     println!("  Renewed! Agent fee {}.", format_currency(agent_fee));
     press_enter();
 }
@@ -1999,15 +2322,27 @@ fn negotiate_signing(state: &mut GameState, template: &Player) {
             months_left,
         )
     };
-    println!("\n  Target: {} ({} age {}) OVR {} value {}",
-        template.name, template.position.short(), template.age,
-        template.overall(), format_currency(template.value as i64));
+    println!(
+        "\n  Target: {} ({} age {}) OVR {} value {}",
+        template.name,
+        template.position.short(),
+        template.age,
+        template.overall(),
+        format_currency(template.value as i64)
+    );
     if bosman {
         println!("  Out of contract: FREE transfer (wages + signing bonus only).");
     } else {
-        println!("  Asking price: {} (months left on deal: {})", format_currency(asking), months_left);
+        println!(
+            "  Asking price: {} (months left on deal: {})",
+            format_currency(asking),
+            months_left
+        );
     }
-    println!("  Your transfer kitty: {}", format_currency(state.club.transfer_budget));
+    println!(
+        "  Your transfer kitty: {}",
+        format_currency(state.club.transfer_budget)
+    );
 
     let mut offer = deals::TransferOffer::new(template.id, 0, state.club.id);
     if bosman {
@@ -2084,7 +2419,11 @@ fn negotiate_signing(state: &mut GameState, template: &Player) {
     // Contract talks: one round against the agent's demand.
     offer.to_talks();
     let demand = ((template.contract.wage as f64 * 1.2) as u32).max(2000);
-    println!("\n  Contract talks: agent demands {}/wk, {} years.", format_currency(demand as i64), offer.years);
+    println!(
+        "\n  Contract talks: agent demands {}/wk, {} years.",
+        format_currency(demand as i64),
+        offer.years
+    );
     let wage = read_number("  Your wage offer per week (0 = walk away): ") as u32;
     if wage == 0 || wage < (demand * 9 / 10) {
         println!("  Player rejects the terms.");
@@ -2119,10 +2458,19 @@ fn negotiate_signing(state: &mut GameState, template: &Player) {
     state.club.squad.push(new_id);
     state.club.balance -= total_fee + agent_fee;
     state.club.transfer_budget -= total_fee;
-    state.add_news(format!("{} joined {} for {} ({}k/wk)!", new_name, state.club.name,
-        format_currency(total_fee), wage / 1000));
-    println!("\n  Signed {}! Fee {} + agent fee {}.", new_name,
-        format_currency(total_fee), format_currency(agent_fee));
+    state.add_news(format!(
+        "{} joined {} for {} ({}k/wk)!",
+        new_name,
+        state.club.name,
+        format_currency(total_fee),
+        wage / 1000
+    ));
+    println!(
+        "\n  Signed {}! Fee {} + agent fee {}.",
+        new_name,
+        format_currency(total_fee),
+        format_currency(agent_fee)
+    );
     press_enter();
 }
 
@@ -2131,7 +2479,10 @@ fn negotiate_signing(state: &mut GameState, template: &Player) {
 // countdown on the End Week tick, optional recall clause and future fee.
 
 fn loan_player_name(state: &GameState, pid: PlayerId) -> String {
-    state.players.iter().find(|p| p.id == pid)
+    state
+        .players
+        .iter()
+        .find(|p| p.id == pid)
         .map(|p| p.name.clone())
         .unwrap_or_else(|| format!("#{}", pid))
 }
@@ -2139,9 +2490,18 @@ fn loan_player_name(state: &GameState, pid: PlayerId) -> String {
 fn loans_screen(state: &mut GameState) {
     loop {
         print_header("LOANS");
-        println!("\n  Window: {} (loans register inside the window)",
-            if deals::window_open(state.week) { "OPEN" } else { "CLOSED" });
-        let active: Vec<usize> = state.loans.iter().enumerate()
+        println!(
+            "\n  Window: {} (loans register inside the window)",
+            if deals::window_open(state.week) {
+                "OPEN"
+            } else {
+                "CLOSED"
+            }
+        );
+        let active: Vec<usize> = state
+            .loans
+            .iter()
+            .enumerate()
             .filter(|(_, l)| l.state == deals::OfferState::Active)
             .map(|(i, _)| i)
             .collect();
@@ -2151,27 +2511,57 @@ fn loans_screen(state: &mut GameState) {
             println!("\n  Active loans:");
             for (n, &i) in active.iter().enumerate() {
                 let l = &state.loans[i];
-                let dir = if l.parent_club == state.club.id { "OUT" } else { "IN " };
-                let wage = state.players.iter().find(|p| p.id == l.player_id)
-                    .map(|p| p.contract.wage).unwrap_or(0);
-                let weekly = deals::loan_weekly_cost(wage, l.wage_pct, l.parent_club == state.club.id);
-                println!("  {}. [{}] {} - {} mo left, {}/wk cost to you{}{}",
-                    n + 1, dir, loan_player_name(state, l.player_id), l.months_left,
+                let dir = if l.parent_club == state.club.id {
+                    "OUT"
+                } else {
+                    "IN "
+                };
+                let wage = state
+                    .players
+                    .iter()
+                    .find(|p| p.id == l.player_id)
+                    .map(|p| p.contract.wage)
+                    .unwrap_or(0);
+                let weekly =
+                    deals::loan_weekly_cost(wage, l.wage_pct, l.parent_club == state.club.id);
+                println!(
+                    "  {}. [{}] {} - {} mo left, {}/wk cost to you{}{}",
+                    n + 1,
+                    dir,
+                    loan_player_name(state, l.player_id),
+                    l.months_left,
                     format_currency(weekly),
                     if l.recall { ", recall clause" } else { "" },
-                    l.future_fee.map(|f| format!(", buy option {}", format_currency(f))).unwrap_or_default());
+                    l.future_fee
+                        .map(|f| format!(", buy option {}", format_currency(f)))
+                        .unwrap_or_default()
+                );
             }
         }
-        let awaiting: Vec<usize> = state.loans.iter().enumerate()
-            .filter(|(_, l)| matches!(l.state, deals::OfferState::Completed | deals::OfferState::Recalled)
-                && l.parent_club == state.club.id
-                && state.players.iter().any(|p| p.id == l.player_id && p.club.is_none()))
+        let awaiting: Vec<usize> = state
+            .loans
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                matches!(
+                    l.state,
+                    deals::OfferState::Completed | deals::OfferState::Recalled
+                ) && l.parent_club == state.club.id
+                    && state
+                        .players
+                        .iter()
+                        .any(|p| p.id == l.player_id && p.club.is_none())
+            })
             .map(|(i, _)| i)
             .collect();
         if !awaiting.is_empty() {
             println!("\n  Awaiting registration (squad was full on return):");
             for (n, &i) in awaiting.iter().enumerate() {
-                println!("  {}. {}", n + 1, loan_player_name(state, state.loans[i].player_id));
+                println!(
+                    "  {}. {}",
+                    n + 1,
+                    loan_player_name(state, state.loans[i].player_id)
+                );
             }
         }
 
@@ -2203,8 +2593,14 @@ fn loan_out(state: &mut GameState) {
     println!("\n  Squad players:");
     for pid in &state.club.squad.clone() {
         if let Some(p) = state.players.iter().find(|p| p.id == *pid) {
-            println!("  #{} {} ({} age {} {}/wk)", p.id, p.name, p.position.short(), p.age,
-                format_currency(p.contract.wage as i64));
+            println!(
+                "  #{} {} ({} age {} {}/wk)",
+                p.id,
+                p.name,
+                p.position.short(),
+                p.age,
+                format_currency(p.contract.wage as i64)
+            );
         }
     }
     let pid = read_number("  Player ID to loan out (0 = back): ") as PlayerId;
@@ -2215,9 +2611,23 @@ fn loan_out(state: &mut GameState) {
     let wage_pct = read_number("  Wage % paid by loanee (0-100): ").clamp(0, 100) as u8;
     let months = read_number("  Months (1-12): ").clamp(1, 12) as u8;
     let recall = read_text("  Recall clause? (y/n): ").to_lowercase() == "y";
-    let loanee = state.league.iter().find(|c| c.id != state.club.id).map(|c| c.id).unwrap_or(0);
+    let loanee = state
+        .league
+        .iter()
+        .find(|c| c.id != state.club.id)
+        .map(|c| c.id)
+        .unwrap_or(0);
 
-    let mut offer = deals::LoanOffer::new_loan(pid, state.club.id, loanee, fee, wage_pct, months, recall, None);
+    let mut offer = deals::LoanOffer::new_loan(
+        pid,
+        state.club.id,
+        loanee,
+        fee,
+        wage_pct,
+        months,
+        recall,
+        None,
+    );
     offer.send();
     offer.activate();
     state.club.balance += fee;
@@ -2228,9 +2638,19 @@ fn loan_out(state: &mut GameState) {
     }
     let name = loan_player_name(state, pid);
     state.loans.push(offer);
-    state.add_news(format!("{} loaned out ({} fee, {}% wages, {} mo{}).", name,
-        format_currency(fee), wage_pct, months, if recall { ", recall clause" } else { "" }));
-    println!("\n  {} loaned out. Fee {} banked.", name, format_currency(fee));
+    state.add_news(format!(
+        "{} loaned out ({} fee, {}% wages, {} mo{}).",
+        name,
+        format_currency(fee),
+        wage_pct,
+        months,
+        if recall { ", recall clause" } else { "" }
+    ));
+    println!(
+        "\n  {} loaned out. Fee {} banked.",
+        name,
+        format_currency(fee)
+    );
     press_enter();
 }
 
@@ -2247,15 +2667,23 @@ fn loan_in(state: &mut GameState) {
     }
     let db = Database::load();
     let available = db.players();
-    println!("\n  Enter a database player ID (1-{}, 0 = back): ", available.len());
+    println!(
+        "\n  Enter a database player ID (1-{}, 0 = back): ",
+        available.len()
+    );
     let pid = read_number("  Choose: ") as PlayerId;
     if pid == 0 || pid as usize > available.len() {
         return;
     }
     let template = available[pid as usize - 1].clone();
-    println!("\n  Target: {} ({} age {}) OVR {} wage {}/wk",
-        template.name, template.position.short(), template.age, template.overall(),
-        format_currency(template.contract.wage as i64));
+    println!(
+        "\n  Target: {} ({} age {}) OVR {} wage {}/wk",
+        template.name,
+        template.position.short(),
+        template.age,
+        template.overall(),
+        format_currency(template.contract.wage as i64)
+    );
     let fee = read_number("  Your loan fee offer: ").max(0);
     let wage_pct = read_number("  Wage % you will pay (0-100): ").clamp(0, 100) as u8;
     let months = read_number("  Months (1-12): ").clamp(1, 12) as u8;
@@ -2273,7 +2701,16 @@ fn loan_in(state: &mut GameState) {
         press_enter();
         return;
     }
-    let mut offer = deals::LoanOffer::new_loan(template.id, 0, state.club.id, fee, wage_pct, months, recall, future_fee);
+    let mut offer = deals::LoanOffer::new_loan(
+        template.id,
+        0,
+        state.club.id,
+        fee,
+        wage_pct,
+        months,
+        recall,
+        future_fee,
+    );
     offer.send();
     offer.activate();
     let mut new_player = template.clone();
@@ -2292,16 +2729,28 @@ fn loan_in(state: &mut GameState) {
     // Rewrite the offer to reference the world copy.
     offer.player_id = new_id;
     state.loans.push(offer);
-    state.add_news(format!("{} joined on loan ({} fee, {}% wages, {} mo{}).", new_name,
-        format_currency(fee), wage_pct, months,
-        future_fee.map(|f| format!(", buy option {}", format_currency(f))).unwrap_or_default()));
+    state.add_news(format!(
+        "{} joined on loan ({} fee, {}% wages, {} mo{}).",
+        new_name,
+        format_currency(fee),
+        wage_pct,
+        months,
+        future_fee
+            .map(|f| format!(", buy option {}", format_currency(f)))
+            .unwrap_or_default()
+    ));
     println!("\n  {} signed on loan!", new_name);
     press_enter();
 }
 
 fn recall_loan(state: &mut GameState) {
-    let recallable: Vec<usize> = state.loans.iter().enumerate()
-        .filter(|(_, l)| l.state == deals::OfferState::Active && l.recall && l.parent_club == state.club.id)
+    let recallable: Vec<usize> = state
+        .loans
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.state == deals::OfferState::Active && l.recall && l.parent_club == state.club.id
+        })
         .map(|(i, _)| i)
         .collect();
     if recallable.is_empty() {
@@ -2310,7 +2759,11 @@ fn recall_loan(state: &mut GameState) {
         return;
     }
     for (n, &i) in recallable.iter().enumerate() {
-        println!("  {}. {}", n + 1, loan_player_name(state, state.loans[i].player_id));
+        println!(
+            "  {}. {}",
+            n + 1,
+            loan_player_name(state, state.loans[i].player_id)
+        );
     }
     let n = read_number("  Recall # (0 = back): ");
     if n >= 1 && (n as usize) <= recallable.len() {
@@ -2327,8 +2780,14 @@ fn resolve_loan_return(state: &mut GameState, idx: usize) {
     let pid = state.loans[idx].player_id;
     let name = loan_player_name(state, pid);
     if state.club.squad.len() >= 25 {
-        state.add_news(format!("{} returned but the squad is full - register from Loans.", name));
-        println!("\n  {} is back but the squad is full. Use Register Returnee.", name);
+        state.add_news(format!(
+            "{} returned but the squad is full - register from Loans.",
+            name
+        ));
+        println!(
+            "\n  {} is back but the squad is full. Use Register Returnee.",
+            name
+        );
         return;
     }
     if let Some(p) = state.players.iter_mut().find(|p| p.id == pid) {
@@ -2340,15 +2799,31 @@ fn resolve_loan_return(state: &mut GameState, idx: usize) {
     if !state.club.squad.contains(&pid) {
         state.club.squad.push(pid);
     }
-    state.add_news(format!("{} returned from loan and rejoins the squad.", name));
-    println!("\n  {} rejoins the squad (sharpness topped up from senior minutes).", name);
+    state.add_news(format!(
+        "{} returned from loan and rejoins the squad.",
+        name
+    ));
+    println!(
+        "\n  {} rejoins the squad (sharpness topped up from senior minutes).",
+        name
+    );
 }
 
 fn register_returnee(state: &mut GameState) {
-    let awaiting: Vec<usize> = state.loans.iter().enumerate()
-        .filter(|(_, l)| matches!(l.state, deals::OfferState::Completed | deals::OfferState::Recalled)
-            && l.parent_club == state.club.id
-            && state.players.iter().any(|p| p.id == l.player_id && p.club.is_none()))
+    let awaiting: Vec<usize> = state
+        .loans
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            matches!(
+                l.state,
+                deals::OfferState::Completed | deals::OfferState::Recalled
+            ) && l.parent_club == state.club.id
+                && state
+                    .players
+                    .iter()
+                    .any(|p| p.id == l.player_id && p.club.is_none())
+        })
         .map(|(i, _)| i)
         .collect();
     if awaiting.is_empty() {
@@ -2362,7 +2837,11 @@ fn register_returnee(state: &mut GameState) {
         return;
     }
     for (n, &i) in awaiting.iter().enumerate() {
-        println!("  {}. {}", n + 1, loan_player_name(state, state.loans[i].player_id));
+        println!(
+            "  {}. {}",
+            n + 1,
+            loan_player_name(state, state.loans[i].player_id)
+        );
     }
     let n = read_number("  Register # (0 = back): ");
     if n >= 1 && (n as usize) <= awaiting.len() {
@@ -2372,9 +2851,15 @@ fn register_returnee(state: &mut GameState) {
 }
 
 fn buy_option(state: &mut GameState) {
-    let options: Vec<usize> = state.loans.iter().enumerate()
-        .filter(|(_, l)| l.state == deals::OfferState::Active
-            && l.loanee_club == state.club.id && l.future_fee.is_some())
+    let options: Vec<usize> = state
+        .loans
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.state == deals::OfferState::Active
+                && l.loanee_club == state.club.id
+                && l.future_fee.is_some()
+        })
         .map(|(i, _)| i)
         .collect();
     if options.is_empty() {
@@ -2383,8 +2868,12 @@ fn buy_option(state: &mut GameState) {
         return;
     }
     for (n, &i) in options.iter().enumerate() {
-        println!("  {}. {} - {}", n + 1, loan_player_name(state, state.loans[i].player_id),
-            format_currency(state.loans[i].future_fee.unwrap_or(0)));
+        println!(
+            "  {}. {} - {}",
+            n + 1,
+            loan_player_name(state, state.loans[i].player_id),
+            format_currency(state.loans[i].future_fee.unwrap_or(0))
+        );
     }
     let n = read_number("  Activate # (0 = back): ");
     if n < 1 || (n as usize) > options.len() {
@@ -2408,8 +2897,16 @@ fn buy_option(state: &mut GameState) {
         p.happiness = 82;
     }
     let name = loan_player_name(state, pid);
-    state.add_news(format!("Buy option activated: {} signs permanently for {}.", name, format_currency(fee)));
-    println!("\n  {} signs permanently for {}!", name, format_currency(fee));
+    state.add_news(format!(
+        "Buy option activated: {} signs permanently for {}.",
+        name,
+        format_currency(fee)
+    ));
+    println!(
+        "\n  {} signs permanently for {}!",
+        name,
+        format_currency(fee)
+    );
     press_enter();
 }
 
@@ -2422,8 +2919,12 @@ fn tick_loans(state: &mut GameState) {
         if l.state != deals::OfferState::Active {
             continue;
         }
-        let wage = state.players.iter().find(|p| p.id == l.player_id)
-            .map(|p| p.contract.wage).unwrap_or(0);
+        let wage = state
+            .players
+            .iter()
+            .find(|p| p.id == l.player_id)
+            .map(|p| p.contract.wage)
+            .unwrap_or(0);
         let cost = deals::loan_weekly_cost(wage, l.wage_pct, l.parent_club == human);
         state.club.balance -= cost;
         if l.tick_week() {
@@ -2432,7 +2933,10 @@ fn tick_loans(state: &mut GameState) {
         }
     }
     for i in expired {
-        let (pid, out) = (state.loans[i].player_id, state.loans[i].parent_club == human);
+        let (pid, out) = (
+            state.loans[i].player_id,
+            state.loans[i].parent_club == human,
+        );
         let name = loan_player_name(state, pid);
         if out {
             state.add_news(format!("Loan expired: {} returns.", name));
@@ -2440,7 +2944,10 @@ fn tick_loans(state: &mut GameState) {
         } else {
             state.club.squad.retain(|&id| id != pid);
             state.players.retain(|p| p.id != pid);
-            state.add_news(format!("Loan expired: {} returns to the parent club.", name));
+            state.add_news(format!(
+                "Loan expired: {} returns to the parent club.",
+                name
+            ));
             println!("\n  {} returns to the parent club.", name);
         }
     }
@@ -2452,9 +2959,24 @@ fn transfer_market(state: &mut GameState) {
 
     loop {
         print_header("TRANSFER MARKET");
-        println!("\n  Window: {} (open weeks 1-6, 20-23)", if deals::window_open(state.week) { "OPEN" } else { "CLOSED" });
-        println!("  Available Players from the 2026 Database ({} players)", available.len());
-        println!("  Kitty: {}   Squad: {}/25   Shortlist: {}", format_currency(state.club.transfer_budget), state.club.squad.len(), state.scouted.len());
+        println!(
+            "\n  Window: {} (open weeks 1-6, 20-23)",
+            if deals::window_open(state.week) {
+                "OPEN"
+            } else {
+                "CLOSED"
+            }
+        );
+        println!(
+            "  Available Players from the 2026 Database ({} players)",
+            available.len()
+        );
+        println!(
+            "  Kitty: {}   Squad: {}/25   Shortlist: {}",
+            format_currency(state.club.transfer_budget),
+            state.club.squad.len(),
+            state.scouted.len()
+        );
         println!("\n  ┌─────┬────────────────────┬─────┬──────┬──────────┬──────────┐");
         println!("  │ ID  │ Name               │ Pos │ Age  │ OVR    │ Value    │");
         println!("  ├─────┼────────────────────┼─────┼──────┼──────────┼──────────┤");
@@ -2462,8 +2984,16 @@ fn transfer_market(state: &mut GameState) {
         for (i, p) in available.iter().enumerate().take(15) {
             let pos = p.position.short();
             let val = format_currency(p.value as i64);
-            println!("  |{:>4}| {} {:<18} |{:>3}|{:>4}|{:>8}|{:>8}|",
-                i + 1, "", p.name, pos, p.age, p.overall().to_string(), val);
+            println!(
+                "  |{:>4}| {} {:<18} |{:>3}|{:>4}|{:>8}|{:>8}|",
+                i + 1,
+                "",
+                p.name,
+                pos,
+                p.age,
+                p.overall().to_string(),
+                val
+            );
         }
         println!("  └─────┴────────────────────┴─────┴──────┴──────────┴──────────┘");
 
@@ -2505,9 +3035,16 @@ fn transfer_market(state: &mut GameState) {
                     press_enter();
                 } else {
                     for (i, p) in state.scouted.iter().enumerate() {
-                        println!("  {}. {} ({} age {} OVR {} knowledge {}%) - {}",
-                            i + 1, p.name, p.position.short(), p.age, p.overall(),
-                            p.scout_knowledge, format_currency(p.value as i64));
+                        println!(
+                            "  {}. {} ({} age {} OVR {} knowledge {}%) - {}",
+                            i + 1,
+                            p.name,
+                            p.position.short(),
+                            p.age,
+                            p.overall(),
+                            p.scout_knowledge,
+                            format_currency(p.value as i64)
+                        );
                     }
                     let n = read_number("\n  Bid for shortlist # (0 = back): ");
                     if n >= 1 && (n as usize) <= state.scouted.len() {
@@ -2526,14 +3063,24 @@ fn transfer_market(state: &mut GameState) {
 
 fn training(state: &mut GameState) {
     print_header("TRAINING");
-    let coach: u8 = state.staff.iter()
+    let coach: u8 = state
+        .staff
+        .iter()
         .filter(|s| matches!(s.role, StaffRole::Coach | StaffRole::Assistant))
-        .map(|s| s.quality).max().unwrap_or(10);
-    let physio: u8 = state.staff.iter()
+        .map(|s| s.quality)
+        .max()
+        .unwrap_or(10);
+    let physio: u8 = state
+        .staff
+        .iter()
         .filter(|s| matches!(s.role, StaffRole::Physio))
-        .map(|s| s.quality).max().unwrap_or(10);
-    println!("\n  Coach quality: {}/20   Physio: {}/20   Facilities: {}/5",
-        coach, physio, state.club.training_facilities);
+        .map(|s| s.quality)
+        .max()
+        .unwrap_or(10);
+    println!(
+        "\n  Coach quality: {}/20   Physio: {}/20   Facilities: {}/5",
+        coach, physio, state.club.training_facilities
+    );
     println!("  Growth follows age curves: teens grow fast, 30+ decline.");
     println!("  Heavy intensity grows faster but risks injury and drains condition.");
 
@@ -2570,11 +3117,25 @@ fn training(state: &mut GameState) {
         return;
     }
 
-    let mut rng = Pcg64Mcg::new(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128);
+    let mut rng = Pcg64Mcg::new(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u128,
+    );
     let attr_name = match choice {
-        1 => "Pace", 2 => "Shooting", 3 => "Passing", 4 => "Dribbling",
-        5 => "Tackling", 6 => "Heading", 7 => "Strength", 8 => "Stamina",
-        9 => "Vision", 10 => "Composure", 11 => "Goalkeeping", _ => "All",
+        1 => "Pace",
+        2 => "Shooting",
+        3 => "Passing",
+        4 => "Dribbling",
+        5 => "Tackling",
+        6 => "Heading",
+        7 => "Strength",
+        8 => "Stamina",
+        9 => "Vision",
+        10 => "Composure",
+        11 => "Goalkeeping",
+        _ => "All",
     };
     let coach_mult = 0.7 + coach as f32 * 0.03; // 10 -> 1.0, 20 -> 1.3
     let facility_mult = 0.8 + state.club.training_facilities as f32 * 0.08;
@@ -2593,9 +3154,21 @@ fn training(state: &mut GameState) {
             let minutes_frac = (p.sharpness as f32 / 100.0).clamp(0.2, 1.0);
             // Focused attribute gets full focus; general spreads thin.
             let apply = |v: &mut u8, focused: bool| -> i8 {
-                let base = if choice == 12 { 0.4 } else { 0.8 + intensity as f32 * 0.3 };
-                let g = dev::weekly_gain(base, dev::age_growth_mult(p.age), minutes_frac,
-                    focused, p.personality.growth_mult(), morale_mult, coach_mult * facility_mult, false);
+                let base = if choice == 12 {
+                    0.4
+                } else {
+                    0.8 + intensity as f32 * 0.3
+                };
+                let g = dev::weekly_gain(
+                    base,
+                    dev::age_growth_mult(p.age),
+                    minutes_frac,
+                    focused,
+                    p.personality.growth_mult(),
+                    morale_mult,
+                    coach_mult * facility_mult,
+                    false,
+                );
                 let pts = g.round().clamp(-1.0, 2.0) as i8;
                 if pts > 0 {
                     *v = (*v + pts as u8).min(20);
@@ -2630,7 +3203,8 @@ fn training(state: &mut GameState) {
             p.recompute_value();
             p.condition = p.condition.saturating_sub(cond_drain);
             // Training injuries: per-player share of the session risk.
-            if rng.gen_bool(dev::training_injury_prob(intensity, p.condition as f32, physio) * 0.15) {
+            if rng.gen_bool(dev::training_injury_prob(intensity, p.condition as f32, physio) * 0.15)
+            {
                 p.injury_days = rng.gen_range(3..=14);
                 hurt.push(p.name.clone());
             }
@@ -2638,13 +3212,22 @@ fn training(state: &mut GameState) {
     }
 
     state.club.balance -= training_cost;
-    state.add_news(format!("Training ({} focus): {} improved, {} declined, {} injured.",
-        attr_name, improved, declined, hurt.len()));
+    state.add_news(format!(
+        "Training ({} focus): {} improved, {} declined, {} injured.",
+        attr_name,
+        improved,
+        declined,
+        hurt.len()
+    ));
     println!("\n  {} improved, {} declined with age.", improved, declined);
     for name in hurt.iter().take(5) {
         println!("  INJURED in training: {}", name);
     }
-    println!("\n  Cost: {} | Balance: {}", format_currency(training_cost), format_currency(state.club.balance));
+    println!(
+        "\n  Cost: {} | Balance: {}",
+        format_currency(training_cost),
+        format_currency(state.club.balance)
+    );
     press_enter();
 }
 
@@ -2654,9 +3237,17 @@ fn scouting(state: &mut GameState) {
     loop {
         print_header("SCOUTING");
         println!("\n  Scouting Network: Searching the 2026 Database for new talent...");
-        println!("  Your Reputation: {} | Instant search: {} | Assignment: {}/week",
-            state.club.reputation, format_currency(5000), format_currency(2000));
-        println!("\n  Active assignments: {}   Shortlist: {}", state.assignments.len(), state.scouted.len());
+        println!(
+            "  Your Reputation: {} | Instant search: {} | Assignment: {}/week",
+            state.club.reputation,
+            format_currency(5000),
+            format_currency(2000)
+        );
+        println!(
+            "\n  Active assignments: {}   Shortlist: {}",
+            state.assignments.len(),
+            state.scouted.len()
+        );
 
         println!("\n  1.  Instant Search (Cost: {})", format_currency(5000));
         println!("  2.  Search by Position");
@@ -2679,14 +3270,27 @@ fn scouting(state: &mut GameState) {
                 }
                 state.club.balance -= 5000;
                 // Show top 15 highest-rated players not already in squad
-                let mut candidates: Vec<&Player> = available.iter().filter(|p| {
-                    !state.players.iter().any(|sp| sp.name == p.name && sp.club.is_some())
-                }).collect();
+                let mut candidates: Vec<&Player> = available
+                    .iter()
+                    .filter(|p| {
+                        !state
+                            .players
+                            .iter()
+                            .any(|sp| sp.name == p.name && sp.club.is_some())
+                    })
+                    .collect();
                 candidates.sort_by(|a, b| b.overall().cmp(&a.overall()));
 
                 println!("\n  Top Scouting Results:");
                 for p in candidates.iter().take(15) {
-                    println!("  {} (Age {}, OVR {}) - {} | Value: {}", p.name, p.age, p.overall(), p.position.short(), format_currency(p.value as i64));
+                    println!(
+                        "  {} (Age {}, OVR {}) - {} | Value: {}",
+                        p.name,
+                        p.age,
+                        p.overall(),
+                        p.position.short(),
+                        format_currency(p.value as i64)
+                    );
                 }
                 println!("\n  Total scouting cost: {}", format_currency(5000));
                 press_enter();
@@ -2701,7 +3305,10 @@ fn scouting(state: &mut GameState) {
                 }
                 state.club.balance -= 5000;
                 println!("\n  Select Position:");
-                for (i, pos) in [Position::GK, Position::DEF, Position::MID, Position::FWD].iter().enumerate() {
+                for (i, pos) in [Position::GK, Position::DEF, Position::MID, Position::FWD]
+                    .iter()
+                    .enumerate()
+                {
                     println!("  {}. {}", i + 1, pos.short());
                 }
                 print!("  Choose: ");
@@ -2714,11 +3321,18 @@ fn scouting(state: &mut GameState) {
                     4 => Position::FWD,
                     _ => Position::MID,
                 };
-                let mut candidates: Vec<&Player> = available.iter().filter(|p| p.position == pos).collect();
+                let mut candidates: Vec<&Player> =
+                    available.iter().filter(|p| p.position == pos).collect();
                 candidates.sort_by(|a, b| b.overall().cmp(&a.overall()));
                 println!("\n  Top {} ({}):", pos.short(), candidates.len());
                 for p in candidates.iter().take(15) {
-                    println!("  {} (Age {}, OVR {}) - Value: {}", p.name, p.age, p.overall(), format_currency(p.value as i64));
+                    println!(
+                        "  {} (Age {}, OVR {}) - Value: {}",
+                        p.name,
+                        p.age,
+                        p.overall(),
+                        format_currency(p.value as i64)
+                    );
                 }
                 press_enter();
             }
@@ -2757,7 +3371,10 @@ fn scouting(state: &mut GameState) {
                     weeks_total: weeks,
                     country,
                 });
-                state.add_news(format!("Scout assignment #{} started ({} weeks).", id, weeks));
+                state.add_news(format!(
+                    "Scout assignment #{} started ({} weeks).",
+                    id, weeks
+                ));
                 println!("  Assignment #{} started.", id);
                 press_enter();
             }
@@ -2769,14 +3386,24 @@ fn scouting(state: &mut GameState) {
                     for a in &state.assignments {
                         let pos = a.position.map(|p| p.short()).unwrap_or("ANY");
                         let country = a.country.clone().unwrap_or_else(|| "World".to_string());
-                        println!("  #{} {} U{} in {} - {} week(s) left", a.id, pos, a.max_age, country, a.weeks_left);
+                        println!(
+                            "  #{} {} U{} in {} - {} week(s) left",
+                            a.id, pos, a.max_age, country, a.weeks_left
+                        );
                     }
                 }
                 println!("\n  Shortlist ({}):", state.scouted.len());
                 for (i, p) in state.scouted.iter().enumerate() {
-                    println!("  {}. {} ({} age {} OVR {} knowledge {}%) - {}",
-                        i + 1, p.name, p.position.short(), p.age, p.overall(),
-                        p.scout_knowledge, format_currency(p.value as i64));
+                    println!(
+                        "  {}. {} ({} age {} OVR {} knowledge {}%) - {}",
+                        i + 1,
+                        p.name,
+                        p.position.short(),
+                        p.age,
+                        p.overall(),
+                        p.scout_knowledge,
+                        format_currency(p.value as i64)
+                    );
                 }
                 press_enter();
             }
@@ -2801,24 +3428,29 @@ fn tick_assignments(state: &mut GameState) {
     }
     state.assignments.retain(|a| a.weeks_left > 0);
     for a in matured {
-        let mut cands: Vec<&Player> = db.players().iter()
+        let mut cands: Vec<&Player> = db
+            .players()
+            .iter()
             .filter(|p| {
                 (a.position.map_or(true, |pos| p.position == pos))
                     && p.age <= a.max_age
-                    && a.country.as_ref().map_or(true, |c| p.nation.eq_ignore_ascii_case(c))
+                    && a.country
+                        .as_ref()
+                        .map_or(true, |c| p.nation.eq_ignore_ascii_case(c))
                     && !state.scouted.iter().any(|s| s.name == p.name)
-                    && !state.players.iter().any(|sp| sp.name == p.name && sp.club.is_some())
+                    && !state
+                        .players
+                        .iter()
+                        .any(|sp| sp.name == p.name && sp.club.is_some())
             })
             .collect();
         let mut ready: Vec<&Player> = cands.clone();
         ready.sort_by(|x, y| y.overall().cmp(&x.overall()));
-        let mut upside: Vec<&Player> = cands
-            .iter()
-            .copied()
-            .filter(|p| p.age <= 21)
-            .collect();
+        let mut upside: Vec<&Player> = cands.iter().copied().filter(|p| p.age <= 21).collect();
         upside.sort_by(|x, y| {
-            y.potential.cmp(&x.potential).then(y.overall().cmp(&x.overall()))
+            y.potential
+                .cmp(&x.potential)
+                .then(y.overall().cmp(&x.overall()))
         });
         let mut gamble: Vec<&Player> = cands.clone();
         gamble.sort_by(|x, y| x.value.cmp(&y.value).then(y.age.cmp(&x.age)));
@@ -2826,7 +3458,10 @@ fn tick_assignments(state: &mut GameState) {
         if let Some(p) = ready.first() {
             selected.push((*p, 100));
         }
-        if let Some(p) = upside.iter().find(|p| !selected.iter().any(|(q, _)| q.id == p.id)) {
+        if let Some(p) = upside
+            .iter()
+            .find(|p| !selected.iter().any(|(q, _)| q.id == p.id))
+        {
             selected.push((*p, 80));
         }
         if let Some(p) = gamble
@@ -2841,7 +3476,12 @@ fn tick_assignments(state: &mut GameState) {
         for (c, knowledge) in selected {
             let mut cp = (*c).clone();
             cp.scout_knowledge = knowledge;
-            names.push(format!("{} ({} OVR {})", cp.name.clone(), cp.position.short(), cp.overall()));
+            names.push(format!(
+                "{} ({} OVR {})",
+                cp.name.clone(),
+                cp.position.short(),
+                cp.overall()
+            ));
             state.scouted.push(cp);
         }
         state.add_news(if names.is_empty() {
@@ -2856,32 +3496,61 @@ fn tick_assignments(state: &mut GameState) {
 
 fn finances(state: &mut GameState) {
     print_header("FINANCES");
-    let wage_total: u64 = state.players.iter()
+    let wage_total: u64 = state
+        .players
+        .iter()
         .filter(|p| p.club == Some(state.club.id))
         .map(|p| p.contract.wage as u64)
         .sum();
-    let weekly_revenue: i64 = 30000 + (state.club.stadium_capacity as i64 / 1000) * 5 + (state.club.reputation as i64) * 500;
+    let weekly_revenue: i64 = 30000
+        + (state.club.stadium_capacity as i64 / 1000) * 5
+        + (state.club.reputation as i64) * 500;
     let season_wage = wage_total as i64 * 38;
     let season_revenue = weekly_revenue * 38;
 
     println!("\n  ── Financial Summary ──");
-    println!("  Balance:      {}", format_currency(state.club.balance as i64));
-    println!("  Weekly Revenue: {} (Matchday + Sponsorship + TV)", format_currency(weekly_revenue));
-    println!("  Weekly Wages:   {} ({} players)", format_currency(wage_total as i64), state.club.squad.len());
+    println!(
+        "  Balance:      {}",
+        format_currency(state.club.balance as i64)
+    );
+    println!(
+        "  Weekly Revenue: {} (Matchday + Sponsorship + TV)",
+        format_currency(weekly_revenue)
+    );
+    println!(
+        "  Weekly Wages:   {} ({} players)",
+        format_currency(wage_total as i64),
+        state.club.squad.len()
+    );
     println!("  Season Revenue: {}", format_currency(season_revenue));
     println!("  Season Wages:   {}", format_currency(season_wage));
-    println!("  Season Profit:  {}", format_currency(season_revenue - season_wage));
+    println!(
+        "  Season Profit:  {}",
+        format_currency(season_revenue - season_wage)
+    );
     println!("\n  ── Revenue Breakdown ──");
-    println!("  Matchday:     {}", format_currency((state.club.stadium_capacity as i64 / 1000) * 5 + 10000));
-    println!("  Sponsorship:  {}", format_currency(state.club.reputation as i64 * 500 + 5000));
+    println!(
+        "  Matchday:     {}",
+        format_currency((state.club.stadium_capacity as i64 / 1000) * 5 + 10000)
+    );
+    println!(
+        "  Sponsorship:  {}",
+        format_currency(state.club.reputation as i64 * 500 + 5000)
+    );
     println!("  TV Rights:    {}", format_currency(20000));
     println!("\n  ── Wage Bill ──");
-    let mut sorted_wages: Vec<_> = state.players.iter()
+    let mut sorted_wages: Vec<_> = state
+        .players
+        .iter()
         .filter(|p| p.club == Some(state.club.id))
         .collect();
     sorted_wages.sort_by(|a, b| b.contract.wage.cmp(&a.contract.wage));
     for p in sorted_wages.iter().take(10) {
-        println!("  {}  -  {}/wk", format_currency(p.contract.wage as i64), p.name);
+        println!(
+            "  {}  -  {}/wk",
+            format_currency(p.contract.wage as i64),
+            p.name
+        );
     }
     press_enter();
 }
@@ -2895,15 +3564,18 @@ fn league_table(state: &GameState) {
     // Build standings
     let mut rows: HashMap<ClubId, TableRow> = HashMap::new();
     for club in &state.league {
-        rows.insert(club.id, TableRow {
-            club: club.id,
-            played: 0,
-            won: 0,
-            drawn: 0,
-            lost: 0,
-            gf: 0,
-            ga: 0,
-        });
+        rows.insert(
+            club.id,
+            TableRow {
+                club: club.id,
+                played: 0,
+                won: 0,
+                drawn: 0,
+                lost: 0,
+                gf: 0,
+                ga: 0,
+            },
+        );
     }
 
     for f in &state.fixtures {
@@ -2935,7 +3607,8 @@ fn league_table(state: &GameState) {
 
     let mut standings: Vec<_> = rows.values().cloned().collect();
     standings.sort_by(|a, b| {
-        b.points().cmp(&a.points())
+        b.points()
+            .cmp(&a.points())
             .then(b.gd().cmp(&a.gd()))
             .then(b.gf.cmp(&a.gf))
     });
@@ -2944,13 +3617,42 @@ fn league_table(state: &GameState) {
     println!("  │ Rank │ Club             │ P  │ W  │ D  │ L  │ GF │ GA │ PTS│");
     println!("  ├──────┼──────────────────┼────┼────┼────┼────┼────┼────┼────┤");
     for (i, row) in standings.iter().enumerate() {
-        let club_name = state.league.iter().find(|c| c.id == row.club).map(|c| c.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-        let highlight = if row.club == state.club.id { " >>>" } else { "" };
-        println!("  |{:>5}| {:<16}{:>4} |{:>3}|{:>3}|{:>3}|{:>3}|{:>3}|{:>3}|{:>4}|",
-            i + 1, club_name, highlight, row.played, row.won, row.drawn, row.lost, row.gf, row.ga, row.points());
+        let club_name = state
+            .league
+            .iter()
+            .find(|c| c.id == row.club)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let highlight = if row.club == state.club.id {
+            " >>>"
+        } else {
+            ""
+        };
+        println!(
+            "  |{:>5}| {:<16}{:>4} |{:>3}|{:>3}|{:>3}|{:>3}|{:>3}|{:>3}|{:>4}|",
+            i + 1,
+            club_name,
+            highlight,
+            row.played,
+            row.won,
+            row.drawn,
+            row.lost,
+            row.gf,
+            row.ga,
+            row.points()
+        );
     }
     println!("  └──────┴──────────────────┴────┴────┴────┴────┴────┴────┴────┘");
-    println!("\n  {} is in {}th position (of {})", state.club.name, standings.iter().position(|r| r.club == state.club.id).unwrap_or(0) + 1, n);
+    println!(
+        "\n  {} is in {}th position (of {})",
+        state.club.name,
+        standings
+            .iter()
+            .position(|r| r.club == state.club.id)
+            .unwrap_or(0)
+            + 1,
+        n
+    );
     press_enter();
 }
 
@@ -2960,19 +3662,47 @@ fn club_board(state: &GameState) {
     print_header("CLUB & BOARD");
     println!("\n  {} ({}):", state.club.name, state.club.short);
     println!("  Reputation:    {} / 100", state.club.reputation);
-    println!("  Stadium Cap:   {} (ticket {})", state.club.stadium_capacity, format_currency(state.club.ticket_price as i64));
+    println!(
+        "  Stadium Cap:   {} (ticket {})",
+        state.club.stadium_capacity,
+        format_currency(state.club.ticket_price as i64)
+    );
     println!("  Balance:       {}", format_currency(state.club.balance));
-    println!("  Transfer kitty:{}   Wage budget: {}/wk", format_currency(state.club.transfer_budget), format_currency(state.club.wage_budget / 52));
+    println!(
+        "  Transfer kitty:{}   Wage budget: {}/wk",
+        format_currency(state.club.transfer_budget),
+        format_currency(state.club.wage_budget / 52)
+    );
     println!("  Morale:        {}%", state.club.morale);
-    println!("  Formation:     {} ({})", state.club.tactic.formation.label(), state.club.tactic.mentality.label());
+    println!(
+        "  Formation:     {} ({})",
+        state.club.tactic.formation.label(),
+        state.club.tactic.mentality.label()
+    );
     println!("  Squad Size:    {}/25", state.club.squad.len());
     println!("\n  ── Board ──");
-    println!("  Expectation:   finish top {}", state.club.board_expectation);
-    println!("  Board confidence: {}%   Fan confidence: {}%", state.club.board_confidence, state.club.fan_confidence);
-    println!("  Position:      {} (board {})", get_league_position(state),
-        if get_league_position(state) as u8 <= state.club.board_expectation { "satisfied" } else { "concerned" });
+    println!(
+        "  Expectation:   finish top {}",
+        state.club.board_expectation
+    );
+    println!(
+        "  Board confidence: {}%   Fan confidence: {}%",
+        state.club.board_confidence, state.club.fan_confidence
+    );
+    println!(
+        "  Position:      {} (board {})",
+        get_league_position(state),
+        if get_league_position(state) as u8 <= state.club.board_expectation {
+            "satisfied"
+        } else {
+            "concerned"
+        }
+    );
     println!("\n  ── Facilities ──");
-    println!("  Training: {} / 5   Youth: {} / 5", state.club.training_facilities, state.club.youth_facilities);
+    println!(
+        "  Training: {} / 5   Youth: {} / 5",
+        state.club.training_facilities, state.club.youth_facilities
+    );
     println!("\n  ── Youth Academy ──");
     println!("  Next Intake: Season {}", state.season + 1);
     press_enter();
@@ -2987,12 +3717,34 @@ fn staff_screen(state: &mut GameState) {
             println!("\n  No backroom staff hired. Hire coaches, scouts, physios, analysts.");
         } else {
             for (i, s) in state.staff.iter().enumerate() {
-                println!("  {}. {} - {} (quality {}/20, {}/wk)", i + 1, s.name, s.role.label(), s.quality, format_currency(s.wage as i64));
+                println!(
+                    "  {}. {} - {} (quality {}/20, {}/wk)",
+                    i + 1,
+                    s.name,
+                    s.role.label(),
+                    s.quality,
+                    format_currency(s.wage as i64)
+                );
             }
         }
-        let coach_bonus: u8 = state.staff.iter().filter(|s| matches!(s.role, StaffRole::Coach | StaffRole::Assistant)).map(|s| s.quality).max().unwrap_or(10);
-        let physio_bonus: u8 = state.staff.iter().filter(|s| matches!(s.role, StaffRole::Physio)).map(|s| s.quality).max().unwrap_or(10);
-        println!("\n  Training quality (best coach): {}/20   Medical quality (best physio): {}/20", coach_bonus, physio_bonus);
+        let coach_bonus: u8 = state
+            .staff
+            .iter()
+            .filter(|s| matches!(s.role, StaffRole::Coach | StaffRole::Assistant))
+            .map(|s| s.quality)
+            .max()
+            .unwrap_or(10);
+        let physio_bonus: u8 = state
+            .staff
+            .iter()
+            .filter(|s| matches!(s.role, StaffRole::Physio))
+            .map(|s| s.quality)
+            .max()
+            .unwrap_or(10);
+        println!(
+            "\n  Training quality (best coach): {}/20   Medical quality (best physio): {}/20",
+            coach_bonus, physio_bonus
+        );
         println!("\n  1. Hire (cost: signing wage only)");
         println!("  2. Release");
         println!("  3. Back");
@@ -3014,10 +3766,21 @@ fn staff_screen(state: &mut GameState) {
                 if name.is_empty() {
                     continue;
                 }
-                let mut rng = Pcg64Mcg::new(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128 ^ state.staff.len() as u128);
+                let mut rng = Pcg64Mcg::new(
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as u128
+                        ^ state.staff.len() as u128,
+                );
                 let quality = rng.gen_range(8..=18);
                 let wage = (quality as u32) * 400;
-                state.staff.push(Staff { name, role: StaffRole::all()[r - 1], quality, wage });
+                state.staff.push(Staff {
+                    name,
+                    role: StaffRole::all()[r - 1],
+                    quality,
+                    wage,
+                });
                 state.add_news("Backroom staff appointment confirmed.".to_string());
             }
             2 => {
@@ -3038,17 +3801,32 @@ fn staff_screen(state: &mut GameState) {
 
 fn medical_screen(state: &mut GameState) {
     print_header("MEDICAL CENTRE");
-    let physio: u8 = state.staff.iter().filter(|s| matches!(s.role, StaffRole::Physio)).map(|s| s.quality).max().unwrap_or(10);
-    println!("\n  Physio quality: {}/20 (higher = faster recovery)", physio);
-    let mut rows: Vec<&Player> = state.players.iter().filter(|p| p.club == Some(state.club.id)).collect();
+    let physio: u8 = state
+        .staff
+        .iter()
+        .filter(|s| matches!(s.role, StaffRole::Physio))
+        .map(|s| s.quality)
+        .max()
+        .unwrap_or(10);
+    println!(
+        "\n  Physio quality: {}/20 (higher = faster recovery)",
+        physio
+    );
+    let mut rows: Vec<&Player> = state
+        .players
+        .iter()
+        .filter(|p| p.club == Some(state.club.id))
+        .collect();
     rows.sort_by_key(|p| std::cmp::Reverse(p.injury_days));
     println!("\n  Injured / suspended / exhausted:");
     let mut any = false;
     for p in &rows {
         if p.injury_days > 0 || p.suspension > 0 || p.condition < 80 {
             any = true;
-            println!("  #{} {} - injury {}d, susp {}m, cond {}%, sharp {}%",
-                p.id, p.name, p.injury_days, p.suspension, p.condition, p.sharpness);
+            println!(
+                "  #{} {} - injury {}d, susp {}m, cond {}%, sharp {}%",
+                p.id, p.name, p.injury_days, p.suspension, p.condition, p.sharpness
+            );
         }
     }
     if !any {
@@ -3078,14 +3856,34 @@ fn medical_screen(state: &mut GameState) {
 
 fn youth_screen(state: &mut GameState) {
     print_header("YOUTH INTAKE");
-    println!("\n  Youth facilities: {} / 5 (higher = better newgens)", state.club.youth_facilities);
-    println!("  Last intake season: {}", if state.last_intake_season == 0 { "-".to_string() } else { state.last_intake_season.to_string() });
-    let youths: Vec<&Player> = state.players.iter()
+    println!(
+        "\n  Youth facilities: {} / 5 (higher = better newgens)",
+        state.club.youth_facilities
+    );
+    println!(
+        "  Last intake season: {}",
+        if state.last_intake_season == 0 {
+            "-".to_string()
+        } else {
+            state.last_intake_season.to_string()
+        }
+    );
+    let youths: Vec<&Player> = state
+        .players
+        .iter()
         .filter(|p| p.club == Some(state.club.id) && p.age <= 18)
         .collect();
     println!("\n  Prospects in squad ({}):", youths.len());
     for p in youths.iter().take(10) {
-        println!("  #{} {} ({} age {}) OVR {} POT {}", p.id, p.name, p.position.short(), p.age, p.overall(), p.potential);
+        println!(
+            "  #{} {} ({} age {}) OVR {} POT {}",
+            p.id,
+            p.name,
+            p.position.short(),
+            p.age,
+            p.overall(),
+            p.potential
+        );
     }
     println!("\n  Intake arrives automatically at season rollover.");
     press_enter();
@@ -3094,9 +3892,16 @@ fn youth_screen(state: &mut GameState) {
 fn run_youth_intake(state: &mut GameState) {
     // Original intake rule: 2 + facilities bonus prospects, ages 15-17,
     // strength scaled by reputation + youth facilities.
-    let mut rng = Pcg64Mcg::new(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128 ^ state.season as u128);
+    let mut rng = Pcg64Mcg::new(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u128
+            ^ state.season as u128,
+    );
     let count = 2 + (state.club.youth_facilities as usize / 2);
-    let strength = ((state.club.reputation as i32) / 5 + state.club.youth_facilities as i32 * 2).clamp(8, 28);
+    let strength =
+        ((state.club.reputation as i32) / 5 + state.club.youth_facilities as i32 * 2).clamp(8, 28);
     let mut names = Vec::new();
     for _ in 0..count {
         let pos = [Position::GK, Position::DEF, Position::MID, Position::FWD][rng.gen_range(0..4)];
@@ -3106,12 +3911,21 @@ fn run_youth_intake(state: &mut GameState) {
         state.next_player_id += 1;
         p.club = Some(state.club.id);
         p.contract_expiry = state.season + 3;
-        names.push(format!("{} ({} OVR {})", p.name.clone(), p.position.short(), p.overall()));
+        names.push(format!(
+            "{} ({} OVR {})",
+            p.name.clone(),
+            p.position.short(),
+            p.overall()
+        ));
         state.club.squad.push(p.id);
         state.players.push(p);
     }
     state.last_intake_season = state.season;
-    state.add_news(format!("Youth intake: {} graduate(s) - {}.", count, names.join(", ")));
+    state.add_news(format!(
+        "Youth intake: {} graduate(s) - {}.",
+        count,
+        names.join(", ")
+    ));
 }
 
 // ── News & Events ────────────────────────────────────────────────────────────
@@ -3126,13 +3940,28 @@ fn news_screen(state: &GameState) {
         }
     }
     println!("\n  ── Upcoming Fixtures ──");
-    let upcoming: Vec<_> = state.fixtures.iter().filter(|f| !f.played && (f.home == state.club.id || f.away == state.club.id)).take(5).collect();
+    let upcoming: Vec<_> = state
+        .fixtures
+        .iter()
+        .filter(|f| !f.played && (f.home == state.club.id || f.away == state.club.id))
+        .take(5)
+        .collect();
     if upcoming.is_empty() {
         println!("  No upcoming fixtures.");
     } else {
         for f in upcoming {
-            let home = state.league.iter().find(|c| c.id == f.home).map(|c| c.name.clone()).unwrap_or_default();
-            let away = state.league.iter().find(|c| c.id == f.away).map(|c| c.name.clone()).unwrap_or_default();
+            let home = state
+                .league
+                .iter()
+                .find(|c| c.id == f.home)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            let away = state
+                .league
+                .iter()
+                .find(|c| c.id == f.away)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
             println!("  Round {}: {} vs {}", f.round, home, away);
         }
     }
@@ -3298,16 +4127,31 @@ fn tick_world_day(state: &mut GameState, rng: &mut Pcg64Mcg) {
             continue;
         }
         let fid = options[rng.gen_range(0..options.len())];
-        let fee = state.players.iter().find(|p| p.id == fid).map(|p| p.value).unwrap_or(0);
+        let fee = state
+            .players
+            .iter()
+            .find(|p| p.id == fid)
+            .map(|p| p.value)
+            .unwrap_or(0);
         if let Some(p) = state.players.iter_mut().find(|p| p.id == fid) {
             p.club = Some(cid);
             p.morale = 75;
         }
         state.league[i].squad.push(fid);
         state.league[i].balance -= fee as i64;
-        let nm = state.players.iter().find(|p| p.id == fid).map(|p| p.name.clone()).unwrap_or_default();
+        let nm = state
+            .players
+            .iter()
+            .find(|p| p.id == fid)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
         let cn = state.league[i].name.clone();
-        digest.push(format!("{} signed {} ({})", cn, nm, format_currency(fee as i64)));
+        digest.push(format!(
+            "{} signed {} ({})",
+            cn,
+            nm,
+            format_currency(fee as i64)
+        ));
     }
     // One digest line per day so parallel activity is visible without spam.
     match digest.len() {
@@ -3326,7 +4170,10 @@ fn tick_world_day(state: &mut GameState, rng: &mut Pcg64Mcg) {
 
 fn advance_day(state: &mut GameState) {
     let mut rng = Pcg64Mcg::new(
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u128
             ^ state.day as u128,
     );
     tick_world_day(state, &mut rng);
@@ -3350,7 +4197,10 @@ fn end_week(state: &mut GameState) {
     }
     // Seven daily world laps: every club recovers, develops, and deals.
     let mut rng = Pcg64Mcg::new(
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as u128
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u128
             ^ state.day as u128,
     );
     for _ in 0..7 {
@@ -3384,12 +4234,18 @@ fn end_week(state: &mut GameState) {
         // Expired contracts: release players aged 33+ or low morale, else renew 1yr.
         // Loaned-in players on active deals are protected from release.
         let human = state.club.id;
-        let protected: Vec<PlayerId> = state.loans.iter()
+        let protected: Vec<PlayerId> = state
+            .loans
+            .iter()
             .filter(|l| l.state == deals::OfferState::Active && l.loanee_club == human)
             .map(|l| l.player_id)
             .collect();
         let mut released = Vec::new();
-        for p in state.players.iter_mut().filter(|p| p.club == Some(state.club.id)) {
+        for p in state
+            .players
+            .iter_mut()
+            .filter(|p| p.club == Some(state.club.id))
+        {
             if p.contract_expiry <= state.season && !protected.contains(&p.id) {
                 if p.age >= 33 || p.morale < 40 {
                     released.push(p.id);
@@ -3406,11 +4262,17 @@ fn end_week(state: &mut GameState) {
         }
         run_youth_intake(state);
         state.fixtures = generate_fixtures(&state.league);
-        state.add_news(format!("Season {} begins! Board expects top {}.", state.season, state.club.board_expectation));
+        state.add_news(format!(
+            "Season {} begins! Board expects top {}.",
+            state.season, state.club.board_expectation
+        ));
     } else {
         state.add_news("Week completed. Preparing for next match.".to_string());
     }
-    println!("\n  Advanced to Week {} Season {}!", state.week, state.season);
+    println!(
+        "\n  Advanced to Week {} Season {}!",
+        state.week, state.season
+    );
     press_enter();
 }
 
@@ -3424,7 +4286,10 @@ fn season_awards(state: &mut GameState) {
             Some((_, _, g)) => p.stats.goals > *g,
         };
         if beats {
-            let club = state.league.iter().find(|c| Some(c.id) == p.club)
+            let club = state
+                .league
+                .iter()
+                .find(|c| Some(c.id) == p.club)
                 .map(|c| c.name.clone())
                 .unwrap_or_else(|| state.club.name.clone());
             top = Some((p.name.clone(), club, p.stats.goals));
@@ -3434,7 +4299,10 @@ fn season_awards(state: &mut GameState) {
         if club == state.club.name {
             state.club.fan_confidence = (state.club.fan_confidence as i16 + 2).clamp(0, 100) as u8;
         }
-        state.add_news(format!("Season awards: {} ({}) wins the Golden Boot ({} goals).", name, club, goals));
+        state.add_news(format!(
+            "Season awards: {} ({}) wins the Golden Boot ({} goals).",
+            name, club, goals
+        ));
     }
 }
 
@@ -3450,39 +4318,77 @@ fn format_currency(amount: i64) -> String {
     } else {
         amount.to_string()
     };
-    if neg { format!("-{}", s) } else { s }
+    if neg {
+        format!("-{}", s)
+    } else {
+        s
+    }
 }
 
 fn get_league_position(state: &GameState) -> usize {
     let mut rows: HashMap<ClubId, TableRow> = HashMap::new();
     for club in &state.league {
-        rows.insert(club.id, TableRow {
-            club: club.id, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0,
-        });
+        rows.insert(
+            club.id,
+            TableRow {
+                club: club.id,
+                played: 0,
+                won: 0,
+                drawn: 0,
+                lost: 0,
+                gf: 0,
+                ga: 0,
+            },
+        );
     }
     for f in &state.fixtures {
         if f.played {
             if let Some(row) = rows.get_mut(&f.home) {
-                row.played += 1; row.gf += f.home_goals as u16; row.ga += f.away_goals as u16;
-                if f.home_goals > f.away_goals { row.won += 1; } else if f.home_goals == f.away_goals { row.drawn += 1; } else { row.lost += 1; }
+                row.played += 1;
+                row.gf += f.home_goals as u16;
+                row.ga += f.away_goals as u16;
+                if f.home_goals > f.away_goals {
+                    row.won += 1;
+                } else if f.home_goals == f.away_goals {
+                    row.drawn += 1;
+                } else {
+                    row.lost += 1;
+                }
             }
             if let Some(row) = rows.get_mut(&f.away) {
-                row.played += 1; row.gf += f.away_goals as u16; row.ga += f.home_goals as u16;
-                if f.away_goals > f.home_goals { row.won += 1; } else if f.away_goals == f.home_goals { row.drawn += 1; } else { row.lost += 1; }
+                row.played += 1;
+                row.gf += f.away_goals as u16;
+                row.ga += f.home_goals as u16;
+                if f.away_goals > f.home_goals {
+                    row.won += 1;
+                } else if f.away_goals == f.home_goals {
+                    row.drawn += 1;
+                } else {
+                    row.lost += 1;
+                }
             }
         }
     }
     let mut standings: Vec<_> = rows.values().cloned().collect();
     standings.sort_by(|a, b| b.points().cmp(&a.points()).then(b.gd().cmp(&a.gd())));
-    standings.iter().position(|r| r.club == state.club.id).unwrap_or(0) + 1
+    standings
+        .iter()
+        .position(|r| r.club == state.club.id)
+        .unwrap_or(0)
+        + 1
 }
 
 fn main() {
+    if std::env::args().any(|a| a == "--serve" || a == "serve") {
+        season::web_api::serve_web_api();
+        return;
+    }
+
     println!("\n  ╔══════════════════════════════════════════╗");
     println!("  ║   ⚽  FOOTBALL MANAGER CLI  🏆          ║");
     println!("  ║   Built with Rust & 2026 Data           ║");
     println!("  ╚══════════════════════════════════════════╝");
-    
+
     loop {
         match main_menu() {
             MenuAction::NewGame => {
@@ -3620,7 +4526,12 @@ mod tests {
         let tactic = Tactic::default(); // 4-4-2
 
         // Force a forward (last id) into the GK slot: an extreme experiment.
-        let fwd_id = squad.iter().rev().find(|p| p.position == Position::FWD).unwrap().id;
+        let fwd_id = squad
+            .iter()
+            .rev()
+            .find(|p| p.position == Position::FWD)
+            .unwrap()
+            .id;
         let mut lineup = vec![0u32; 11];
         lineup[0] = fwd_id;
         let xi = resolve_lineup(&refs, &tactic, &lineup);
@@ -3660,7 +4571,3 @@ mod tests {
         );
     }
 }
-
-
-
-

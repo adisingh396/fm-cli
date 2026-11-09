@@ -4,32 +4,126 @@ use rand::Rng;
 use rand_pcg::Pcg64Mcg;
 
 const FIRST_NAMES: &[&str] = &[
-    "James", "Marco", "Diego", "Luka", "Kai", "Omar", "Ethan", "Mateo", "Noah", "Leo",
-    "Hugo", "Felix", "Yuki", "Andres", "Bruno", "Ivan", "Sven", "Karim", "Nico", "Tariq",
-    "Sergio", "Pavel", "Jonas", "Malik", "Ryo", "Elias", "Adam", "Theo", "Ola", "Dami",
-    "Rashid", "Viktor", "Sami", "Enzo", "Rui", "Gabriel", "Milan", "Aaron", "Cole", "Idris",
-    "Luca", "Mario", "Pedro", "Youssef", "Amir", "Dylan", "Mason", "Finn", "Oscar", "Ruben",
-    "Matteo", "Lorenzo", "Andrea", "Samuel", "Daniel", "David", "Lucas", "Alex", "Marc", "Pau",
-    "Iker", "Unai", "Mikkel", "Anton", "Emil", "Lasse", "Kacper", "Filip", "Stefan", "Nikola",
-    "Dejan", "Bojan", "Arda", "Emre", "Cengiz", "Hakim", "Achraf", "Bilal", "Zaid", "Musa",
-    "Kwame", "Kofi", "Ibrahim", "Seydou", "Ismael", "Cheick", "Tomoki", "Sota", "Hana", "Jin",
-    "Rafael", "Joao", "Tiago", "Vitor", "Andre", "Nuno", "Sacha", "Yannick", "Lars", "Timo",
+    "James", "Marco", "Diego", "Luka", "Kai", "Omar", "Ethan", "Mateo", "Noah", "Leo", "Hugo",
+    "Felix", "Yuki", "Andres", "Bruno", "Ivan", "Sven", "Karim", "Nico", "Tariq", "Sergio",
+    "Pavel", "Jonas", "Malik", "Ryo", "Elias", "Adam", "Theo", "Ola", "Dami", "Rashid", "Viktor",
+    "Sami", "Enzo", "Rui", "Gabriel", "Milan", "Aaron", "Cole", "Idris", "Luca", "Mario", "Pedro",
+    "Youssef", "Amir", "Dylan", "Mason", "Finn", "Oscar", "Ruben", "Matteo", "Lorenzo", "Andrea",
+    "Samuel", "Daniel", "David", "Lucas", "Alex", "Marc", "Pau", "Iker", "Unai", "Mikkel", "Anton",
+    "Emil", "Lasse", "Kacper", "Filip", "Stefan", "Nikola", "Dejan", "Bojan", "Arda", "Emre",
+    "Cengiz", "Hakim", "Achraf", "Bilal", "Zaid", "Musa", "Kwame", "Kofi", "Ibrahim", "Seydou",
+    "Ismael", "Cheick", "Tomoki", "Sota", "Hana", "Jin", "Rafael", "Joao", "Tiago", "Vitor",
+    "Andre", "Nuno", "Sacha", "Yannick", "Lars", "Timo",
 ];
 
 const LAST_NAMES: &[&str] = &[
-    "Silva", "Kovac", "Nakamura", "Fernandez", "Muller", "Rossi", "Andersen", "Diallo",
-    "Novak", "Haddad", "Okafor", "Petrov", "Bauer", "Costa", "Larsson", "Yilmaz", "Mensah",
-    "Ferrari", "Horvath", "Sato", "Moreno", "Janssen", "Hunt", "Traore", "Popov", "Nielsen",
-    "Gomez", "Ricci", "Owusu", "Sarr", "Vega", "Horvat", "Tanaka", "Bianchi", "Afolabi",
-    "Marino", "Sorensen", "Cruz", "Novakovic", "Diarra",
-    "Almeida", "Carvalho", "Pereira", "Ramos", "Torres", "Navarro", "Iglesias", "Castro", "Ortega",
-    "Romano", "Conti", "Greco", "Marchetti", "Esposito", "Lombardi", "Colombo", "Bruno",
-    "Schmidt", "Wagner", "Becker", "Hoffmann", "Krause", "Werner", "Fischer", "Weber",
-    "Dubois", "Laurent", "Moreau", "Girard", "Lefevre", "Mercier", "Bernard", "Rousseau",
-    "Jansen", "Visser", "Bakker", "Vermeulen", "Mwangi", "Abubakar", "Osei", "Boateng", "Nkemelu",
-    "Kimura", "Yoshida", "Ishikawa", "Kang", "Park", "Petkovic", "Jovanovic", "Markovic",
-    "Kowalski", "Nowak", "Zielinski", "Andersson", "Johansson", "Berg", "Lindqvist", "Haugen",
-    "Rahimi", "Karimi", "Hassan", "Toure", "Keita", "Camara", "Mendez", "Delgado", "Herrera",
+    "Silva",
+    "Kovac",
+    "Nakamura",
+    "Fernandez",
+    "Muller",
+    "Rossi",
+    "Andersen",
+    "Diallo",
+    "Novak",
+    "Haddad",
+    "Okafor",
+    "Petrov",
+    "Bauer",
+    "Costa",
+    "Larsson",
+    "Yilmaz",
+    "Mensah",
+    "Ferrari",
+    "Horvath",
+    "Sato",
+    "Moreno",
+    "Janssen",
+    "Hunt",
+    "Traore",
+    "Popov",
+    "Nielsen",
+    "Gomez",
+    "Ricci",
+    "Owusu",
+    "Sarr",
+    "Vega",
+    "Horvat",
+    "Tanaka",
+    "Bianchi",
+    "Afolabi",
+    "Marino",
+    "Sorensen",
+    "Cruz",
+    "Novakovic",
+    "Diarra",
+    "Almeida",
+    "Carvalho",
+    "Pereira",
+    "Ramos",
+    "Torres",
+    "Navarro",
+    "Iglesias",
+    "Castro",
+    "Ortega",
+    "Romano",
+    "Conti",
+    "Greco",
+    "Marchetti",
+    "Esposito",
+    "Lombardi",
+    "Colombo",
+    "Bruno",
+    "Schmidt",
+    "Wagner",
+    "Becker",
+    "Hoffmann",
+    "Krause",
+    "Werner",
+    "Fischer",
+    "Weber",
+    "Dubois",
+    "Laurent",
+    "Moreau",
+    "Girard",
+    "Lefevre",
+    "Mercier",
+    "Bernard",
+    "Rousseau",
+    "Jansen",
+    "Visser",
+    "Bakker",
+    "Vermeulen",
+    "Mwangi",
+    "Abubakar",
+    "Osei",
+    "Boateng",
+    "Nkemelu",
+    "Kimura",
+    "Yoshida",
+    "Ishikawa",
+    "Kang",
+    "Park",
+    "Petkovic",
+    "Jovanovic",
+    "Markovic",
+    "Kowalski",
+    "Nowak",
+    "Zielinski",
+    "Andersson",
+    "Johansson",
+    "Berg",
+    "Lindqvist",
+    "Haugen",
+    "Rahimi",
+    "Karimi",
+    "Hassan",
+    "Toure",
+    "Keita",
+    "Camara",
+    "Mendez",
+    "Delgado",
+    "Herrera",
 ];
 
 /// Culture-aware name pools: a regen's name follows their nationality instead
@@ -39,45 +133,770 @@ const LAST_NAMES: &[&str] = &[
 macro_rules! names {
     ($name:ident, $($x:expr),*) => { const $name: &[&str] = &[$($x),*]; };
 }
-names!(FIRST_EN, "James","Harry","Jack","Oliver","George","Alfie","Charlie","Freddie","Archie","Teddy","Mason","Louie","Ronnie","Reggie","Sonny","Tommy","Ellis","Rhys","Callum","Ollie","Aaron","Liam","Connor","Kyle","Jayden");
-names!(LAST_EN, "Smith","Jones","Taylor","Davies","Walker","Wright","Thompson","White","Hughes","Edwards","Green","Wood","Harris","Martin","Clarke","Lewis","Young","Hall","Gordon","Beckett","Fletcher","Nolan","Price","Ashworth");
-names!(FIRST_ES, "Alejandro","Diego","Pablo","Hugo","Mateo","Leo","Santiago","Thiago","Bruno","Enzo","Gabriel","Lucas","Martin","Dario","Iker","Unai","Pau","Marc","Nil","Pol","Joel","Sergi","Adria","Ivan","Rafa");
-names!(LAST_ES, "Garcia","Fernandez","Gonzalez","Rodriguez","Lopez","Martinez","Sanchez","Perez","Martin","Gomez","Ruiz","Diaz","Moreno","Alvarez","Romero","Navarro","Torres","Dominguez","Vega","Herrera","Castro","Ortega","Ramos","Iglesias");
-names!(FIRST_FR, "Hugo","Louis","Raphael","Jules","Adam","Lucas","Liam","Gabriel","Ethan","Paul","Arthur","Nathan","Mohamed","Rayan","Ibrahim","Moussa","Yanis","Leny","Mathis","Theo","Enzo","Clement","Baptiste","Noe");
-names!(LAST_FR, "Martin","Bernard","Dubois","Thomas","Robert","Petit","Durand","Leroy","Moreau","Laurent","Michel","Garcia","David","Bertrand","Roux","Vincent","Fournier","Morel","Girard","Lefevre","Mercier","Blanc","Guerin","Faure");
-names!(FIRST_DE, "Lukas","Felix","Jonas","Finn","Leon","Paul","Jannik","Malik","Timo","Kai","Lars","Niklas","Florian","Marvin","Fabian","Noah","Kevin","Dennis","Robin","Mats","Nico","Tom","Emre","Deniz");
-names!(LAST_DE, "Muller","Schmidt","Schneider","Fischer","Weber","Meyer","Wagner","Becker","Schulz","Hoffmann","Krause","Huber","Mayer","Frank","Berger","Kaiser","Brandt","Lehmann","Winkler","Keller","Busch","Vogel","Scholz","Hartmann");
-names!(FIRST_IT, "Lorenzo","Matteo","Andrea","Gabriele","Riccardo","Tommaso","Davide","Nicolo","Samuele","Mattia","Alessandro","Federico","Cesare","Edoardo","Giorgio","Michael","Raoul","Giovanni","Marco","Simone","Luca","Elia","Pietro","Rocco");
-names!(LAST_IT, "Rossi","Ferrari","Bianchi","Romano","Ricci","Conti","Greco","Marchetti","Esposito","Lombardi","Colombo","Bruno","Gallo","Costa","Fontana","Serra","Riva","Villa","Sala","Testa","Barone","Pellegrino","Sartori","Farina");
-names!(FIRST_PT, "Joao","Tiago","Rafael","Miguel","Afonso","Dinis","Santiago","Tomas","Martim","Duarte","Francisco","Rodrigo","Goncalo","Nuno","Ruben","Bruno","Diogo","Pedro","Andre","Rafa","Iker","Dario");
-names!(LAST_PT, "Silva","Santos","Ferreira","Pereira","Oliveira","Costa","Rodrigues","Martins","Jesus","Sousa","Fernandes","Carvalho","Gomes","Almeida","Ribeiro","Pinto","Teixeira","Moreira","Cardoso","Nogueira","Esteves","Moniz");
-names!(FIRST_BR, "Gabriel","Lucas","Matheus","Pedro","Rafael","Caio","Igor","Wesley","Marcos","Thiago","Bruno","Danilo","Diego","Felipe","Murilo","Juninho","Gustavo","Joao","Leandro","Breno","Vitor","Davi","Enzo","Kaua");
-names!(LAST_BR, "Silva","Souza","Oliveira","Santos","Ferreira","Almeida","Carvalho","Araujo","Barbosa","Cardoso","Teixeira","Moreira","Pereira","Ribeiro","Nascimento","Batista","Freitas","Moraes","Peixoto","Sales","Xavier","Prado","Lacerda","Queiroz");
-names!(FIRST_NL, "Daan","Sem","Mees","Luuk","Finn","Milan","Levi","Noud","Teun","Gijs","Stijn","Pim","Jari","Ryan","Jeremie","Thijs","Bram","Joris","Micky","Sven","Justin","Calvin","Ruben","Daley");
-names!(LAST_NL, "Jansen","Bakker","Visser","Vermeulen","Smit","Meijer","De Vries","Van Dijk","Van den Berg","Jong","Willems","Bos","Vos","Kok","Dekker","Brouwer","Mulder","Peters","Hendriks","Groot","Kuijpers","Scholten","Dijkstra","Linden");
-names!(FIRST_SC, "Lukas","Emil","Oliver","Noah","Victor","William","Hugo","Elias","Axel","Viggo","Sander","Magnus","Henrik","Martin","Jens","Mikkel","Rasmus","Christian","Pierre","Joakim","Mathias","Mads","Jonas","Gustav");
-names!(LAST_SC, "Andersen","Nielsen","Sorensen","Larsen","Jensen","Petersen","Holm","Lund","Bakken","Haugen","Lie","Berg","Dahl","Lindqvist","Johansson","Andersson","Nilsson","Lindgren","Isaksson","Bergstrom","Nyholm","Moen","Ruud","Sveen");
-names!(FIRST_SL, "Luka","Stefan","Nikola","Marko","Ivan","Petar","Dusan","Aleksandar","Filip","Milos","Dejan","Bojan","Nemanja","Zoran","Djordje","Milan","Josip","Zlatko","Dominik","Andrej","Toni","Goran","Vedran","Mateo");
-names!(LAST_SL, "Novak","Horvat","Kovac","Petrovic","Popovic","Jovanovic","Petrov","Ivanov","Kovacevic","Markovic","Nikolic","Lukic","Stankovic","Ilic","Pavlovic","Simic","Ristic","Babic","Vukovic","Djukic","Zivkovic","Savic","Tomic","Milic");
-names!(FIRST_WA, "Ibrahim","Moussa","Cheick","Sekou","Mamadou","Abdoulaye","Ousseynou","Habib","Modou","Pape","Alassane","Cheikhou","Demba","Fode","Keita","Bakary","Lassana","Mohamed","Aliou","Youssouf","Amadou","Oumar","Sory","Aguibou");
-names!(LAST_WA, "Diallo","Traore","Diarra","Camara","Keita","Toure","Sow","Ndiaye","Sarr","Cisse","Sylla","Bah","Conde","Doumbia","Coulibaly","Drame","Gassama","Diakhate","Faye","Badji","Diop","Niang","Owusu","Mensah");
-names!(FIRST_AR, "Mohamed","Youssef","Omar","Karim","Hakim","Walid","Bilal","Rayan","Ilias","Amine","Fouad","Kamel","Lotfi","Romain","Selim","Aissa","Tarek","Jalal","Hamza","Said","Mehdi","Nabil","Yacine","Adam");
-names!(LAST_AR, "Haddad","Hassan","Benali","El Amrani","Tahrat","Haddadi","Ghezali","Abdelhamid","Rahimi","Belkacem","Taleb","Belhadj","Bouzid","Messaoud","Othmani","Chaib","Fares","Meziane","Larbi","Cherif","Khelifi","Saidi","Kaddour","Zerhouni");
-names!(FIRST_JA, "Yuki","Ren","Sota","Haruto","Soma","Koki","Ao","Riku","Itsuki","Hayato","Taisei","Shuto","Kaito","Daichi","Wataru","Haruki","Yuto","Kaoru","Ritsu","Daizen","Ayase","Shogo","Ko","Jun");
-names!(LAST_JA, "Sato","Suzuki","Takahashi","Tanaka","Watanabe","Yamamoto","Nakamura","Kobayashi","Ito","Kato","Yoshida","Yamada","Sasaki","Yamaguchi","Matsumoto","Inoue","Kimura","Hayashi","Shimizu","Mori","Abe","Ikeda","Hashimoto","Ishikawa");
-names!(FIRST_KR, "Minjun","Seojun","Hajun","Donghyun","Jihoon","Taeyang","Taehoon","Minseok","Jaesung","Wooyeong","Hyeonwoo","Seungho","Jongho","Inbeom","Jinwoo","Sungmin","Dongwon","Jaejoong","Hyukkyu","Siwoo","Yuna","Jiwon","Sua","Hana");
-names!(LAST_KR, "Kim","Lee","Park","Choi","Jung","Kang","Cho","Yoon","Shin","Han","Oh","Seo","Kwon","Hwang","Ahn","Song","Hong","Jeon","Moon","Son","Hwang","Ryu","Noh","Bae");
-names!(FIRST_TR, "Emre","Arda","Kenan","Semih","Yusuf","Mert","Altay","Ferdi","Ismail","Salih","Okay","Cengiz","Hakan","Merih","Samet","Zeki","Abdulkadir","Baris","Yunus","Bertug","Can","Deniz","Doruk","Efe");
-names!(LAST_TR, "Yilmaz","Kaya","Demir","Sahin","Celik","Yavuz","Ozturk","Aydin","Ozdemir","Arslan","Dogan","Kilic","Aslan","Cetin","Unal","Koc","Kurt","Simsek","Turan","Tekin","Ozkan","Polat","Sari","Avci");
+names!(
+    FIRST_EN, "James", "Harry", "Jack", "Oliver", "George", "Alfie", "Charlie", "Freddie",
+    "Archie", "Teddy", "Mason", "Louie", "Ronnie", "Reggie", "Sonny", "Tommy", "Ellis", "Rhys",
+    "Callum", "Ollie", "Aaron", "Liam", "Connor", "Kyle", "Jayden"
+);
+names!(
+    LAST_EN, "Smith", "Jones", "Taylor", "Davies", "Walker", "Wright", "Thompson", "White",
+    "Hughes", "Edwards", "Green", "Wood", "Harris", "Martin", "Clarke", "Lewis", "Young", "Hall",
+    "Gordon", "Beckett", "Fletcher", "Nolan", "Price", "Ashworth"
+);
+names!(
+    FIRST_ES,
+    "Alejandro",
+    "Diego",
+    "Pablo",
+    "Hugo",
+    "Mateo",
+    "Leo",
+    "Santiago",
+    "Thiago",
+    "Bruno",
+    "Enzo",
+    "Gabriel",
+    "Lucas",
+    "Martin",
+    "Dario",
+    "Iker",
+    "Unai",
+    "Pau",
+    "Marc",
+    "Nil",
+    "Pol",
+    "Joel",
+    "Sergi",
+    "Adria",
+    "Ivan",
+    "Rafa"
+);
+names!(
+    LAST_ES,
+    "Garcia",
+    "Fernandez",
+    "Gonzalez",
+    "Rodriguez",
+    "Lopez",
+    "Martinez",
+    "Sanchez",
+    "Perez",
+    "Martin",
+    "Gomez",
+    "Ruiz",
+    "Diaz",
+    "Moreno",
+    "Alvarez",
+    "Romero",
+    "Navarro",
+    "Torres",
+    "Dominguez",
+    "Vega",
+    "Herrera",
+    "Castro",
+    "Ortega",
+    "Ramos",
+    "Iglesias"
+);
+names!(
+    FIRST_FR, "Hugo", "Louis", "Raphael", "Jules", "Adam", "Lucas", "Liam", "Gabriel", "Ethan",
+    "Paul", "Arthur", "Nathan", "Mohamed", "Rayan", "Ibrahim", "Moussa", "Yanis", "Leny", "Mathis",
+    "Theo", "Enzo", "Clement", "Baptiste", "Noe"
+);
+names!(
+    LAST_FR, "Martin", "Bernard", "Dubois", "Thomas", "Robert", "Petit", "Durand", "Leroy",
+    "Moreau", "Laurent", "Michel", "Garcia", "David", "Bertrand", "Roux", "Vincent", "Fournier",
+    "Morel", "Girard", "Lefevre", "Mercier", "Blanc", "Guerin", "Faure"
+);
+names!(
+    FIRST_DE, "Lukas", "Felix", "Jonas", "Finn", "Leon", "Paul", "Jannik", "Malik", "Timo", "Kai",
+    "Lars", "Niklas", "Florian", "Marvin", "Fabian", "Noah", "Kevin", "Dennis", "Robin", "Mats",
+    "Nico", "Tom", "Emre", "Deniz"
+);
+names!(
+    LAST_DE,
+    "Muller",
+    "Schmidt",
+    "Schneider",
+    "Fischer",
+    "Weber",
+    "Meyer",
+    "Wagner",
+    "Becker",
+    "Schulz",
+    "Hoffmann",
+    "Krause",
+    "Huber",
+    "Mayer",
+    "Frank",
+    "Berger",
+    "Kaiser",
+    "Brandt",
+    "Lehmann",
+    "Winkler",
+    "Keller",
+    "Busch",
+    "Vogel",
+    "Scholz",
+    "Hartmann"
+);
+names!(
+    FIRST_IT,
+    "Lorenzo",
+    "Matteo",
+    "Andrea",
+    "Gabriele",
+    "Riccardo",
+    "Tommaso",
+    "Davide",
+    "Nicolo",
+    "Samuele",
+    "Mattia",
+    "Alessandro",
+    "Federico",
+    "Cesare",
+    "Edoardo",
+    "Giorgio",
+    "Michael",
+    "Raoul",
+    "Giovanni",
+    "Marco",
+    "Simone",
+    "Luca",
+    "Elia",
+    "Pietro",
+    "Rocco"
+);
+names!(
+    LAST_IT,
+    "Rossi",
+    "Ferrari",
+    "Bianchi",
+    "Romano",
+    "Ricci",
+    "Conti",
+    "Greco",
+    "Marchetti",
+    "Esposito",
+    "Lombardi",
+    "Colombo",
+    "Bruno",
+    "Gallo",
+    "Costa",
+    "Fontana",
+    "Serra",
+    "Riva",
+    "Villa",
+    "Sala",
+    "Testa",
+    "Barone",
+    "Pellegrino",
+    "Sartori",
+    "Farina"
+);
+names!(
+    FIRST_PT,
+    "Joao",
+    "Tiago",
+    "Rafael",
+    "Miguel",
+    "Afonso",
+    "Dinis",
+    "Santiago",
+    "Tomas",
+    "Martim",
+    "Duarte",
+    "Francisco",
+    "Rodrigo",
+    "Goncalo",
+    "Nuno",
+    "Ruben",
+    "Bruno",
+    "Diogo",
+    "Pedro",
+    "Andre",
+    "Rafa",
+    "Iker",
+    "Dario"
+);
+names!(
+    LAST_PT,
+    "Silva",
+    "Santos",
+    "Ferreira",
+    "Pereira",
+    "Oliveira",
+    "Costa",
+    "Rodrigues",
+    "Martins",
+    "Jesus",
+    "Sousa",
+    "Fernandes",
+    "Carvalho",
+    "Gomes",
+    "Almeida",
+    "Ribeiro",
+    "Pinto",
+    "Teixeira",
+    "Moreira",
+    "Cardoso",
+    "Nogueira",
+    "Esteves",
+    "Moniz"
+);
+names!(
+    FIRST_BR, "Gabriel", "Lucas", "Matheus", "Pedro", "Rafael", "Caio", "Igor", "Wesley", "Marcos",
+    "Thiago", "Bruno", "Danilo", "Diego", "Felipe", "Murilo", "Juninho", "Gustavo", "Joao",
+    "Leandro", "Breno", "Vitor", "Davi", "Enzo", "Kaua"
+);
+names!(
+    LAST_BR,
+    "Silva",
+    "Souza",
+    "Oliveira",
+    "Santos",
+    "Ferreira",
+    "Almeida",
+    "Carvalho",
+    "Araujo",
+    "Barbosa",
+    "Cardoso",
+    "Teixeira",
+    "Moreira",
+    "Pereira",
+    "Ribeiro",
+    "Nascimento",
+    "Batista",
+    "Freitas",
+    "Moraes",
+    "Peixoto",
+    "Sales",
+    "Xavier",
+    "Prado",
+    "Lacerda",
+    "Queiroz"
+);
+names!(
+    FIRST_NL, "Daan", "Sem", "Mees", "Luuk", "Finn", "Milan", "Levi", "Noud", "Teun", "Gijs",
+    "Stijn", "Pim", "Jari", "Ryan", "Jeremie", "Thijs", "Bram", "Joris", "Micky", "Sven", "Justin",
+    "Calvin", "Ruben", "Daley"
+);
+names!(
+    LAST_NL,
+    "Jansen",
+    "Bakker",
+    "Visser",
+    "Vermeulen",
+    "Smit",
+    "Meijer",
+    "De Vries",
+    "Van Dijk",
+    "Van den Berg",
+    "Jong",
+    "Willems",
+    "Bos",
+    "Vos",
+    "Kok",
+    "Dekker",
+    "Brouwer",
+    "Mulder",
+    "Peters",
+    "Hendriks",
+    "Groot",
+    "Kuijpers",
+    "Scholten",
+    "Dijkstra",
+    "Linden"
+);
+names!(
+    FIRST_SC,
+    "Lukas",
+    "Emil",
+    "Oliver",
+    "Noah",
+    "Victor",
+    "William",
+    "Hugo",
+    "Elias",
+    "Axel",
+    "Viggo",
+    "Sander",
+    "Magnus",
+    "Henrik",
+    "Martin",
+    "Jens",
+    "Mikkel",
+    "Rasmus",
+    "Christian",
+    "Pierre",
+    "Joakim",
+    "Mathias",
+    "Mads",
+    "Jonas",
+    "Gustav"
+);
+names!(
+    LAST_SC,
+    "Andersen",
+    "Nielsen",
+    "Sorensen",
+    "Larsen",
+    "Jensen",
+    "Petersen",
+    "Holm",
+    "Lund",
+    "Bakken",
+    "Haugen",
+    "Lie",
+    "Berg",
+    "Dahl",
+    "Lindqvist",
+    "Johansson",
+    "Andersson",
+    "Nilsson",
+    "Lindgren",
+    "Isaksson",
+    "Bergstrom",
+    "Nyholm",
+    "Moen",
+    "Ruud",
+    "Sveen"
+);
+names!(
+    FIRST_SL,
+    "Luka",
+    "Stefan",
+    "Nikola",
+    "Marko",
+    "Ivan",
+    "Petar",
+    "Dusan",
+    "Aleksandar",
+    "Filip",
+    "Milos",
+    "Dejan",
+    "Bojan",
+    "Nemanja",
+    "Zoran",
+    "Djordje",
+    "Milan",
+    "Josip",
+    "Zlatko",
+    "Dominik",
+    "Andrej",
+    "Toni",
+    "Goran",
+    "Vedran",
+    "Mateo"
+);
+names!(
+    LAST_SL,
+    "Novak",
+    "Horvat",
+    "Kovac",
+    "Petrovic",
+    "Popovic",
+    "Jovanovic",
+    "Petrov",
+    "Ivanov",
+    "Kovacevic",
+    "Markovic",
+    "Nikolic",
+    "Lukic",
+    "Stankovic",
+    "Ilic",
+    "Pavlovic",
+    "Simic",
+    "Ristic",
+    "Babic",
+    "Vukovic",
+    "Djukic",
+    "Zivkovic",
+    "Savic",
+    "Tomic",
+    "Milic"
+);
+names!(
+    FIRST_WA,
+    "Ibrahim",
+    "Moussa",
+    "Cheick",
+    "Sekou",
+    "Mamadou",
+    "Abdoulaye",
+    "Ousseynou",
+    "Habib",
+    "Modou",
+    "Pape",
+    "Alassane",
+    "Cheikhou",
+    "Demba",
+    "Fode",
+    "Keita",
+    "Bakary",
+    "Lassana",
+    "Mohamed",
+    "Aliou",
+    "Youssouf",
+    "Amadou",
+    "Oumar",
+    "Sory",
+    "Aguibou"
+);
+names!(
+    LAST_WA,
+    "Diallo",
+    "Traore",
+    "Diarra",
+    "Camara",
+    "Keita",
+    "Toure",
+    "Sow",
+    "Ndiaye",
+    "Sarr",
+    "Cisse",
+    "Sylla",
+    "Bah",
+    "Conde",
+    "Doumbia",
+    "Coulibaly",
+    "Drame",
+    "Gassama",
+    "Diakhate",
+    "Faye",
+    "Badji",
+    "Diop",
+    "Niang",
+    "Owusu",
+    "Mensah"
+);
+names!(
+    FIRST_AR, "Mohamed", "Youssef", "Omar", "Karim", "Hakim", "Walid", "Bilal", "Rayan", "Ilias",
+    "Amine", "Fouad", "Kamel", "Lotfi", "Romain", "Selim", "Aissa", "Tarek", "Jalal", "Hamza",
+    "Said", "Mehdi", "Nabil", "Yacine", "Adam"
+);
+names!(
+    LAST_AR,
+    "Haddad",
+    "Hassan",
+    "Benali",
+    "El Amrani",
+    "Tahrat",
+    "Haddadi",
+    "Ghezali",
+    "Abdelhamid",
+    "Rahimi",
+    "Belkacem",
+    "Taleb",
+    "Belhadj",
+    "Bouzid",
+    "Messaoud",
+    "Othmani",
+    "Chaib",
+    "Fares",
+    "Meziane",
+    "Larbi",
+    "Cherif",
+    "Khelifi",
+    "Saidi",
+    "Kaddour",
+    "Zerhouni"
+);
+names!(
+    FIRST_JA, "Yuki", "Ren", "Sota", "Haruto", "Soma", "Koki", "Ao", "Riku", "Itsuki", "Hayato",
+    "Taisei", "Shuto", "Kaito", "Daichi", "Wataru", "Haruki", "Yuto", "Kaoru", "Ritsu", "Daizen",
+    "Ayase", "Shogo", "Ko", "Jun"
+);
+names!(
+    LAST_JA,
+    "Sato",
+    "Suzuki",
+    "Takahashi",
+    "Tanaka",
+    "Watanabe",
+    "Yamamoto",
+    "Nakamura",
+    "Kobayashi",
+    "Ito",
+    "Kato",
+    "Yoshida",
+    "Yamada",
+    "Sasaki",
+    "Yamaguchi",
+    "Matsumoto",
+    "Inoue",
+    "Kimura",
+    "Hayashi",
+    "Shimizu",
+    "Mori",
+    "Abe",
+    "Ikeda",
+    "Hashimoto",
+    "Ishikawa"
+);
+names!(
+    FIRST_KR, "Minjun", "Seojun", "Hajun", "Donghyun", "Jihoon", "Taeyang", "Taehoon", "Minseok",
+    "Jaesung", "Wooyeong", "Hyeonwoo", "Seungho", "Jongho", "Inbeom", "Jinwoo", "Sungmin",
+    "Dongwon", "Jaejoong", "Hyukkyu", "Siwoo", "Yuna", "Jiwon", "Sua", "Hana"
+);
+names!(
+    LAST_KR, "Kim", "Lee", "Park", "Choi", "Jung", "Kang", "Cho", "Yoon", "Shin", "Han", "Oh",
+    "Seo", "Kwon", "Hwang", "Ahn", "Song", "Hong", "Jeon", "Moon", "Son", "Hwang", "Ryu", "Noh",
+    "Bae"
+);
+names!(
+    FIRST_TR,
+    "Emre",
+    "Arda",
+    "Kenan",
+    "Semih",
+    "Yusuf",
+    "Mert",
+    "Altay",
+    "Ferdi",
+    "Ismail",
+    "Salih",
+    "Okay",
+    "Cengiz",
+    "Hakan",
+    "Merih",
+    "Samet",
+    "Zeki",
+    "Abdulkadir",
+    "Baris",
+    "Yunus",
+    "Bertug",
+    "Can",
+    "Deniz",
+    "Doruk",
+    "Efe"
+);
+names!(
+    LAST_TR, "Yilmaz", "Kaya", "Demir", "Sahin", "Celik", "Yavuz", "Ozturk", "Aydin", "Ozdemir",
+    "Arslan", "Dogan", "Kilic", "Aslan", "Cetin", "Unal", "Koc", "Kurt", "Simsek", "Turan",
+    "Tekin", "Ozkan", "Polat", "Sari", "Avci"
+);
+names!(
+    FIRST_FA, "Ali", "Reza", "Mohammad", "Amir", "Hossein", "Mehdi", "Kaveh", "Arash", "Soroush",
+    "Milad", "Saman", "Farzad", "Omid", "Ehsan", "Vahid", "Farhad", "Hamed", "Peyman", "Bardia",
+    "Azad", "Daryoush", "Karim", "Nader", "Shahram"
+);
+names!(
+    LAST_FA,
+    "Ahmadi",
+    "Karimi",
+    "Mohammadi",
+    "Hosseini",
+    "Mousavi",
+    "Rahimi",
+    "Azizi",
+    "Jafari",
+    "Khosravi",
+    "Moradi",
+    "Nourian",
+    "Miri",
+    "Heydari",
+    "Zare",
+    "Fallah",
+    "Bahrami",
+    "Ghaderi",
+    "Parhami",
+    "Sheikhsaei",
+    "Hajisafi",
+    "Pourmohammadi",
+    "Tabrizi",
+    "Kaabemeh",
+    "Sadegheyan"
+);
+names!(
+    FIRST_CA,
+    "Jasur",
+    "Sardor",
+    "Azizbek",
+    "Otabek",
+    "Timur",
+    "Bekhruz",
+    "Sanjar",
+    "Eldor",
+    "Jamshid",
+    "Bobur",
+    "Doniyor",
+    "Akbar",
+    "Sherzod",
+    "Aziz",
+    "Ulugbek",
+    "Jaloliddin",
+    "Rustam",
+    "Sokhib",
+    "Akmal",
+    "Dilshod",
+    "Nodir",
+    "Olimjon",
+    "Farhod",
+    "Kamol"
+);
+names!(
+    LAST_CA,
+    "Karimov",
+    "Azimov",
+    "Yuldoshev",
+    "Toshev",
+    "Rahimov",
+    "Olimov",
+    "Tursunov",
+    "Qodirov",
+    "Ergashev",
+    "Shodiev",
+    "Mirzayev",
+    "Azimbayev",
+    "Nurmamatov",
+    "Bekmamatov",
+    "Yusupov",
+    "Qosimov",
+    "Toshpo'latov",
+    "Ergashev",
+    "Abdullayev",
+    "Mamajonov",
+    "Khalimov",
+    "Ormonov",
+    "Bevjan",
+    "Khodjaev"
+);
+names!(
+    FIRST_ID,
+    "Rizky",
+    "Dimas",
+    "Andi",
+    "Budi",
+    "Fajar",
+    "Agung",
+    "Yuda",
+    "Irfan",
+    "Ilham",
+    "Sandy",
+    "Egy",
+    "Ricky",
+    "Kadek",
+    "Rizki",
+    "Saputra",
+    "Ardiansyah",
+    "Hendra",
+    "Bagas",
+    "Dendy",
+    "Bisma",
+    "Jalal",
+    "Marcell",
+    "Ruddy",
+    "Elkan"
+);
+names!(
+    LAST_ID,
+    "Saputra",
+    "Hidayat",
+    "Pratama",
+    "Nugraha",
+    "Firmansyah",
+    "Setiawan",
+    "Wijaya",
+    "Kusuma",
+    "Wibowo",
+    "Laksmana",
+    "Ramadhan",
+    "Putra",
+    "Handoko",
+    "Prasetyo",
+    "Gunawan",
+    "Kurniawan",
+    "Nugroho",
+    "Santoso",
+    "Maulana",
+    "Rahman",
+    "Syamsu",
+    "Fauzi",
+    "Utomo",
+    "Pranata"
+);
+names!(
+    FIRST_IN, "Aarav", "Arjun", "Rohan", "Aditya", "Vihaan", "Sai", "Anirudh", "Kabir", "Ishaan",
+    "Dhruv", "Vansh", "Rishabh", "Nikhil", "Rahul", "Karan", "Vikram", "Dev", "Yash", "Ayaan",
+    "Zain", "Arnav", "Armaan", "Reyansh", "Krishna"
+);
+names!(
+    LAST_IN,
+    "Singh",
+    "Sharma",
+    "Patel",
+    "Kumar",
+    "Verma",
+    "Reddy",
+    "Iyer",
+    "Nair",
+    "Gupta",
+    "Bose",
+    "Das",
+    "Mehta",
+    "Rao",
+    "Pillai",
+    "Khan",
+    "Fernandes",
+    "Chopra",
+    "Kapur",
+    "Sinha",
+    "Murthy",
+    "Sundaram",
+    "Gautam",
+    "Hegde",
+    "Bhat"
+);
+names!(
+    FIRST_ZH, "Wei", "Jun", "Hao", "Lei", "Chao", "Peng", "Bo", "Dong", "Kun", "Min", "Zhe", "Xin",
+    "Kai", "Jia", "Tianyu", "Yufeng", "Haoran", "Zhenyu", "Haitao", "Runhao", "Feihong", "Haoyu",
+    "Zicheng", "Jianhua"
+);
+names!(
+    LAST_ZH, "Wang", "Li", "Zhang", "Liu", "Chen", "Yang", "Huang", "Zhou", "Wu", "Xu", "Sun",
+    "Hu", "Zhu", "Gao", "Lin", "He", "Guo", "Ma", "Luo", "Liang", "Zheng", "Xie", "Han", "Tang"
+);
 
 const CITY: &[&str] = &[
-    "North", "Real", "Athletic", "Sporting", "Dynamo", "United", "City", "Wanderers",
-    "Rovers", "Albion", "County", "Athletico", "Olympic", "Racing", "Inter", "Central",
+    "North",
+    "Real",
+    "Athletic",
+    "Sporting",
+    "Dynamo",
+    "United",
+    "City",
+    "Wanderers",
+    "Rovers",
+    "Albion",
+    "County",
+    "Athletico",
+    "Olympic",
+    "Racing",
+    "Inter",
+    "Central",
 ];
 const CITY2: &[&str] = &[
-    "Riverton", "Kingsbridge", "Ashford", "Belmont", "Cordoba", "Vale", "Harbour", "Elmwood",
-    "Granite", "Silverlake", "Redcliff", "Norwood", "Fairhaven", "Oakport", "Westmere",
-    "Highgate", "Brookdale", "Stonemoor", "Larkfield", "Marston",
+    "Riverton",
+    "Kingsbridge",
+    "Ashford",
+    "Belmont",
+    "Cordoba",
+    "Vale",
+    "Harbour",
+    "Elmwood",
+    "Granite",
+    "Silverlake",
+    "Redcliff",
+    "Norwood",
+    "Fairhaven",
+    "Oakport",
+    "Westmere",
+    "Highgate",
+    "Brookdale",
+    "Stonemoor",
+    "Larkfield",
+    "Marston",
 ];
 
 /// Lift factor from the compact tier space generation reasons in (~10-30) onto
@@ -89,9 +908,33 @@ const GEN_SCALE: f32 = 3.0;
 fn culture_for(nation: &str) -> &'static str {
     let n = nation.to_lowercase();
     let has = |s: &str| n.contains(s);
-    if has("england") || has("scotland") || has("wales") || n == "ireland" || has("republic of ireland") || has("northern ireland") || has("united states") || has("australia") || has("canada") {
+    if has("england")
+        || has("scotland")
+        || has("wales")
+        || n == "ireland"
+        || has("republic of ireland")
+        || has("northern ireland")
+        || has("united states")
+        || has("australia")
+        || has("canada")
+    {
         "english"
-    } else if has("spain") || has("mexico") || has("colombia") || has("uruguay") || has("chile") || has("peru") || has("paraguay") || has("venezuela") || has("ecuador") || has("bolivia") || has("costa rica") || has("honduras") {
+    } else if has("spain")
+        || has("mexico")
+        || has("colombia")
+        || has("uruguay")
+        || has("chile")
+        || has("peru")
+        || has("paraguay")
+        || has("venezuela")
+        || has("ecuador")
+        || has("bolivia")
+        || has("costa rica")
+        || has("honduras")
+        || has("guatemala")
+        || has("panama")
+        || has("el salvador")
+    {
         "spanish"
     } else if has("argentina") {
         "spanish"
@@ -107,14 +950,107 @@ fn culture_for(nation: &str) -> &'static str {
         "brazilian"
     } else if has("netherlands") || has("holland") {
         "dutch"
-    } else if has("sweden") || has("norway") || has("denmark") || has("finland") || has("iceland") {
+    } else if has("sweden")
+        || has("norway")
+        || has("denmark")
+        || has("finland")
+        || has("iceland")
+        || has("faroe")
+        || has("estonia")
+        || has("latvia")
+        || has("lithuania")
+    {
         "scandinavian"
-    } else if has("croatia") || has("serbia") || has("slovenia") || has("bosnia") || has("montenegro") || has("macedonia") || has("poland") || has("czech") || has("slovak") || has("ukraine") || has("russia") || has("georgia") || has("albania") || has("kosovo") || has("romania") || has("bulgaria") || has("hungary") || has("greece") {
+    } else if has("croatia")
+        || has("serbia")
+        || has("slovenia")
+        || has("bosnia")
+        || has("montenegro")
+        || has("macedonia")
+        || has("poland")
+        || has("czech")
+        || has("slovak")
+        || has("ukraine")
+        || has("russia")
+        || has("georgia")
+        || has("albania")
+        || has("kosovo")
+        || has("romania")
+        || has("bulgaria")
+        || has("hungary")
+        || has("greece")
+        || has("belarus")
+        || has("moldova")
+    {
         "slavic"
-    } else if has("senegal") || has("mali") || has("ivory") || has("ghana") || has("nigeria") || has("cameroon") || has("guinea") || has("gambia") || has("sierra") || has("liberia") || has("burkina") || has("togo") || has("benin") || has("niger") || has("chad") || has("congo") || has("angola") || has("gabon") {
+    } else if has("senegal")
+        || has("mali")
+        || has("ivory")
+        || has("ghana")
+        || has("nigeria")
+        || has("cameroon")
+        || has("guinea")
+        || has("gambia")
+        || has("sierra")
+        || has("liberia")
+        || has("burkina")
+        || has("togo")
+        || has("benin")
+        || has("niger")
+        || has("chad")
+        || has("congo")
+        || has("angola")
+        || has("gabon")
+        || has("zambia")
+        || has("zimbabwe")
+        || has("kenya")
+        || has("tanzania")
+        || has("south africa")
+    {
         "west_african"
-    } else if has("morocco") || has("algeria") || has("tunisia") || has("egypt") {
+    } else if has("morocco")
+        || has("algeria")
+        || has("tunisia")
+        || has("egypt")
+        || has("qatar")
+        || has("emirates")
+        || has("saudi")
+        || has("iraq")
+        || has("jordan")
+        || has("oman")
+        || has("kuwait")
+        || has("bahrain")
+        || has("yemen")
+        || has("syria")
+        || has("palestin")
+        || has("lebanon")
+        || has("libya")
+        || has("sudan")
+        || has("israel")
+    {
         "arabic"
+    } else if has("iran") {
+        "persian"
+    } else if has("uzbek")
+        || has("kazakh")
+        || has("kyrgyz")
+        || has("tajik")
+        || has("turkmen")
+        || has("armenia")
+        || has("azerbaijan")
+    {
+        "central_asian"
+    } else if has("indonesia") || has("malaysia") {
+        "indonesian"
+    } else if has("india")
+        || has("bangladesh")
+        || has("pakistan")
+        || has("sri lanka")
+        || has("nepal")
+    {
+        "indian"
+    } else if has("china") || has("chinese taipei") || has("hong kong") {
+        "chinese"
     } else if has("japan") {
         "japanese"
     } else if has("korea") {
@@ -140,6 +1076,11 @@ fn culture_pools(culture: &str) -> (&'static [&'static str], &'static [&'static 
         "slavic" => (&FIRST_SL, &LAST_SL),
         "west_african" => (&FIRST_WA, &LAST_WA),
         "arabic" => (&FIRST_AR, &LAST_AR),
+        "persian" => (&FIRST_FA, &LAST_FA),
+        "central_asian" => (&FIRST_CA, &LAST_CA),
+        "indonesian" => (&FIRST_ID, &LAST_ID),
+        "indian" => (&FIRST_IN, &LAST_IN),
+        "chinese" => (&FIRST_ZH, &LAST_ZH),
         "japanese" => (&FIRST_JA, &LAST_JA),
         "korean" => (&FIRST_KR, &LAST_KR),
         "turkish" => (&FIRST_TR, &LAST_TR),
@@ -163,11 +1104,7 @@ fn regen_name_from(
     }
     // Draw a token distinct from `avoid` so names never read "Milos Milos" or
     // "Ronnie Ronnie": a repeated adjacent token is a classic generator tell.
-    fn pick_distinct<'a>(
-        xs: &'a [&'a str],
-        avoid: &str,
-        rng: &mut impl rand::Rng,
-    ) -> &'a str {
+    fn pick_distinct<'a>(xs: &'a [&'a str], avoid: &str, rng: &mut impl rand::Rng) -> &'a str {
         for _ in 0..6 {
             let c = xs[rng.gen_range(0..xs.len())];
             if c != avoid {
@@ -403,6 +1340,7 @@ impl Gen {
             nation: String::new(),
             attrs,
             potential,
+            seen_ovr: 0,
             contract: Contract {
                 wage,
                 years: self.rng.gen_range(1..=4),
@@ -484,17 +1422,28 @@ mod tests {
                 tm += 1;
             }
         }
-        assert!(tm * 2 < total, "target men dominate the forward pool ({}/{})", tm, total);
+        assert!(
+            tm * 2 < total,
+            "target men dominate the forward pool ({}/{})",
+            tm,
+            total
+        );
         assert!(tm > 0, "no target men generated at all ({}/{})", tm, total);
     }
-
 
     fn regen_names_have_no_doubled_tokens() {
         // "Milos Milos Popovic" / "Ronnie Ronnie Becker" are a generator tell:
         // no two adjacent tokens may be identical across many draws.
         let mut rng = Pcg64Mcg::new(99);
         let used = std::collections::HashSet::new();
-        for culture in ["Brazil", "Serbia", "England", "Japan", "Morocco", "Netherlands"] {
+        for culture in [
+            "Brazil",
+            "Serbia",
+            "England",
+            "Japan",
+            "Morocco",
+            "Netherlands",
+        ] {
             for _ in 0..400 {
                 let n = Gen::regen_name(&mut rng, culture, &used);
                 let toks: Vec<&str> = n.split([' ', '-']).filter(|t| !t.is_empty()).collect();
@@ -516,7 +1465,12 @@ mod tests {
             for _ in 0..500 {
                 let n = Gen::regen_name(&mut rng, culture, &used);
                 for b in banned {
-                    assert!(!n.contains(b), "regen reused famous surname '{}' in '{}'", b, n);
+                    assert!(
+                        !n.contains(b),
+                        "regen reused famous surname '{}' in '{}'",
+                        b,
+                        n
+                    );
                 }
             }
         }
@@ -553,4 +1507,3 @@ mod tests {
         assert!(g.contains(' '));
     }
 }
-

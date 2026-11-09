@@ -121,11 +121,8 @@ impl Cup {
             // The shuffle put a random team last; but survivors order is stable
             // and draw pairs the shuffled order, so recover the unpaired id by
             // set difference.
-            let paired: std::collections::HashSet<ClubId> = self
-                .ties
-                .iter()
-                .flat_map(|t| [t.home, t.away])
-                .collect();
+            let paired: std::collections::HashSet<ClubId> =
+                self.ties.iter().flat_map(|t| [t.home, t.away]).collect();
             self.survivors.iter().find(|t| !paired.contains(&t.id))
         } else {
             None
@@ -207,9 +204,9 @@ fn next_pow2(mut n: usize) -> usize {
 /// Escalating prize money by how many teams remain (fewer = later = richer).
 pub fn prize_for_round(survivors: usize) -> i64 {
     match survivors {
-        2 => 8_000_000,       // final
-        3..=4 => 3_500_000,   // semi
-        5..=8 => 1_800_000,   // quarter
+        2 => 8_000_000,     // final
+        3..=4 => 3_500_000, // semi
+        5..=8 => 1_800_000, // quarter
         9..=16 => 900_000,
         17..=32 => 450_000,
         _ => 200_000,

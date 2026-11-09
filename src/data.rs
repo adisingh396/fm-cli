@@ -51,7 +51,9 @@ impl Database {
                         db
                     }
                     None => {
-                        eprintln!("  data/players.csv missing or unparsable — using procedural fallback.");
+                        eprintln!(
+                            "  data/players.csv missing or unparsable — using procedural fallback."
+                        );
                         Self::procedural()
                     }
                 }
@@ -166,7 +168,9 @@ impl Database {
             if vals.is_empty() {
                 return 1;
             }
-            (vals.iter().sum::<f32>() / vals.len() as f32).round().clamp(1.0, 99.0) as u8
+            (vals.iter().sum::<f32>() / vals.len() as f32)
+                .round()
+                .clamp(1.0, 99.0) as u8
         };
 
         let mut players: Vec<Player> = Vec::new();
@@ -175,8 +179,7 @@ impl Database {
         let mut squads: HashMap<String, (String, String, Vec<usize>)> = HashMap::new();
 
         for line in lines {
-            let fields: Vec<String> =
-                parse_csv_line(line).iter().map(|s| s.to_string()).collect();
+            let fields: Vec<String> = parse_csv_line(line).iter().map(|s| s.to_string()).collect();
             if fields.len() < headers.len() / 2 {
                 continue;
             }
@@ -188,8 +191,10 @@ impl Database {
                     }
                 }
             }
-            let ovr_raw: f32 =
-                fields.get(i_ovr).and_then(|s| s.trim().parse().ok()).unwrap_or(0.0);
+            let ovr_raw: f32 = fields
+                .get(i_ovr)
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0.0);
             if ovr_raw < 40.0 {
                 continue; // filler reserve records
             }
@@ -208,7 +213,13 @@ impl Database {
             let _ = i_alt;
             let pos = fc_position(&get(&fields, Some(i_pos)));
             let age = Self::age_from_birthdate(&get(&fields, i_birth));
-            let attrs = Attributes {
+            let nation = get(&fields, i_nat)
+                .split(',')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let mut attrs = Attributes {
                 pace: avg(&fields, &[c_acc, c_spr]),
                 shooting: avg(&fields, &[c_fin, c_pow, c_ls, c_vol]),
                 passing: avg(&fields, &[c_sp, c_lp, c_vis, c_cro]),
@@ -222,6 +233,44 @@ impl Database {
                 goalkeeping: avg(&fields, &[c_gkd, c_gkh, c_gkk, c_gkp, c_gkr]),
                 first_touch: scaled(&fields, c_con),
             };
+            // FC27-calibration for Japan: the dump's EA ratings understate
+            // the JFA cohort by ~4 points vs. real-world standing (FIFA
+            // top-16 side whose best XI reads 79.0 = Norway-tier, not
+            // top-16 tier). The lift is technical, not physical: passing,
+            // vision, dribbling and composure up, pace/shooting up a touch.
+            // Goalkeepers get reflex/composure only — their attacking
+            // attributes stay near zero either way.
+            let mut seen_ovr: u8 = fields
+                .get(i_ovr)
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0.0f32)
+                .round()
+                .clamp(0.0, 99.0) as u8;
+            if nation == "Japan" {
+                let lift = |v: &mut u8, d: u8| *v = (*v + d).min(99);
+                match pos {
+                    Position::GK => {
+                        lift(&mut attrs.goalkeeping, 3);
+                        lift(&mut attrs.composure, 3);
+                    }
+                    Position::DEF => {
+                        lift(&mut attrs.passing, 4);
+                        lift(&mut attrs.vision, 3);
+                        lift(&mut attrs.composure, 3);
+                        lift(&mut attrs.first_touch, 3);
+                    }
+                    _ => {
+                        lift(&mut attrs.passing, 4);
+                        lift(&mut attrs.vision, 4);
+                        lift(&mut attrs.dribbling, 4);
+                        lift(&mut attrs.composure, 3);
+                        lift(&mut attrs.first_touch, 3);
+                        lift(&mut attrs.shooting, 2);
+                        lift(&mut attrs.pace, 2);
+                    }
+                }
+                seen_ovr = (seen_ovr + 4).min(99);
+            }
 
             let foot = if get(&fields, i_preferred_foot)
                 .trim()
@@ -249,10 +298,14 @@ impl Database {
                 name,
                 age,
                 position: pos,
-                nation: get(&fields, i_nat).split(',').next().unwrap_or("").trim().to_string(),
+                nation,
                 attrs,
                 potential: 0,
-                contract: Contract { wage: 1000, years: 3 },
+                seen_ovr,
+                contract: Contract {
+                    wage: 1000,
+                    years: 3,
+                },
                 morale: 75,
                 fitness: 90,
                 form: 0,
@@ -313,8 +366,11 @@ impl Database {
                 continue;
             }
             let topn = idxs.len().min(15);
-            let avg_ovr: f32 =
-                idxs[..topn].iter().map(|&i| players[i].overall() as f32).sum::<f32>() / topn as f32;
+            let avg_ovr: f32 = idxs[..topn]
+                .iter()
+                .map(|&i| players[i].overall() as f32)
+                .sum::<f32>()
+                / topn as f32;
             let reputation = (2.24 * avg_ovr - 95.0).round().clamp(35.0, 99.0) as u8;
             let new_id = clubs.len() as ClubId + 1;
             let squad: Vec<PlayerId> = idxs.iter().map(|&i| players[i].id).collect();
@@ -341,8 +397,23 @@ impl Database {
                 lineup: Vec::new(),
             });
         }
-        let club_index = clubs.iter().enumerate().map(|(i, c)| (c.name.clone(), i)).collect();
-        Some(Database { players, clubs, club_index })
+        // Deterministic club order: the HashMap above iterates in
+        // per-process random order, so without this the whole world
+        // (and every seed) would shift between runs.
+        clubs.sort_by(|a, b| a.name.cmp(&b.name));
+        for (i, c) in clubs.iter_mut().enumerate() {
+            c.id = i as ClubId + 1;
+        }
+        let club_index = clubs
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.name.clone(), i))
+            .collect();
+        Some(Database {
+            players,
+            clubs,
+            club_index,
+        })
     }
 
     fn procedural() -> Self {
@@ -351,10 +422,26 @@ impl Database {
         let mut clubs = Vec::new();
 
         let club_names = [
-            "Manchester City", "Liverpool", "Arsenal", "Chelsea", "Tottenham Hotspur",
-            "Manchester United", "Leicester City", "West Ham United", "Wolverhampton", "Crystal Palace",
-            "Everton", "Aston Villa", "Newcastle United", "Brighton", "Southampton",
-            "Leeds United", "Fulham", "Brentford", "Nottingham Forest", "Bournemouth",
+            "Manchester City",
+            "Liverpool",
+            "Arsenal",
+            "Chelsea",
+            "Tottenham Hotspur",
+            "Manchester United",
+            "Leicester City",
+            "West Ham United",
+            "Wolverhampton",
+            "Crystal Palace",
+            "Everton",
+            "Aston Villa",
+            "Newcastle United",
+            "Brighton",
+            "Southampton",
+            "Leeds United",
+            "Fulham",
+            "Brentford",
+            "Nottingham Forest",
+            "Bournemouth",
         ];
 
         for (i, name) in club_names.iter().enumerate() {
@@ -381,7 +468,12 @@ impl Database {
                 league: "Premier League".to_string(),
                 lineup: Vec::new(),
             };
-            let plan = [(Position::GK, 3), (Position::DEF, 8), (Position::MID, 8), (Position::FWD, 5)];
+            let plan = [
+                (Position::GK, 3),
+                (Position::DEF, 8),
+                (Position::MID, 8),
+                (Position::FWD, 5),
+            ];
             let mut squad_ids = Vec::new();
             for (pos, count) in plan {
                 for _ in 0..count {
@@ -398,8 +490,16 @@ impl Database {
             clubs.push(club);
         }
 
-        let club_index = clubs.iter().enumerate().map(|(i, c)| (c.name.clone(), i)).collect();
-        Database { players, clubs, club_index }
+        let club_index = clubs
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.name.clone(), i))
+            .collect();
+        Database {
+            players,
+            clubs,
+            club_index,
+        }
     }
 
     pub fn players(&self) -> &[Player] {
@@ -426,8 +526,7 @@ impl Database {
 pub(crate) fn clean_name(raw: &str) -> String {
     let mut out = String::new();
     for c in raw.chars() {
-        if c == ' ' || c == '-' || c == '\'' || c == '.' || c == ',' || c.is_ascii_alphanumeric()
-        {
+        if c == ' ' || c == '-' || c == '\'' || c == '.' || c == ',' || c.is_ascii_alphanumeric() {
             out.push(c);
         } else if c.is_alphabetic() {
             // Latin and Latin-1/Extended accents sit below U+0250; anything at
@@ -452,7 +551,7 @@ pub(crate) fn clean_name(raw: &str) -> String {
 }
 
 /// Split a CSV line honoring double-quoted fields (which may contain commas).
-fn parse_csv_line(line: &str) -> Vec<&str> {
+pub(crate) fn parse_csv_line(line: &str) -> Vec<&str> {
     // We return owned-free slices where possible, but quoted fields with
     // commas need reconstruction; for the FM dataset quoted fields are the
     // nationality/foot lists, which we don't index by column offset issues
@@ -505,7 +604,29 @@ fn fc_position(pos_str: &str) -> Position {
 
 #[cfg(test)]
 mod tests {
-    use super::clean_name;
+    use super::{clean_name, Database};
+
+    #[test]
+    fn japan_cohort_reads_top_sixteen_after_calibration() {
+        // The FC27 dump rates Japan's best XI at ~79 (Norway-tier). After
+        // the technical calibration the eleven strongest Japanese men
+        // must read like the top-16 side they are, or the AFC hierarchy
+        // (Japan > Korea > Saudi > Australia > Iran ...) collapses.
+        let db = Database::load();
+        let mut ovrs: Vec<u8> = db
+            .players()
+            .iter()
+            .filter(|p| p.nation == "Japan")
+            .map(|p| p.overall())
+            .collect();
+        ovrs.sort_unstable_by(|a, b| b.cmp(a));
+        assert!(ovrs.len() >= 11, "Japan pool way too thin: {}", ovrs.len());
+        let mean11 = ovrs[..11].iter().map(|&v| v as u32).sum::<u32>() as f32 / 11.0;
+        assert!(
+            mean11 >= 80.0,
+            "Japan top-11 mean {mean11:.1} — calibration lifted nothing"
+        );
+    }
 
     #[test]
     fn clean_name_strips_native_script_tail() {
@@ -522,7 +643,10 @@ mod tests {
     fn clean_name_keeps_latin_accents_and_punctuation() {
         // Accented Latin, hyphens and apostrophes are all legitimate.
         assert_eq!(clean_name("Kylian Mbappé"), "Kylian Mbappé");
-        assert_eq!(clean_name("Pierre-Emerick Aubameyang"), "Pierre-Emerick Aubameyang");
+        assert_eq!(
+            clean_name("Pierre-Emerick Aubameyang"),
+            "Pierre-Emerick Aubameyang"
+        );
         assert_eq!(clean_name("N'Golo Kanté"), "N'Golo Kanté");
         assert_eq!(clean_name("Erling Braut Håland"), "Erling Braut Håland");
     }
@@ -533,4 +657,3 @@ mod tests {
         assert_eq!(clean_name("Χαράλαμπος"), "Χαράλαμπος");
     }
 }
-

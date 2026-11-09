@@ -67,8 +67,18 @@ pub struct SmallMlp {
 }
 
 impl SmallMlp {
-    pub fn new(model: &str, feature_names: Vec<&'static str>, weights: Vec<f32>, hidden: usize) -> Self {
-        SmallMlp { model: model.into(), feature_names, weights, hidden }
+    pub fn new(
+        model: &str,
+        feature_names: Vec<&'static str>,
+        weights: Vec<f32>,
+        hidden: usize,
+    ) -> Self {
+        SmallMlp {
+            model: model.into(),
+            feature_names,
+            weights,
+            hidden,
+        }
     }
 
     pub fn forward(&self, inputs: &[f32]) -> f32 {
@@ -131,20 +141,60 @@ impl SmallMlp {
 }
 
 pub const PLAYER_INPUTS: &[&str] = &[
-    "age_norm", "overall", "pace", "stamina", "potential_gap", "offer_ratio",
-    "club_stage", "morale", "ambition", "greed", "loyalty", "contract_happiness",
+    "age_norm",
+    "overall",
+    "pace",
+    "stamina",
+    "potential_gap",
+    "offer_ratio",
+    "club_stage",
+    "morale",
+    "ambition",
+    "greed",
+    "loyalty",
+    "contract_happiness",
 ];
 pub const MANAGER_INPUTS: &[&str] = &[
-    "wage_room", "squad_age", "title_drought", "prospects", "wealth", "willingness",
-    "security", "ambition", "youth_trust", "reputation", "quality", "performance",
+    "wage_room",
+    "squad_age",
+    "title_drought",
+    "prospects",
+    "wealth",
+    "willingness",
+    "security",
+    "ambition",
+    "youth_trust",
+    "reputation",
+    "quality",
+    "performance",
 ];
 pub const SCOUT_INPUTS: &[&str] = &[
-    "rating_gap", "potential", "age", "value_ratio", "squad_need", "one_rung_step",
-    "seller_finance", "wage_fit", "academy", "risk", "pathway", "rep_gap",
+    "rating_gap",
+    "potential",
+    "age",
+    "value_ratio",
+    "squad_need",
+    "one_rung_step",
+    "seller_finance",
+    "wage_fit",
+    "academy",
+    "risk",
+    "pathway",
+    "rep_gap",
 ];
 pub const FINANCE_INPUTS: &[&str] = &[
-    "wage_room", "revenue", "budget", "wage_ratio", "squad_strength", "prospects",
-    "willingness", "club_value", "inflation", "academy", "ambition", "reputation",
+    "wage_room",
+    "revenue",
+    "budget",
+    "wage_ratio",
+    "squad_strength",
+    "prospects",
+    "willingness",
+    "club_value",
+    "inflation",
+    "academy",
+    "ambition",
+    "reputation",
 ];
 
 fn small_weights(input_count: usize, hidden: usize, seed_fill: f32) -> Vec<f32> {
@@ -173,10 +223,18 @@ pub fn default_finance_weights() -> Vec<f32> {
     small_weights(FINANCE_INPUTS.len(), FINANCE_HIDDEN, 53.0)
 }
 
-pub fn player_net(weights: &[f32]) -> SmallMlp { SmallMlp::new("player", PLAYER_INPUTS.to_vec(), weights.to_vec(), 12) }
-pub fn manager_net(weights: &[f32]) -> SmallMlp { SmallMlp::new("manager", MANAGER_INPUTS.to_vec(), weights.to_vec(), 12) }
-pub fn scout_net(weights: &[f32]) -> SmallMlp { SmallMlp::new("scout", SCOUT_INPUTS.to_vec(), weights.to_vec(), 12) }
-pub fn finance_net(weights: &[f32]) -> SmallMlp { SmallMlp::new("finance", FINANCE_INPUTS.to_vec(), weights.to_vec(), 12) }
+pub fn player_net(weights: &[f32]) -> SmallMlp {
+    SmallMlp::new("player", PLAYER_INPUTS.to_vec(), weights.to_vec(), 12)
+}
+pub fn manager_net(weights: &[f32]) -> SmallMlp {
+    SmallMlp::new("manager", MANAGER_INPUTS.to_vec(), weights.to_vec(), 12)
+}
+pub fn scout_net(weights: &[f32]) -> SmallMlp {
+    SmallMlp::new("scout", SCOUT_INPUTS.to_vec(), weights.to_vec(), 12)
+}
+pub fn finance_net(weights: &[f32]) -> SmallMlp {
+    SmallMlp::new("finance", FINANCE_INPUTS.to_vec(), weights.to_vec(), 12)
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelSpec {
@@ -278,14 +336,30 @@ pub fn write_ml_export(params: &crate::tune::Params, path: &str) -> std::io::Res
             } else if spec.model == "finance" {
                 FINANCE_INPUTS.to_vec()
             } else if spec.model == "transfer" {
-                vec!["need", "value_fit", "wage_room", "ambition", "rep_gap", "requested"]
+                vec![
+                    "need",
+                    "value_fit",
+                    "wage_room",
+                    "ambition",
+                    "rep_gap",
+                    "requested",
+                ]
             } else {
                 Vec::new()
             };
-            serialize_mlp(&SmallMlp::new(&spec.model, features, spec.weights.clone(), spec.hidden))
+            serialize_mlp(&SmallMlp::new(
+                &spec.model,
+                features,
+                spec.weights.clone(),
+                spec.hidden,
+            ))
         })
         .collect::<Vec<_>>();
-    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new(".")))?;
+    std::fs::create_dir_all(
+        std::path::Path::new(path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(".")),
+    )?;
     std::fs::write(path, serde_json::to_string_pretty(&serial)?)
 }
 
@@ -312,10 +386,14 @@ pub const MANAGER_HIDDEN: usize = 12;
 pub const SCOUT_HIDDEN: usize = 12;
 pub const FINANCE_HIDDEN: usize = 12;
 
-pub const PLAYER_WEIGHTS: usize = PLAYER_INPUTS.len() * PLAYER_HIDDEN + PLAYER_HIDDEN + PLAYER_HIDDEN + 1;
-pub const MANAGER_WEIGHTS: usize = MANAGER_INPUTS.len() * MANAGER_HIDDEN + MANAGER_HIDDEN + MANAGER_HIDDEN + 1;
-pub const SCOUT_WEIGHTS: usize = SCOUT_INPUTS.len() * SCOUT_HIDDEN + SCOUT_HIDDEN + SCOUT_HIDDEN + 1;
-pub const FINANCE_WEIGHTS: usize = FINANCE_INPUTS.len() * FINANCE_HIDDEN + FINANCE_HIDDEN + FINANCE_HIDDEN + 1;
+pub const PLAYER_WEIGHTS: usize =
+    PLAYER_INPUTS.len() * PLAYER_HIDDEN + PLAYER_HIDDEN + PLAYER_HIDDEN + 1;
+pub const MANAGER_WEIGHTS: usize =
+    MANAGER_INPUTS.len() * MANAGER_HIDDEN + MANAGER_HIDDEN + MANAGER_HIDDEN + 1;
+pub const SCOUT_WEIGHTS: usize =
+    SCOUT_INPUTS.len() * SCOUT_HIDDEN + SCOUT_HIDDEN + SCOUT_HIDDEN + 1;
+pub const FINANCE_WEIGHTS: usize =
+    FINANCE_INPUTS.len() * FINANCE_HIDDEN + FINANCE_HIDDEN + FINANCE_HIDDEN + 1;
 
 pub const NET_WEIGHTS: usize = NET_INPUTS * NET_HIDDEN + NET_HIDDEN + NET_HIDDEN + 1;
 
@@ -345,12 +423,12 @@ pub fn default_weights() -> Vec<f32> {
     // Hand-set prior: need and value dominate, ambition/wage modulate.
     // input order: need, value_fit, wage_room, ambition, rep_gap, requested.
     let priors = [
-        [0.9, 0.2, -0.3, 0.4, 0.1, -0.2, 0.5, 0.0], // need
-        [0.5, 0.6, 0.1, -0.2, 0.3, 0.2, -0.1, 0.4], // value_fit
-        [0.2, 0.1, 0.7, 0.2, -0.1, 0.3, 0.2, -0.2], // wage_room
-        [0.3, -0.1, 0.2, 0.5, 0.4, 0.1, 0.0, 0.3], // ambition
+        [0.9, 0.2, -0.3, 0.4, 0.1, -0.2, 0.5, 0.0],  // need
+        [0.5, 0.6, 0.1, -0.2, 0.3, 0.2, -0.1, 0.4],  // value_fit
+        [0.2, 0.1, 0.7, 0.2, -0.1, 0.3, 0.2, -0.2],  // wage_room
+        [0.3, -0.1, 0.2, 0.5, 0.4, 0.1, 0.0, 0.3],   // ambition
         [-0.4, 0.2, 0.1, -0.3, 0.5, -0.2, 0.3, 0.1], // rep_gap
-        [0.4, 0.3, -0.1, 0.2, 0.1, 0.5, -0.3, 0.2], // requested
+        [0.4, 0.3, -0.1, 0.2, 0.1, 0.5, -0.3, 0.2],  // requested
     ];
     let mut w = Vec::with_capacity(NET_WEIGHTS);
     for i in 0..NET_INPUTS {
@@ -417,7 +495,10 @@ mod tests {
         assert!((0.0..=1.0).contains(&p));
         let (p2, audit) = net.audit("contract", "test player", &inputs);
         assert_eq!(p, p2);
-        assert_eq!(audit.inputs.len(), contributions_len(audit.contributions.len()));
+        assert_eq!(
+            audit.inputs.len(),
+            contributions_len(audit.contributions.len())
+        );
     }
 
     #[test]
@@ -426,7 +507,10 @@ mod tests {
         let inputs = vec![0.2, 1.0, 0.1, 0.4, 0.5, 0.8, 0.9, 0.2, 0.7, 0.3, 0.5, 0.1];
         let (_, audit) = net.audit("scouting", "test prospect", &inputs);
         assert_eq!(audit.inputs.len(), SCOUT_INPUTS.len());
-        assert!(audit.inputs.iter().all(|(name, _)| SCOUT_INPUTS.contains(&name.as_str())));
+        assert!(audit
+            .inputs
+            .iter()
+            .all(|(name, _)| SCOUT_INPUTS.contains(&name.as_str())));
         assert_eq!(audit.contributions.len(), SCOUT_INPUTS.len());
     }
 
@@ -435,14 +519,21 @@ mod tests {
         let p = crate::tune::Params::default();
         let specs = export_ml_models(&p);
         assert_eq!(specs.len(), 5);
-        assert!(specs.iter().any(|s| s.model == "player" && s.features.len() == PLAYER_INPUTS.len()));
-        assert!(specs.iter().any(|s| s.model == "finance" && s.weights.len() == FINANCE_WEIGHTS));
+        assert!(specs
+            .iter()
+            .any(|s| s.model == "player" && s.features.len() == PLAYER_INPUTS.len()));
+        assert!(specs
+            .iter()
+            .any(|s| s.model == "finance" && s.weights.len() == FINANCE_WEIGHTS));
     }
 
     #[test]
     fn batch_outputs_match_single_outputs_and_export_serializes() {
         let net = player_net(&default_player_weights());
-        let examples = vec![vec![0.0; PLAYER_INPUTS.len()], vec![1.0; PLAYER_INPUTS.len()]];
+        let examples = vec![
+            vec![0.0; PLAYER_INPUTS.len()],
+            vec![1.0; PLAYER_INPUTS.len()],
+        ];
         let batch = net.forward_batch(&examples);
         assert_eq!(batch.len(), 2);
         assert_eq!(batch[0], net.forward(&examples[0]));
@@ -459,5 +550,7 @@ mod tests {
         assert!((0.0..=1.0).contains(&sd));
     }
 
-    fn contributions_len(n: usize) -> usize { n }
+    fn contributions_len(n: usize) -> usize {
+        n
+    }
 }

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crouton Alpha — Football Observatory</title>
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/config.js"></script>
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="mark">CA</div>
+      <div>
+        <div class="brand-title">Crouton Alpha</div>
+        <div class="brand-sub">Football Observatory</div>
+      </div>
+    </div>
+    <nav>
+      <button data-page="overview" class="active">Overview</button>
+      <button data-page="leagues">Leagues</button>
+      <button data-page="fixtures">Fixtures</button>
+      <button data-page="matches">Match centre</button>
+      <button data-page="players">Player laboratory</button>
+      <button data-page="calendar">Season calendar</button>
+    </nav>
+    <div class="sidebar-card">
+      <span class="kpi-label">World state</span>
+      <strong id="world-week">—</strong>
+      <span id="world-meta">Connecting…</span>
+      <div class="actions">
+        <button id="simulate-week">Simulate week</button>
+        <button id="simulate-five" class="secondary">Simulate 5 weeks</button>
+        <button id="reset-world" class="ghost">New world</button>
+      </div>
+    </div>
+    <div class="sidebar-card">
+      <span class="kpi-label">API endpoint</span>
+      <input id="api-base" spellcheck="false" placeholder="http://127.0.0.1:8080" />
+      <button id="save-api" class="secondary" style="width:100%">Use this endpoint</button>
+      <span id="api-status">Not connected</span>
+    </div>
+    <div class="sidebar-card small">
+      A live season world with weekly fixture progression, per-player match detail, league tables, and a 23k-player database.
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <div>
+        <div class="eyebrow">Crouton Alpha · live observatory</div>
+        <h1 id="view-title">Overview</h1>
+        <p id="view-subtitle">The whole simulated world, from title races to one-off bit-part players.</p>
+      </div>
+      <div class="header-actions">
+        <input id="global-search" placeholder="Search player, club, league…" />
+        <button id="refresh">Refresh data</button>
+      </div>
+    </header>
+    <section id="app" aria-live="polite"></section>
+  </main>
+
+  <div id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

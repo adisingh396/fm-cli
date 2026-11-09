@@ -24,7 +24,13 @@ use crate::net;
 use crate::players::PlayerMind;
 use crate::tune::{Params, SeasonSample};
 
-const BIG5: [&str; 5] = ["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1"];
+const BIG5: [&str; 5] = [
+    "Premier League",
+    "La Liga",
+    "Serie A",
+    "Bundesliga",
+    "Ligue 1",
+];
 const BASE_YEAR: u16 = 2026;
 /// Squad-quality gap expander: raises the ratio between elite and weak sides
 /// without pushing lambdas into blow-out territory (tuned against output).
@@ -35,12 +41,59 @@ const STRENGTH_EXP: f32 = 1.7;
 /// Nations treated as European for the Euros (best-effort by label; anything
 /// not listed simply won't appear in the Euros, only the World Cup).
 const EUROPE: &[&str] = &[
-    "England", "France", "Spain", "Germany", "Italy", "Portugal", "Netherlands", "Holland",
-    "Belgium", "Croatia", "Denmark", "Switzerland", "Austria", "Poland", "Serbia", "Scotland",
-    "Ukraine", "Sweden", "Norway", "Wales", "Czech Republic", "Czechia", "Turkey", "Türkiye",
-    "Republic of Ireland", "Ireland", "Hungary", "Greece", "Romania", "Slovakia", "Slovenia",
-    "Russia", "Finland", "Iceland", "Northern Ireland", "Bosnia and Herzegovina", "Albania",
-    "North Macedonia", "Bulgaria", "Montenegro", "Georgia", "Kosovo", "Luxembourg",
+    "England",
+    "France",
+    "Spain",
+    "Germany",
+    "Italy",
+    "Portugal",
+    "Netherlands",
+    "Holland",
+    "Belgium",
+    "Croatia",
+    "Denmark",
+    "Switzerland",
+    "Austria",
+    "Poland",
+    "Serbia",
+    "Scotland",
+    "Ukraine",
+    "Sweden",
+    "Norway",
+    "Wales",
+    "Czech Republic",
+    "Czechia",
+    "Turkey",
+    "Türkiye",
+    "Republic of Ireland",
+    "Ireland",
+    "Hungary",
+    "Greece",
+    "Romania",
+    "Slovakia",
+    "Slovenia",
+    "Russia",
+    "Finland",
+    "Iceland",
+    "Northern Ireland",
+    "Bosnia and Herzegovina",
+    "Albania",
+    "North Macedonia",
+    "Bulgaria",
+    "Montenegro",
+    "Georgia",
+    "Kosovo",
+    "Luxembourg",
+    "Armenia",
+    "Azerbaijan",
+    "Belarus",
+    "Estonia",
+    "Faroe Islands",
+    "Kazakhstan",
+    "Latvia",
+    "Lithuania",
+    "Malta",
+    "Moldova",
 ];
 
 /// Squad-registration rules: at most 25 registered players per season, at
@@ -55,11 +108,7 @@ const MIN_HOMEGROWN: usize = 2;
 /// the homegrown floor (weakest registered non-homegrown out for the best
 /// unregistered homegrown, until the floor or the supply runs out).
 fn register_squad(idxs: &[usize], pool: &[WP]) -> Vec<usize> {
-    let mut cands: Vec<usize> = idxs
-        .iter()
-        .copied()
-        .filter(|&i| !pool[i].retired)
-        .collect();
+    let mut cands: Vec<usize> = idxs.iter().copied().filter(|&i| !pool[i].retired).collect();
     cands.sort_by(|&a, &b| {
         pool[b]
             .effective()
@@ -71,9 +120,9 @@ fn register_squad(idxs: &[usize], pool: &[WP]) -> Vec<usize> {
         .iter()
         .filter(|&&i| !pool[i].retired && pool[i].homegrown)
         .count();
-    let mut need = MIN_HOMEGROWN.min(hg_avail).saturating_sub(
-        reg.iter().filter(|&&i| pool[i].homegrown).count(),
-    );
+    let mut need = MIN_HOMEGROWN
+        .min(hg_avail)
+        .saturating_sub(reg.iter().filter(|&&i| pool[i].homegrown).count());
     while need > 0 {
         // Weakest registered non-homegrown...
         let out_pos = reg
@@ -193,7 +242,7 @@ struct WP {
     value: i64,
     release_clause: Option<i64>,
     wage: i64,
-    locked: u8, // years committed to current club before another move
+    locked: u8, // years remaining on the current contract; not an immovable lock if a bigger-club offer and player intent align
     /// Lifetime earnings actually banked from salary, signing bonuses and
     /// performance bonuses -- the player's financial story, not his market
     /// fee (fees belong to clubs; agents were historically the only men
@@ -217,6 +266,13 @@ struct WP {
     career_rating_sum: f32,
     career_rating_apps: u32,
     ballons: u8,
+    /// Peak window: seasons remaining in a genuine prime stretch (the
+    /// "Salah in 17/18" effect), where key weapon attributes tick up
+    /// together. Entered by elites 24-31, occasionally an "Indian summer"
+    /// past 33 for disciplined gym-rats (the Messi-39 case).
+    peak: u8,
+    /// Intensity of the current peak (attribute points nudged per season).
+    peak_str: u8,
 }
 
 impl WP {
@@ -517,6 +573,51 @@ struct Nation {
     edge: f32,
 }
 
+/// World Cup tournament accumulator for one player (isolated from
+/// friendlies/other internationals so a World Cup run is auditable — e.g.
+/// a 39-year-old's Indian-summer run can be read match by match).
+#[derive(Default, Clone, Copy)]
+struct WcAgg {
+    apps: u32,
+    goals: u32,
+    assists: u32,
+    shots: u32,
+    sot: u32,
+    xg: f32,
+    kp: u32,
+    bcc: u32,
+    passes_att: u32,
+    passes_cmp: u32,
+    dribbles_att: u32,
+    dribbles_cmp: u32,
+    tackles: u32,
+    interceptions: u32,
+    fouls: u32,
+    rating_sum: f32,
+}
+
+fn absorb_wc_stats(stats: &[matchsim::MatchStats], agg: &mut HashMap<usize, WcAgg>) {
+    for s in stats {
+        let e = agg.entry(s.id).or_default();
+        e.apps += 1;
+        e.goals += s.goals as u32;
+        e.assists += s.assists as u32;
+        e.shots += s.shots as u32;
+        e.sot += s.shots_on_target as u32;
+        e.xg += s.xg;
+        e.kp += s.key_passes as u32;
+        e.bcc += s.big_chances_created as u32;
+        e.passes_att += s.passes_att as u32;
+        e.passes_cmp += s.passes_cmp as u32;
+        e.dribbles_att += s.dribbles_att as u32;
+        e.dribbles_cmp += s.dribbles_cmp as u32;
+        e.tackles += s.tackles as u32;
+        e.interceptions += s.interceptions as u32;
+        e.fouls += s.fouls as u32;
+        e.rating_sum += s.rating;
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Comp {
     League,
@@ -532,6 +633,12 @@ enum IntlKind {
     Euros,
     /// AFC Asian Cup — a full continental championship for the AFC world.
     AsianCup,
+    /// Copa América — CONMEBOL's continental championship.
+    CopaAmerica,
+    /// Africa Cup of Nations — CAF's continental championship.
+    Afcon,
+    /// CONCACAF Gold Cup — North/Central America + the Caribbean.
+    GoldCup,
 }
 
 /// A simulated domestic league's display label and confederation, parallel to
@@ -770,7 +877,11 @@ fn revenue(rep: u8) -> f32 {
         let (r_hi, v_hi) = w[0];
         let (r_lo, v_lo) = w[1];
         if r >= r_lo {
-            let t = if r_hi > r_lo { (r - r_lo) / (r_hi - r_lo) } else { 0.0 };
+            let t = if r_hi > r_lo {
+                (r - r_lo) / (r_hi - r_lo)
+            } else {
+                0.0
+            };
             return v_lo + t * (v_hi - v_lo);
         }
     }
@@ -836,6 +947,42 @@ fn weakest_slot(idxs: &[usize], pool: &[WP]) -> (Position, f32) {
         }
     }
     worst.map(|(r, p)| (p, r)).unwrap_or((Position::FWD, 0.0))
+}
+
+/// Rating of the weakest current starter at a specific position. This lets a
+/// club judge an exceptional market opportunity against the player he would
+/// actually replace, rather than against an unrelated weakest XI position.
+fn weakest_slot_at_position(idxs: &[usize], pool: &[WP], pos: Position) -> f32 {
+    best_xi_indices(idxs, pool)
+        .into_iter()
+        .filter(|&i| pool[i].pos == pos)
+        .map(|i| pool[i].attrs.overall(pos) as f32)
+        .reduce(f32::min)
+        .unwrap_or(0.0)
+}
+
+/// A public clause at or below the player's current market value is a genuine
+/// market opportunity. Clubs may pursue it even when that position is not the
+/// single weakest slot in their XI; ordinary transfers remain need-led.
+fn is_clause_opportunity(p: &WP) -> bool {
+    p.release_clause
+        .is_some_and(|clause| clause > 0 && clause <= p.value.max(1))
+}
+
+fn acquisition_incumbent(
+    buyer_players: &[usize],
+    pool: &[WP],
+    candidate: &WP,
+    need_pos: Position,
+    need_incumbent: f32,
+) -> Option<f32> {
+    if candidate.pos == need_pos {
+        Some(need_incumbent)
+    } else if is_clause_opportunity(candidate) {
+        Some(weakest_slot_at_position(buyer_players, pool, candidate.pos))
+    } else {
+        None
+    }
 }
 
 fn in_best_xi(pi: usize, idxs: &[usize], pool: &[WP]) -> bool {
@@ -986,8 +1133,13 @@ fn select_xi(
     xi
 }
 
-
-fn match_strength(idxs: &[usize], pool: &[WP], rep: u8, shape: (usize, usize, usize), p: &Params) -> f32 {
+fn match_strength(
+    idxs: &[usize],
+    pool: &[WP],
+    rep: u8,
+    shape: (usize, usize, usize),
+    p: &Params,
+) -> f32 {
     // Club power = the XI's actual FC overall (the database metric of record),
     // as its players were selected in select_xi. Form and morale previously
     // weighted selection through `effective()`; actual overall is the primary
@@ -998,17 +1150,15 @@ fn match_strength(idxs: &[usize], pool: &[WP], rep: u8, shape: (usize, usize, us
         if xi.is_empty() {
             10.0
         } else {
-            let sum: f32 = xi
-                .iter()
-                .map(|&(i, _, _)| pool[i].ovr as f32)
-                .sum();
+            let sum: f32 = xi.iter().map(|&(i, _, _)| pool[i].ovr as f32).sum();
             sum / xi.len() as f32
         }
     };
     // Squad-led blend: the actual XI matters most, reputation refines.
     // Then a zero-point shift so a few points of squad gap become real
     // separation (elite ~10+, mid ~6-8, weak ~3) instead of noise.
-    let blended = base * p.blend_squad + (p.rep_base + rep as f32 * p.rep_slope) * (1.0 - p.blend_squad);
+    let blended =
+        base * p.blend_squad + (p.rep_base + rep as f32 * p.rep_slope) * (1.0 - p.blend_squad);
     (blended - p.zero_shift).max(2.0).powf(p.strength_exp)
 }
 
@@ -1109,7 +1259,9 @@ fn matchday_squad(
                     .filter(|&b| line_of(pool[b].pos) == line && !squad_has(&squad, b))
                     .collect();
                 cands.sort_by(|&a, &b| {
-                    score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal)
+                    score(b)
+                        .partial_cmp(&score(a))
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 if let Some(&alt) = cands.first() {
                     let (arole, _) = best_role_for(&pool[alt].attrs, pool[alt].pos, line);
@@ -1124,7 +1276,9 @@ fn matchday_squad(
         squad.push((s, srole));
     }
     bench.sort_by(|&a, &b| {
-        score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal)
+        score(b)
+            .partial_cmp(&score(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     for &b in &bench {
         if squad.len() >= 15 {
@@ -1155,7 +1309,7 @@ fn build_lineup(md: &[(usize, Role)], pool: &[WP]) -> Vec<MatchPlayer> {
             // campaigns essentially untouched.
             let sg = pool[i].overall_goals();
             let marked = if sg > 22 {
-                (1.0 - 0.015 * (sg - 22) as f32).max(0.78)
+                (1.0 - 0.005 * (sg - 22) as f32).max(0.90)
             } else {
                 1.0
             };
@@ -1182,6 +1336,11 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
     let base_fatigue = p.fatigue_match.round() as u8;
     for s in &o.stats {
         let i = s.id;
+        // Guest-friendly opponents use synthetic ids outside the pool
+        // (irrelevant regens with no career to credit): skip them silently.
+        if i >= pool.len() {
+            continue;
+        }
         match comp {
             Comp::League => {
                 pool[i].goals += s.goals as u16;
@@ -1237,7 +1396,11 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
             std::cmp::Ordering::Equal => 0,
         };
         pool[i].morale = (pool[i].morale as i16 + dmorale).clamp(30, 90) as u8;
-        let mut fat = base_fatigue;
+        // Durability is a real skill: high-stamina professionals accumulate
+        // less match fatigue, so a healthy elite stays available instead of
+        // being ground down by the same flat cost as a fragile journeyman.
+        let stamina_factor = 1.12 - (pool[i].attrs.stamina as f32 / 100.0) * 0.30;
+        let mut fat = (base_fatigue as f32 * stamina_factor).round() as u8;
         if s.injury_days > 0 {
             fat = fat.saturating_add(30);
         }
@@ -1249,7 +1412,12 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
 /// and `agg` carries any first-leg aggregate so second legs are played to the
 /// tie. Both squads are rotated by their managers first, then 22 individuals
 /// interact; the per-player output is folded straight back into the season.
-fn play(
+///
+/// The detailed entry point returns the full `MatchOutcome` so the API can
+/// expose per-player stat lines and minute-by-minute events without running
+/// a second match. `play` remains the compatibility wrapper used everywhere
+/// else in the season engine.
+fn play_detailed(
     home: usize,
     away: usize,
     comp: Comp,
@@ -1259,15 +1427,29 @@ fn play(
     pool: &mut [WP],
     p: &Params,
     rng: &mut Pcg64Mcg,
-) -> (u32, u32) {
+) -> Option<matchsim::MatchOutcome> {
     // Only registered players may play league/European football — the
     // registration list is the team sheet's legal boundary.
     let hsel = selectable(teams, home);
     let asel = selectable(teams, away);
-    let hmd = matchday_squad(&hsel, pool, teams[home].shape, &teams[home].manager.clone(), comp, rng);
-    let amd = matchday_squad(&asel, pool, teams[away].shape, &teams[away].manager.clone(), comp, rng);
+    let hmd = matchday_squad(
+        &hsel,
+        pool,
+        teams[home].shape,
+        &teams[home].manager.clone(),
+        comp,
+        rng,
+    );
+    let amd = matchday_squad(
+        &asel,
+        pool,
+        teams[away].shape,
+        &teams[away].manager.clone(),
+        comp,
+        rng,
+    );
     if hmd.is_empty() || amd.is_empty() {
-        return (0, 0);
+        return None;
     }
     let hxi = build_lineup(&hmd, pool);
     let axi = build_lineup(&amd, pool);
@@ -1315,7 +1497,23 @@ fn play(
     side_a.threat = ta;
     let o = matchsim::simulate(&side_h, &side_a, venue, agg, rng);
     apply_match(&o, comp, pool, p);
-    (o.goals_a as u32, o.goals_b as u32)
+    Some(o)
+}
+
+fn play(
+    home: usize,
+    away: usize,
+    comp: Comp,
+    venue: Venue,
+    agg: (u8, u8),
+    teams: &mut [Team],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> (u32, u32) {
+    play_detailed(home, away, comp, venue, agg, teams, pool, p, rng)
+        .map(|o| (o.goals_a as u32, o.goals_b as u32))
+        .unwrap_or((0, 0))
 }
 
 /// Record one league result into both clubs' rows.
@@ -1361,7 +1559,14 @@ fn weekly_recovery(
             if pool[i].retired {
                 continue;
             }
-            pool[i].fatigue = pool[i].fatigue.saturating_sub(p.fatigue_rest.round() as u8);
+            // Recovery is individualized: stamina and professionalism decide
+            // how much of the week's rest actually lands. A durable pro
+            // clears fatigue faster; a fragile, unprofessional player does not.
+            let recover = (p.fatigue_rest
+                * (0.70 + pool[i].attrs.stamina as f32 / 100.0 * 0.60)
+                * (0.85 + minds[i].professionalism * 0.30))
+                .round() as u8;
+            pool[i].fatigue = pool[i].fatigue.saturating_sub(recover);
             let target = minds[i].morale_target();
             if pool[i].morale < target {
                 pool[i].morale += 1;
@@ -1397,7 +1602,17 @@ fn run_league(
             for i in 0..even_n / 2 {
                 let (a, b) = (order[i], order[even_n - 1 - i]);
                 let (home, away) = if leg == 0 { (a, b) } else { (b, a) };
-                let (hg, ag) = play(home, away, Comp::League, Venue::HomeA, (0, 0), teams, pool, p, rng);
+                let (hg, ag) = play(
+                    home,
+                    away,
+                    Comp::League,
+                    Venue::HomeA,
+                    (0, 0),
+                    teams,
+                    pool,
+                    p,
+                    rng,
+                );
                 record_result(teams, home, away, hg, ag);
             }
             // Rotate all but the first entry (standard circle method).
@@ -1441,7 +1656,17 @@ fn knockout_tie(
     // aggregate so both managers play the tie: a side trailing on aggregate
     // pushes, the side ahead manages the game out.
     let (g1a, g1b) = play(a, b, comp, Venue::HomeA, (0, 0), teams, pool, p, rng);
-    let (g2b, g2a) = play(b, a, comp, Venue::HomeA, (g1b as u8, g1a as u8), teams, pool, p, rng);
+    let (g2b, g2a) = play(
+        b,
+        a,
+        comp,
+        Venue::HomeA,
+        (g1b as u8, g1a as u8),
+        teams,
+        pool,
+        p,
+        rng,
+    );
     let (ta, tb) = (g1a + g2a, g1b + g2b);
     if ta > tb {
         a
@@ -1484,7 +1709,12 @@ fn cup_tie(a: usize, b: usize, teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -
 /// Single-elimination domestic cup among a league's clubs. Byes handle odd
 /// fields. Returns (winner, losing finalist) so the season can also stage a
 /// super cup (the Final Four in Spain and Italy pulls in the cup runner-up).
-fn run_domestic_cup(ids: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -> Option<(usize, usize)> {
+fn run_domestic_cup(
+    ids: &[usize],
+    teams: &[Team],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> Option<(usize, usize)> {
     if ids.is_empty() {
         return None;
     }
@@ -1523,7 +1753,12 @@ fn run_domestic_cup(ids: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mc
 /// final for two teams, or a Final Four (semis seeded 1v4 / 2v3, then the
 /// final) for four. Ties run on team strength via `cup_tie`. Returns the
 /// winner, or None for an empty field.
-fn super_cup_winner(field: &[usize], teams: &[Team], p: &Params, rng: &mut Pcg64Mcg) -> Option<usize> {
+fn super_cup_winner(
+    field: &[usize],
+    teams: &[Team],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> Option<usize> {
     match field.len() {
         0 => None,
         1 => Some(field[0]),
@@ -1610,25 +1845,397 @@ fn federation_capacity(nation: &str) -> f32 {
 
 fn federation_academy_cap(nation: &str) -> u8 {
     let capacity = federation_capacity(nation);
-    if capacity >= 0.95 { 5 }
-    else if capacity >= 0.70 { 4 }
-    else if capacity >= 0.45 { 4 }
-    else if capacity >= 0.25 { 3 }
-    else { 2 }
+    if capacity >= 0.95 {
+        5
+    } else if capacity >= 0.70 {
+        4
+    } else if capacity >= 0.45 {
+        4
+    } else if capacity >= 0.25 {
+        3
+    } else {
+        2
+    }
 }
 
 fn federation_player_cap(nation: &str, elite_cap: u8) -> u8 {
     let capacity = federation_capacity(nation);
-    if capacity >= 0.95 { elite_cap }
-    else if capacity >= 0.85 { elite_cap.saturating_sub(2) }
-    else if capacity >= 0.70 { elite_cap.min(84) }
-    else if capacity >= 0.45 { elite_cap.min(80) }
-    else if capacity >= 0.25 { elite_cap.min(77) }
-    else { elite_cap.min(74) }
+    if capacity >= 0.95 {
+        elite_cap
+    } else if capacity >= 0.85 {
+        elite_cap.saturating_sub(2)
+    } else if capacity >= 0.70 {
+        elite_cap.min(84)
+    } else if capacity >= 0.45 {
+        elite_cap.min(80)
+    } else if capacity >= 0.25 {
+        elite_cap.min(77)
+    } else {
+        elite_cap.min(74)
+    }
 }
 
 fn valid_nationality(nation: &str) -> bool {
-    crate::world_model::nations().iter().any(|n| n.name == nation)
+    crate::world_model::nations()
+        .iter()
+        .any(|n| n.name == nation)
+}
+
+/// Aditya Singh is a real player in the main 2026 database (Kerala
+/// Blasters, ISL). With `FM_ADITY_PRODIGY=1` this opt-in hook retunes that
+/// real player to the focal-prodigy experiment spec (maxed 99 forward,
+/// 5m clause) and enables the focal save; without it, he simply lives a
+/// normal database career.
+fn inject_aditya_prodigy(
+    pool: &mut Vec<WP>,
+    teams: &mut [Team],
+    league_meta: &[LeagueMeta],
+    params: &Params,
+) -> Option<usize> {
+    if std::env::var("FM_ADITY_PRODIGY").ok().as_deref() != Some("1") {
+        return None;
+    }
+    if let Some(idx) = pool.iter().position(|p| p.name == "Aditya Singh") {
+        // Retune the real database player to the focal spec in place.
+        let value = market_value(99, 15, Position::FWD);
+        let p = &mut pool[idx];
+        // Winger shape: maxed pace/creation, slightly less finishing,
+        // heading and physical presence — still rounds to a 99 FWD overall.
+        p.attrs = Attributes {
+            pace: 99,
+            shooting: 98,
+            passing: 98,
+            dribbling: 99,
+            tackling: 35,
+            heading: 98,
+            strength: 78,
+            stamina: 95,
+            vision: 99,
+            composure: 99,
+            goalkeeping: 8,
+            first_touch: 99,
+        };
+        p.ovr = 99;
+        p.pot = 99;
+        p.age = 15;
+        p.morale = 82;
+        p.value = value;
+        p.release_clause = Some(5);
+        p.wage = (value / 3).max(1);
+        p.locked = 5;
+        p.contract_option = true;
+        p.homegrown = true;
+        return Some(idx);
+    }
+    let isl = league_meta
+        .iter()
+        .position(|m| m.label == "Indian Super League")?;
+    let team = teams
+        .iter()
+        .position(|t| t.league_idx == isl && t.name.contains("Kerala"))
+        .or_else(|| teams.iter().position(|t| t.league_idx == isl))?;
+    // 99 FWD overall exactly: winger-shaped profile (maxed pace/creation,
+    // slightly less finishing/heading/physicality) that still rounds to 99.
+    let attrs = Attributes {
+        pace: 99,
+        shooting: 98,
+        passing: 98,
+        dribbling: 99,
+        tackling: 35,
+        heading: 98,
+        strength: 78,
+        stamina: 95,
+        vision: 99,
+        composure: 99,
+        goalkeeping: 8,
+        first_touch: 99,
+    };
+    debug_assert_eq!(attrs.overall(Position::FWD), 99);
+    let value = market_value(99, 15, Position::FWD);
+    let idx = pool.len();
+    pool.push(WP {
+        name: "Aditya Singh".to_string(),
+        nation: "India".to_string(),
+        pos: Position::FWD,
+        attrs,
+        ovr: 99,
+        pot: 99,
+        age: 15,
+        team,
+        retired: false,
+        intl_retired: false,
+        intl_retire_age: 0,
+        club_retire_age: 0,
+        morale: 82,
+        fatigue: 0,
+        adapt: 0,
+        on_loan: false,
+        homegrown: true,
+        apps: 0,
+        goals: 0,
+        assists: 0,
+        rating_sum: 0.0,
+        rating_apps: 0,
+        ucl_goals: 0,
+        el_goals: 0,
+        intl_goals: 0,
+        ucl_assists: 0,
+        el_assists: 0,
+        intl_assists: 0,
+        ucl_apps: 0,
+        el_apps: 0,
+        intl_apps: 0,
+        shots: 0,
+        sot: 0,
+        key_passes: 0,
+        big_chances: 0,
+        passes_att: 0,
+        passes_cmp: 0,
+        dribbles_att: 0,
+        dribbles_cmp: 0,
+        tackles: 0,
+        interceptions: 0,
+        fouls: 0,
+        saves: 0,
+        clean_sheets: 0,
+        league_won: false,
+        ucl_result: 0,
+        el_result: 0,
+        intl_result: 0,
+        value,
+        release_clause: Some(5),
+        wage: (value / 3).max(1),
+        locked: 5,
+        career_earnings: 0,
+        signing_bonus: 0,
+        bonus_paid: 0,
+        contract_option: true,
+        path: Vec::new(),
+        career_goals: 0,
+        career_assists: 0,
+        career_kp: 0,
+        career_bcc: 0,
+        career_ti: 0,
+        career_cs: 0,
+        career_apps: 0,
+        career_rating_sum: 0.0,
+        career_rating_apps: 0,
+        ballons: 0,
+        peak: 0,
+        peak_str: 1,
+    });
+    teams[team].players.push(idx);
+    let shape = pick_shape(&teams[team].players, pool);
+    teams[team].shape = shape;
+    teams[team].strength =
+        match_strength(&teams[team].players, pool, teams[team].rep, shape, params);
+    Some(idx)
+}
+
+fn players_csv_cell(value: &str) -> String {
+    let escaped = value.replace('"', "\"\"");
+    if escaped.contains(',') || escaped.contains('"') || escaped.contains('\n') {
+        format!("\"{}\"", escaped)
+    } else {
+        escaped
+    }
+}
+
+fn player_csv_id_for_generation(index: usize) -> u32 {
+    9_900_001u32 + index.saturating_sub(1) as u32
+}
+
+/// Append the initial world-build regen roster to `data/players.csv`, once.
+///
+/// These are genuine national-team-eligible players with club, league,
+/// attributes and youth headroom, not anonymous friendlies-only filler:
+/// their `nation` mirrors the club they were initially generated for, so
+/// they can later be called up by that country. The `simregen` marker makes
+/// the append idempotent; the exporter deliberately uses the **initial**
+/// roster (before season play), while all later youth and career changes
+/// continue to live in the world pool / `careers.json`.
+fn append_initial_regen_players_csv(
+    path: &str,
+    pool: &[WP],
+    teams: &[Team],
+    league_meta: &[LeagueMeta],
+    regen_start: usize,
+) -> usize {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    if content.contains(",simregen,") {
+        return 0;
+    }
+
+    let mut lines = content.lines();
+    let Some(header_line) = lines.next() else {
+        return 0;
+    };
+    let headers = crate::data::parse_csv_line(header_line);
+    let header_index = |name: &str| headers.iter().position(|h| h.eq_ignore_ascii_case(name));
+    let Some(i_common) = header_index("common_name") else {
+        return 0;
+    };
+    let Some(i_first) = header_index("first_name") else {
+        return 0;
+    };
+    let Some(i_last) = header_index("last_name") else {
+        return 0;
+    };
+    let Some(i_edition) = header_index("edition") else {
+        return 0;
+    };
+
+    let mut existing_names = std::collections::HashSet::new();
+    let mut existing_ids = std::collections::HashSet::new();
+    for line in lines {
+        let fields = crate::data::parse_csv_line(line);
+        if fields.len() < headers.len() / 2 {
+            continue;
+        }
+        if let Some(id_text) = fields.first() {
+            if let Ok(id) = id_text.trim().parse::<u32>() {
+                existing_ids.insert(id);
+            }
+        }
+        if fields.get(i_edition).map(|v| v.trim()) == Some("simregen") {
+            return 0;
+        }
+        let common = fields.get(i_common).map(|v| v.trim()).unwrap_or("");
+        let display = if common.trim().len() >= 2 {
+            crate::data::clean_name(common)
+        } else {
+            crate::data::clean_name(
+                format!(
+                    "{} {}",
+                    fields.get(i_first).map(|v| v.trim()).unwrap_or(""),
+                    fields.get(i_last).map(|v| v.trim()).unwrap_or("")
+                )
+                .trim(),
+            )
+        };
+        if display.trim().len() >= 2 {
+            existing_names.insert(display.to_lowercase());
+        }
+    }
+
+    let start = regen_start.min(pool.len());
+    let mut out = String::new();
+    let mut next = 1usize;
+    let mut exported = 0usize;
+    for p in &pool[start..] {
+        let Some(team) = teams.get(p.team) else {
+            continue;
+        };
+        let normalized_name = crate::data::clean_name(&p.name);
+        if normalized_name.trim().len() < 2
+            || existing_names.contains(&normalized_name.to_lowercase())
+        {
+            continue;
+        }
+        let id = player_csv_id_for_generation(next);
+        next += 1;
+        if existing_ids.contains(&id) {
+            continue;
+        }
+        existing_names.insert(normalized_name.to_lowercase());
+        existing_ids.insert(id);
+        let (first_name, last_name) = match normalized_name.split_once(' ') {
+            Some((f, l)) => (f.to_string(), l.to_string()),
+            None => (normalized_name.clone(), String::new()),
+        };
+        let position = match p.pos {
+            Position::GK => "GK",
+            Position::DEF => "LB",
+            Position::MID => "CM",
+            Position::FWD => "LW",
+        };
+        let birth_year = (2026i32 - p.age as i32).clamp(1950, 2026);
+        let league = league_meta
+            .get(team.league_idx)
+            .map(|m| m.label.as_str())
+            .unwrap_or("Regen Division");
+        let row = [
+            id.to_string(),
+            players_csv_cell(&normalized_name),
+            players_csv_cell(&first_name),
+            players_csv_cell(&last_name),
+            p.ovr.to_string(),
+            position.to_string(),
+            String::new(),
+            players_csv_cell(&team.name),
+            players_csv_cell(league),
+            players_csv_cell(&p.nation),
+            "Men's Football".to_string(),
+            "Right".to_string(),
+            "3".to_string(),
+            "3".to_string(),
+            "178".to_string(),
+            "75".to_string(),
+            format!("{:04}-01-01", birth_year),
+            String::new(),
+            p.attrs.pace.to_string(),
+            p.attrs.shooting.to_string(),
+            p.attrs.passing.to_string(),
+            p.attrs.dribbling.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.strength.to_string(),
+            p.attrs.passing.to_string(),
+            p.attrs.shooting.to_string(),
+            p.attrs.heading.to_string(),
+            p.attrs.passing.to_string(),
+            p.attrs.shooting.to_string(),
+            p.attrs.dribbling.to_string(),
+            p.attrs.vision.to_string(),
+            p.attrs.shooting.to_string(),
+            p.attrs.passing.to_string(),
+            p.attrs.first_touch.to_string(),
+            p.attrs.pace.to_string(),
+            p.attrs.pace.to_string(),
+            p.attrs.dribbling.to_string(),
+            p.attrs.composure.to_string(),
+            p.attrs.first_touch.to_string(),
+            p.attrs.shooting.to_string(),
+            p.attrs.heading.to_string(),
+            p.attrs.stamina.to_string(),
+            p.attrs.strength.to_string(),
+            p.attrs.shooting.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.vision.to_string(),
+            p.attrs.composure.to_string(),
+            p.attrs.composure.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.tackling.to_string(),
+            p.attrs.goalkeeping.to_string(),
+            p.attrs.goalkeeping.to_string(),
+            p.attrs.goalkeeping.to_string(),
+            p.attrs.goalkeeping.to_string(),
+            p.attrs.goalkeeping.to_string(),
+            "simregen".to_string(),
+            "2026-09-12".to_string(),
+        ]
+        .join(",");
+        out.push_str(&row);
+        out.push('\n');
+        exported += 1;
+    }
+    if exported == 0 {
+        return 0;
+    }
+    use std::io::Write;
+    match std::fs::OpenOptions::new().append(true).open(path) {
+        Ok(mut file) => {
+            if file.write_all(out.as_bytes()).is_err() {
+                return 0;
+            }
+            exported
+        }
+        Err(_) => 0,
+    }
 }
 
 fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
@@ -1699,8 +2306,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         if !shared.iter().any(|t| t.len() >= 4) {
             return false;
         }
-        let subset =
-            a_t.iter().all(|t| b_t.contains(t)) || b_t.iter().all(|t| a_t.contains(t));
+        let subset = a_t.iter().all(|t| b_t.contains(t)) || b_t.iter().all(|t| a_t.contains(t));
         shared.len() >= 2 || subset
     };
     // Chosen clubs per league (top 20 by reputation), collected up front so the
@@ -1729,9 +2335,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                 return false;
             }
             match crate::world_model::lookup(&c.league) {
-                Some(l) => {
-                    l.confed == crate::world_model::Confederation::UEFA && l.tier == 1
-                }
+                Some(l) => l.confed == crate::world_model::Confederation::UEFA && l.tier == 1,
                 None => false,
             }
         })
@@ -1767,8 +2371,1021 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
     let extra_count = extra_groups.len();
+    let regen_start = pool.len();
 
-    let mut league_teams: Vec<Vec<usize>> = vec![Vec::new(); BIG5.len() + 1 + extra_count];
+    // Regen leagues: first-tier competitions the dump does not carry
+    // playable clubs/players for (one Qatari, six Iranian/Uzbek men in
+    // 19,790 rows). Clubs are real names, squads procedural regens — so
+    // Iran, Qatar, Uzbekistan, Jordan, Indonesia and Iraq field genuine
+    // 15+ national pools and Asian qualification is contested on merit,
+    // and India/China must beat them to earn a World Cup slot.
+    // (label, nation, tier, clubs, rep range)
+    // TIER calibration (post-hoc): Gen::player samples key attributes
+    // uniformly up to (tier+13)*3 and national XIs pick the top 11 of
+    // ~100-150 regens, so the tier must be far lower than the intended
+    // XI strength. Tier 16 ≈ low-70s XI ceiling; 13-15 ≈ high-60s.
+    let regen_leagues: &[(&str, &str, i32, u8, u8, &[&str])] = &[
+        (
+            "J-League",
+            "Japan",
+            16,
+            62,
+            70,
+            &[
+                "Vissel Kobe",
+                "Yokohama F. Marinos",
+                "Kawasaki Frontale",
+                "Urawa Red Diamonds",
+                "Gamba Osaka",
+                "Kashiwa Reysol",
+                "FC Tokyo",
+                "Cerezo Osaka",
+            ],
+        ),
+        (
+            "Iran Pro League",
+            "Iran",
+            17,
+            56,
+            64,
+            &[
+                "Persepolis",
+                "Esteghlal",
+                "Sepahan",
+                "Tractor",
+                "Zob Ahan",
+                "Foolad",
+                "Paykan",
+                "Malavan",
+            ],
+        ),
+        (
+            "Qatar Stars League",
+            "Qatar",
+            16,
+            54,
+            62,
+            &[
+                "Al Sadd",
+                "Al Duhail",
+                "Al Gharafa",
+                "Al Rayyan",
+                "Al Arabi",
+                "Al Wakrah",
+            ],
+        ),
+        (
+            "Uzbekistan Super League",
+            "Uzbekistan",
+            17,
+            52,
+            60,
+            &[
+                "Bunyodkor",
+                "Pakhtakor",
+                "Nasaf",
+                "AGMK",
+                "Navbahor",
+                "Sogdiana",
+            ],
+        ),
+        (
+            "Jordan Pro League",
+            "Jordan",
+            16,
+            48,
+            56,
+            &[
+                "Al Wehdat",
+                "Al Faisaly",
+                "Al Hussein",
+                "Al Salt",
+                "Shabab Al Urdun",
+                "Al Ramtha",
+            ],
+        ),
+        (
+            "Indonesia Liga 1",
+            "Indonesia",
+            15,
+            48,
+            56,
+            &[
+                "Persija Jakarta",
+                "Persib Bandung",
+                "Arema FC",
+                "Bali United",
+                "Borneo FC",
+                "Persebaya",
+                "PSIS Semarang",
+                "Madura United",
+            ],
+        ),
+        (
+            "Iraq Stars League",
+            "Iraq",
+            15,
+            46,
+            54,
+            &[
+                "Al Shorta",
+                "Al Quwa Al Jawiya",
+                "Al-Zawraa",
+                "Naft Al Wasat",
+                "Al Talaba",
+                "Erbil",
+            ],
+        ),
+        // ── CONMEBOL: domestic top flights beyond the DB's cup groups ────
+        (
+            "Brazilian Serie A",
+            "Brazil",
+            18,
+            66,
+            74,
+            &[
+                "Palmeiras",
+                "Flamengo",
+                "Sao Paulo",
+                "Corinthians",
+                "Santos",
+                "Gremio",
+                "Internacional",
+                "Bahia",
+            ],
+        ),
+        (
+            "Chilean Primera Division",
+            "Chile",
+            16,
+            52,
+            60,
+            &[
+                "Colo-Colo",
+                "Universidad de Chile",
+                "Universidad Catolica",
+                "Cobresal",
+                "Union Espanola",
+                "Deportes Antofagasta",
+            ],
+        ),
+        (
+            "Uruguayan Primera Division",
+            "Uruguay",
+            18,
+            60,
+            68,
+            &[
+                "Penarol",
+                "Nacional",
+                "Defensor",
+                "Montevideo City Torque",
+                "Danubio",
+                "Liverpool Montevideo",
+            ],
+        ),
+        (
+            "Peruvian Primera Division",
+            "Peru",
+            15,
+            50,
+            58,
+            &[
+                "Universitario",
+                "Alianza Lima",
+                "Sporting Cristal",
+                "Melgar",
+                "Cienciano",
+                "Comerciantes Unidos",
+            ],
+        ),
+        (
+            "Paraguayan Division de Honor",
+            "Paraguay",
+            15,
+            50,
+            58,
+            &[
+                "Club Olimpia",
+                "Cerro Porteno",
+                "Libertad",
+                "Sportivo Luqueno",
+                "Guarani",
+                "Nacional Asuncion",
+            ],
+        ),
+        (
+            "Bolivian Primera Division",
+            "Bolivia",
+            14,
+            46,
+            54,
+            &[
+                "Bolivar",
+                "The Strongest",
+                "Wilstermann",
+                "Blooming",
+                "Oriente Petrolero",
+                "Royal Pari",
+            ],
+        ),
+        (
+            "Ecuadorian Serie A",
+            "Ecuador",
+            16,
+            52,
+            60,
+            &[
+                "Barcelona SC",
+                "Emelec",
+                "Liga de Quito",
+                "Aucas",
+                "Independiente del Valle",
+                "Orense",
+            ],
+        ),
+        (
+            "Venezuelan Primera Division",
+            "Venezuela",
+            14,
+            46,
+            54,
+            &[
+                "Caracas FC",
+                "Deportivo Tachira",
+                "Deportivo La Guaira",
+                "Portuguesa",
+                "Estudiantes de Merida",
+                "Carabobo",
+            ],
+        ),
+        // ── UEFA: countries whose top flights are absent from the dump ──
+        (
+            "Serbian SuperLiga",
+            "Serbia",
+            17,
+            56,
+            64,
+            &[
+                "Red Star Belgrade",
+                "Partizan Belgrade",
+                "TSC Backa Topola",
+                "Cukaricki",
+                "Radnicki Nis",
+                "Napredak Krusevac",
+            ],
+        ),
+        (
+            "Romanian Liga I",
+            "Romania",
+            16,
+            52,
+            60,
+            &[
+                "FCSB",
+                "CFR Cluj",
+                "UTA Arad",
+                "Universitatea Craiova",
+                "Rapid Bucuresti",
+                "Hermannstadt",
+            ],
+        ),
+        (
+            "Bulgarian First League",
+            "Bulgaria",
+            15,
+            50,
+            58,
+            &[
+                "Ludogorets Razgrad",
+                "Levski Sofia",
+                "CSKA Sofia",
+                "Cherno More",
+                "Botev Plovdiv",
+                "Arda Kardzhali",
+            ],
+        ),
+        (
+            "Bosnian Premier League",
+            "Bosnia and Herzegovina",
+            15,
+            50,
+            58,
+            &[
+                "Zrinjski Mostar",
+                "Borac Banja Luka",
+                "FK Sarajevo",
+                "Zeljeznicar Sarajevo",
+                "Velez Mostar",
+                "Siroki Brijeg",
+            ],
+        ),
+        (
+            "Slovak Superliga",
+            "Slovakia",
+            15,
+            50,
+            58,
+            &[
+                "Slovan Bratislava",
+                "Spartak Trnava",
+                "DAC Dunajska Streda",
+                "Zilina",
+                "Ruzomberok",
+                "Michalovce",
+            ],
+        ),
+        (
+            "Slovenian PrvaLiga",
+            "Slovenia",
+            14,
+            48,
+            56,
+            &[
+                "Olimpija Ljubljana",
+                "Maribor",
+                "Celje",
+                "Koper",
+                "Domzale",
+                "Mura",
+            ],
+        ),
+        (
+            "Icelandic Besta deild",
+            "Iceland",
+            15,
+            50,
+            58,
+            &[
+                "Valur",
+                "KR Reykjavik",
+                "Vikingur Reykjavik",
+                "FH Hafnarfjordur",
+                "KA Akureyri",
+                "IBV",
+            ],
+        ),
+        (
+            "Israeli Premier League",
+            "Israel",
+            15,
+            50,
+            58,
+            &[
+                "Maccabi Tel Aviv",
+                "Maccabi Haifa",
+                "Hapoel Be'er Sheva",
+                "Beitar Jerusalem",
+                "Hapoel Haifa",
+                "Bnei Sakhnin",
+            ],
+        ),
+        (
+            "Georgian Erovnuli Liga",
+            "Georgia",
+            15,
+            50,
+            58,
+            &[
+                "Dinamo Tbilisi",
+                "Dinamo Batumi",
+                "Torpedo Kutaisi",
+                "Dila Gori",
+                "Iberia 1999",
+                "Samtredia",
+            ],
+        ),
+        (
+            "Albanian Kategoria Superiore",
+            "Albania",
+            14,
+            48,
+            56,
+            &[
+                "Partizani Tirana",
+                "Dinamo City",
+                "Egnatia",
+                "Tirana",
+                "Vllaznia",
+                "Skenderbeu",
+            ],
+        ),
+        (
+            "Montenegrin First League",
+            "Montenegro",
+            13,
+            46,
+            54,
+            &[
+                "Buducnost Podgorica",
+                "Sutjeska Niksic",
+                "Decic",
+                "Rudar Pljevlja",
+                "Jezero",
+                "Iskra Danilovgrad",
+            ],
+        ),
+        (
+            "North Macedonian First League",
+            "North Macedonia",
+            13,
+            46,
+            54,
+            &[
+                "Shkendija",
+                "Vardar Skopje",
+                "Sileks",
+                "Pelister",
+                "Tikves",
+                "Brera Strumica",
+            ],
+        ),
+        (
+            "Armenian Premier League",
+            "Armenia",
+            13,
+            46,
+            54,
+            &[
+                "Pyunik",
+                "Noah Yerevan",
+                "Alashkert",
+                "Ararat-Armenia",
+                "Urartu",
+                "Shirak",
+            ],
+        ),
+        (
+            "Azerbaijani Premier League",
+            "Azerbaijan",
+            14,
+            48,
+            56,
+            &[
+                "Qarabag",
+                "Neftchi Baku",
+                "Zira",
+                "Sabah",
+                "Gabala",
+                "Sumqayit",
+            ],
+        ),
+        (
+            "Belarusian Premier League",
+            "Belarus",
+            13,
+            46,
+            54,
+            &[
+                "Dinamo Minsk",
+                "BATE Borisov",
+                "Isloch",
+                "Slavia Mozyr",
+                "Energetik",
+                "Vitebsk",
+            ],
+        ),
+        (
+            "Kazakh Premier League",
+            "Kazakhstan",
+            13,
+            46,
+            54,
+            &[
+                "Astana",
+                "Tobol Kostanay",
+                "Aktobe",
+                "Ordabasy",
+                "Kaisar Kyzylorda",
+                "Zhetysu",
+            ],
+        ),
+        (
+            "Estonian Meistriliiga",
+            "Estonia",
+            12,
+            44,
+            52,
+            &[
+                "Levadia Tallinn",
+                "Flora Tallinn",
+                "Nomme United",
+                "Paide",
+                "Trans Narva",
+                "Kalev Tallinn",
+            ],
+        ),
+        (
+            "Latvian Virsliga",
+            "Latvia",
+            12,
+            44,
+            52,
+            &["RFS", "Auda", "Tukums 2000", "Liepaja", "Jelgava", "Metta"],
+        ),
+        (
+            "Lithuanian A Lyga",
+            "Lithuania",
+            13,
+            46,
+            54,
+            &[
+                "Zalgiris Vilnius",
+                "Suduva",
+                "Panevezys",
+                "Dainava",
+                "Riteriai",
+                "Hegelmann",
+            ],
+        ),
+        (
+            "Welsh Cymru Premier",
+            "Wales",
+            13,
+            46,
+            54,
+            &[
+                "The New Saints",
+                "Bala Town",
+                "Connah's Quay Nomads",
+                "Briton Ferry",
+                "Caernarfon Town",
+                "Llanelli Town",
+            ],
+        ),
+        (
+            "Northern Irish Premiership",
+            "Northern Ireland",
+            14,
+            48,
+            56,
+            &[
+                "Linfield",
+                "Cliftonville",
+                "Glentoran",
+                "Coleraine",
+                "Carrick Rangers",
+                "Dungannon Swifts",
+            ],
+        ),
+        (
+            "Maltese Premier League",
+            "Malta",
+            12,
+            44,
+            52,
+            &[
+                "Hibernians",
+                "Birkirkara",
+                "Hamrun Spartans",
+                "Floriana",
+                "Gzira United",
+                "Mosta",
+            ],
+        ),
+        (
+            "Faroe Islands Betri Deildin",
+            "Faroe Islands",
+            12,
+            44,
+            52,
+            &[
+                "B36 Torshavn",
+                "HB Torshavn",
+                "KI Klaksvik",
+                "NSI Runavik",
+                "EB/Streymur",
+                "TB Tvoyro",
+            ],
+        ),
+        (
+            "Luxembourg National Division",
+            "Luxembourg",
+            12,
+            44,
+            52,
+            &[
+                "F91 Dudelange",
+                "Differdange 03",
+                "Progres Niederkorn",
+                "Racing FC Union Luxembourg",
+                "Jeunesse Esch",
+                "Victoria Rosport",
+            ],
+        ),
+        (
+            "Moldovan Super Liga",
+            "Moldova",
+            12,
+            44,
+            52,
+            &[
+                "Sheriff Tiraspol",
+                "Petrocub",
+                "Balti",
+                "Spartani",
+                "Dacia Buiucani",
+                "Zimbru",
+            ],
+        ),
+        (
+            "Kosovo Superliga",
+            "Kosovo",
+            13,
+            46,
+            54,
+            &[
+                "Drita Gjilan",
+                "Ballkani",
+                "Feronikeli 74",
+                "Llapi",
+                "Dukagjini",
+                "GiIani",
+            ],
+        ),
+        // ── CAF: no first-tier leagues exist in the dump at all ──────────
+        (
+            "Egyptian Premier League",
+            "Egypt",
+            17,
+            56,
+            64,
+            &[
+                "Al Ahly",
+                "Zamalek",
+                "Pyramids FC",
+                "Al Masry",
+                "ENPPI",
+                "Al Bank Al Ahly",
+            ],
+        ),
+        (
+            "South African Premiership",
+            "South Africa",
+            16,
+            54,
+            62,
+            &[
+                "Mamelodi Sundowns",
+                "Orlando Pirates",
+                "Kaizer Chiefs",
+                "Cape Town City",
+                "SuperSport United",
+                "Stellenbosch FC",
+            ],
+        ),
+        (
+            "Moroccan Botola",
+            "Morocco",
+            16,
+            54,
+            62,
+            &[
+                "Wydad Casablanca",
+                "Raja Casablanca",
+                "AS FAR Rabat",
+                "RS Berkane",
+                "FUS Rabat",
+                "Hassania Agadir",
+            ],
+        ),
+        (
+            "Algerian Ligue 1",
+            "Algeria",
+            16,
+            54,
+            62,
+            &[
+                "MC Alger",
+                "CR Belouizdad",
+                "USM Alger",
+                "JS Kabylie",
+                "ES Setif",
+                "ASO Chlef",
+            ],
+        ),
+        (
+            "Tunisian Ligue 1",
+            "Tunisia",
+            15,
+            50,
+            58,
+            &[
+                "Esperance de Tunis",
+                "Club Africain",
+                "Etoile du Sahel",
+                "CS Sfaxien",
+                "Stade Tunisien",
+                "US Monastir",
+            ],
+        ),
+        (
+            "Nigerian Professional Football League",
+            "Nigeria",
+            15,
+            50,
+            58,
+            &[
+                "Enyimba",
+                "Remo Stars",
+                "Rivers United",
+                "Kano Pillars",
+                "Shooting Stars",
+                "Katsina United",
+            ],
+        ),
+        (
+            "Ghana Premier League",
+            "Ghana",
+            15,
+            50,
+            58,
+            &[
+                "Asante Kotoko",
+                "Hearts of Oak",
+                "Medeama",
+                "Dreams FC",
+                "Bechem United",
+                "Berekum Chelsea",
+            ],
+        ),
+        (
+            "Angolan Girabola",
+            "Angola",
+            14,
+            48,
+            56,
+            &[
+                "1 de Agosto",
+                "Petro de Luanda",
+                "Sagrada Esperanca",
+                "CD Huila",
+                "Bravos do Maquis",
+                "Academica Petroleos",
+            ],
+        ),
+        (
+            "Ivorian Ligue 1",
+            "Côte d'Ivoire",
+            16,
+            54,
+            62,
+            &[
+                "ASEC Mimosas",
+                "Africa Sports",
+                "Stella Club d'Adjame",
+                "SO Armee",
+                "Bouake FC",
+                "Academie Amadou Diallo",
+            ],
+        ),
+        (
+            "Tanzanian Mainland Premier League",
+            "Tanzania",
+            14,
+            48,
+            56,
+            &[
+                "Young Africans",
+                "Simba SC",
+                "Azam FC",
+                "Singida Black Stars",
+                "Kagera Sugar",
+                "Dodoma Jiji",
+            ],
+        ),
+        (
+            "Zambian Super League",
+            "Zambia",
+            13,
+            46,
+            54,
+            &[
+                "Zanaco",
+                "Power Dynamos",
+                "Kabwe Warriors",
+                "Green Buffaloes",
+                "Nkana",
+                "Napsa Stars",
+            ],
+        ),
+        (
+            "Zimbabwean Premier Soccer League",
+            "Zimbabwe",
+            13,
+            46,
+            54,
+            &[
+                "Highlanders",
+                "CAPS United",
+                "Chicken Inn",
+                "Dynamos",
+                "Harare City",
+                "Bulawayo Chiefs",
+            ],
+        ),
+        (
+            "Kenyan FKF Premier League",
+            "Kenya",
+            13,
+            46,
+            54,
+            &[
+                "Gor Mahia",
+                "AFC Leopards",
+                "Tusker",
+                "Kenya Police",
+                "KCB",
+                "Sofapaka",
+            ],
+        ),
+        (
+            "Burkinabe Premier League",
+            "Burkina Faso",
+            13,
+            46,
+            54,
+            &[
+                "AS Douanes",
+                "Rahimo FC",
+                "Salitas",
+                "AS Vitesse",
+                "ASFB",
+                "Royal FC",
+            ],
+        ),
+        (
+            "Gabonese Ligue 1",
+            "Gabon",
+            12,
+            44,
+            52,
+            &[
+                "AS Mangasport",
+                "CF Mounana",
+                "AS Dikaki",
+                "105 Libreville",
+                "Oyem Athletic",
+                "Akanda FC",
+            ],
+        ),
+        // ── CONCACAF: the south and south Caribbean are invisible ────────
+        (
+            "Costa Rican Primera Division",
+            "Costa Rica",
+            14,
+            48,
+            56,
+            &[
+                "Deportivo Saprissa",
+                "LD Alajuelense",
+                "CS Herediano",
+                "CS Cartagines",
+                "AD Guanacasteca",
+                "Santos de Guapiles",
+            ],
+        ),
+        (
+            "Guatemalan Liga Nacional",
+            "Guatemala",
+            13,
+            46,
+            54,
+            &[
+                "Municipal",
+                "Comunicaciones",
+                "Coban Imperial",
+                "Guastatoya",
+                "Xelaju MC",
+                "Antigua GFC",
+            ],
+        ),
+        (
+            "Honduran Liga Nacional",
+            "Honduras",
+            13,
+            46,
+            54,
+            &[
+                "Olimpia",
+                "Motagua",
+                "Marathon CD",
+                "Real Espana",
+                "Honduras Progreso",
+                "Vida",
+            ],
+        ),
+        (
+            "Panamanian Liga Panamena de Futbol",
+            "Panama",
+            13,
+            46,
+            54,
+            &[
+                "Tauro FC",
+                "Plaza Amador",
+                "Sporting San Miguelito",
+                "Arabe Unido",
+                "San Francisco FC",
+                "Atletico Chiriqui",
+            ],
+        ),
+        (
+            "Salvadoran Primera Division",
+            "El Salvador",
+            12,
+            44,
+            52,
+            &[
+                "Aguila",
+                "FAS",
+                "Alianza",
+                "Once Deportivo",
+                "Luis Angel Firpo",
+                "Isidro Metapan",
+            ],
+        ),
+        (
+            "Jamaican Premier League",
+            "Jamaica",
+            12,
+            44,
+            52,
+            &[
+                "Mount Pleasant FA",
+                "Arnett Gardens",
+                "Tivoli Gardens",
+                "Harbour View",
+                "Portmore United",
+                "Chapelton Maroons",
+            ],
+        ),
+        // ── More AFC depth for the East ──────────────────────────────────
+        (
+            "UAE Pro League",
+            "United Arab Emirates",
+            17,
+            56,
+            64,
+            &[
+                "Al Ain",
+                "Shabab Al Ahli",
+                "Sharjah FC",
+                "Al Wasl",
+                "Al Nasr",
+                "Al Wahda",
+            ],
+        ),
+        (
+            "Oman Pro League",
+            "Oman",
+            14,
+            48,
+            56,
+            &[
+                "Al Seeb",
+                "Dhofar",
+                "Al Nahda",
+                "Suwaiq",
+                "Oman Club",
+                "Al Arabi Oman",
+            ],
+        ),
+        (
+            "Philippines Football League",
+            "Philippines",
+            13,
+            46,
+            54,
+            &[
+                "Kaya FC Iloilo",
+                "United City FC",
+                "Stallion Laguna",
+                "Dynamic Herb Cebu",
+                "Maharlika Taguig",
+                "One Taguig",
+            ],
+        ),
+        // ── OFC's neglected second side ───────────────────────────────────
+        (
+            "New Caledonia Super Ligue",
+            "New Caledonia",
+            11,
+            42,
+            50,
+            &[
+                "AS Magenta",
+                "AS Mont-Dore",
+                "Tiga Sport",
+                "AS Lossi",
+                "AS Wetr",
+                "AS Dumbea",
+            ],
+        ),
+    ];
+
+    let mut league_teams: Vec<Vec<usize>> =
+        vec![Vec::new(); BIG5.len() + 1 + extra_count + regen_leagues.len()];
     // Every candidate row (generous top-30 per club; dedupe losses follow).
     struct Cand {
         pid: PlayerId,
@@ -1784,7 +3401,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         .chain(extra_groups.iter().map(|(ids, _, _)| ids))
     {
         for cid in ids {
-            let Some(c) = db.clubs().iter().find(|c| c.id == *cid) else { continue };
+            let Some(c) = db.clubs().iter().find(|c| c.id == *cid) else {
+                continue;
+            };
             let mut ranked: Vec<(u8, PlayerId)> = c
                 .squad
                 .iter()
@@ -1797,7 +3416,9 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                 .collect();
             ranked.sort_by(|a, b| b.0.cmp(&a.0));
             for (_, pid) in ranked.into_iter().take(30) {
-                let Some(p) = db.players().iter().find(|p| p.id == pid) else { continue };
+                let Some(p) = db.players().iter().find(|p| p.id == pid) else {
+                    continue;
+                };
                 if p.name.trim().len() < 2 {
                     continue;
                 }
@@ -1808,7 +3429,12 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                 by_first
                     .entry((toks[0].clone(), pos_key(p.position)))
                     .or_default()
-                    .push(Cand { pid, ovr: p.overall(), age: p.age.clamp(16, 40), toks });
+                    .push(Cand {
+                        pid,
+                        ovr: p.overall(),
+                        age: p.age.clamp(16, 40),
+                        toks,
+                    });
             }
         }
     }
@@ -1818,12 +3444,20 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     for cands in by_first.values() {
         let mut order: Vec<usize> = (0..cands.len()).collect();
         order.sort_by(|&a, &b| {
-            cands[b].ovr.cmp(&cands[a].ovr).then(cands[b].age.cmp(&cands[a].age))
+            cands[b]
+                .ovr
+                .cmp(&cands[a].ovr)
+                .then(cands[b].age.cmp(&cands[a].age))
         });
         let mut kept: Vec<usize> = Vec::new();
         for &ci in &order {
             let dup = kept.iter().any(|&ki| {
-                same_man(&cands[ci].toks, cands[ci].age, &cands[ki].toks, cands[ki].age)
+                same_man(
+                    &cands[ci].toks,
+                    cands[ci].age,
+                    &cands[ki].toks,
+                    cands[ki].age,
+                )
             });
             if !dup {
                 kept.push(ci);
@@ -1935,8 +3569,11 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                             let o = p.overall();
                             if o >= 82 {
                                 let v = market_value(o, page, p.position) as f32;
-                                let age_f = (1.0 - (page.saturating_sub(29)) as f32 * 0.12).max(0.35);
-                                let mult = (params.clause_mult + (o.saturating_sub(82)) as f32 * 0.12).min(3.0);
+                                let age_f =
+                                    (1.0 - (page.saturating_sub(29)) as f32 * 0.12).max(0.35);
+                                let mult = (params.clause_mult
+                                    + (o.saturating_sub(82)) as f32 * 0.12)
+                                    .min(3.0);
                                 Some((v * mult * age_f) as i64)
                             } else {
                                 None
@@ -1972,6 +3609,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         career_rating_sum: 0.0,
                         career_rating_apps: 0,
                         ballons: 0,
+                        peak: 0,
+                        peak_str: 1,
                     });
                 }
             }
@@ -1989,7 +3628,8 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             // rises with wealth but keeps individual character (some rich clubs
             // hoard, some mid clubs gamble). Academies roughly follow stature.
             let wealth = ((c.reputation as i32) + rng.gen_range(-4..=4)).clamp(20, 99) as u8;
-            let willingness = (0.38 + (wealth as f32 / 100.0) * 0.42 + rng.gen_range(0.0..0.12)).clamp(0.3, 0.95);
+            let willingness =
+                (0.38 + (wealth as f32 / 100.0) * 0.42 + rng.gen_range(0.0..0.12)).clamp(0.3, 0.95);
             let academy = ((c.reputation as i32) / 24 + rng.gen_range(0..=1)).clamp(1, 5) as u8;
             let revenue_last = revenue(wealth) as i64;
             teams.push(Team {
@@ -2034,179 +3674,375 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
 
+    // Build the regen leagues: real club names, procedural squads whose
+    // nationals feed the national pools (build_nations needs 15+ active
+    // players per side, which Iran/Qatar/Uzbekistan/Jordan/Indonesia/Iraq
+    // could never reach from the dump alone).
+    {
+        // Local uniqueness set across the whole pool so far.
+        let mut regen_names: std::collections::HashSet<String> =
+            pool.iter().map(|w| w.name.clone()).collect();
+        for (k, (label, nation, tier, rep_lo, rep_hi, clubs)) in regen_leagues.iter().enumerate() {
+            let li = BIG5.len() + 1 + extra_count + k;
+            for (ci, cname) in clubs.iter().enumerate() {
+                let tid = teams.len();
+                let mut pidx = Vec::new();
+                let plan = [
+                    (Position::GK, 2u8),
+                    (Position::DEF, 6),
+                    (Position::MID, 6),
+                    (Position::FWD, 4),
+                ];
+                // Within-league hierarchy: first clubs stronger.
+                let club_tier = tier
+                    + if ci < 2 {
+                        1
+                    } else if ci >= clubs.len() - 2 {
+                        -1
+                    } else {
+                        0
+                    };
+                let mut standouts = 2;
+                for (pos, count) in plan {
+                    for _ in 0..count {
+                        let mut g = Gen::new((rng.gen::<u64>() ^ (tid as u64 * 2654435761)) as u64);
+                        let t = if standouts > 0 {
+                            standouts -= 1;
+                            club_tier + 3
+                        } else {
+                            club_tier
+                        };
+                        let gp = g.player(pos, t);
+                        let name = Gen::regen_name(rng, nation, &regen_names);
+                        regen_names.insert(name.clone());
+                        // ~25% intake is youth (16-19): age_cap_ovr already
+                        // keeps them off their adult ceiling, which is what
+                        // stops the top-11 national-pool selection from
+                        // finding a full XI of 30-year-old 90s. The rest are
+                        // established adults (23-34) at full strength.
+                        let age = if rng.gen_bool(0.25) {
+                            rng.gen_range(16..=19) as u8
+                        } else {
+                            rng.gen_range(23..=34) as u8
+                        };
+                        let wonder = gp.potential >= 90;
+                        let ovr = age_cap_ovr(gp.overall(), age, wonder);
+                        pidx.push(pool.len());
+                        pool.push(WP {
+                            name,
+                            nation: (*nation).to_string(),
+                            pos,
+                            attrs: gp.attrs,
+                            ovr,
+                            pot: ovr.max(gp.potential).min(94),
+                            age,
+                            team: tid,
+                            retired: false,
+                            intl_retired: false,
+                            intl_retire_age: 0,
+                            club_retire_age: 0,
+                            morale: 70,
+                            fatigue: 0,
+                            adapt: 0,
+                            on_loan: false,
+                            homegrown: false,
+                            apps: 0,
+                            goals: 0,
+                            assists: 0,
+                            rating_sum: 0.0,
+                            rating_apps: 0,
+                            ucl_goals: 0,
+                            el_goals: 0,
+                            intl_goals: 0,
+                            ucl_assists: 0,
+                            el_assists: 0,
+                            intl_assists: 0,
+                            ucl_apps: 0,
+                            el_apps: 0,
+                            intl_apps: 0,
+                            shots: 0,
+                            sot: 0,
+                            key_passes: 0,
+                            big_chances: 0,
+                            passes_att: 0,
+                            passes_cmp: 0,
+                            dribbles_att: 0,
+                            dribbles_cmp: 0,
+                            tackles: 0,
+                            interceptions: 0,
+                            fouls: 0,
+                            saves: 0,
+                            clean_sheets: 0,
+                            league_won: false,
+                            ucl_result: 0,
+                            el_result: 0,
+                            intl_result: 0,
+                            value: market_value(ovr, age, pos),
+                            release_clause: None,
+                            wage: (market_value(ovr, age, pos) * 2 / 5).max(1),
+                            career_earnings: 0,
+                            signing_bonus: 0,
+                            bonus_paid: 0,
+                            contract_option: false,
+                            locked: {
+                                let h = ((pool.len() as u64).wrapping_mul(2654435761) % 3) as u8;
+                                if ovr >= 78 {
+                                    2 + h
+                                } else {
+                                    h
+                                }
+                            },
+                            path: Vec::new(),
+                            career_goals: 0,
+                            career_assists: 0,
+                            career_kp: 0,
+                            career_bcc: 0,
+                            career_ti: 0,
+                            career_cs: 0,
+                            career_apps: 0,
+                            career_rating_sum: 0.0,
+                            career_rating_apps: 0,
+                            ballons: 0,
+                            peak: 0,
+                            peak_str: 1,
+                        });
+                    }
+                }
+                if pidx.len() < 11 {
+                    for _ in &pidx {
+                        pool.pop();
+                    }
+                    continue;
+                }
+                let shape = pick_shape(&pidx, &pool);
+                let rep = rng.gen_range(*rep_lo..=*rep_hi);
+                let strength = match_strength(&pidx, &pool, rep, shape, &params);
+                let wealth = rep;
+                let willingness =
+                    (0.38 + (wealth as f32 / 100.0) * 0.42 + rng.gen_range(0.0..0.12))
+                        .clamp(0.3, 0.95);
+                let academy = ((rep as i32) / 24 + rng.gen_range(0..=1)).clamp(1, 5) as u8;
+                let revenue_last = revenue(wealth) as i64;
+                league_teams[li].push(tid);
+                teams.push(Team {
+                    name: (*cname).to_string(),
+                    nation: (*nation).to_string(),
+                    league_idx: li,
+                    rep,
+                    players: pidx,
+                    strength,
+                    p: 0,
+                    w: 0,
+                    d: 0,
+                    l: 0,
+                    gf: 0,
+                    ga: 0,
+                    league_titles: 0,
+                    ucl_titles: 0,
+                    el_titles: 0,
+                    super_cups: 0,
+                    budget: 0,
+                    wealth,
+                    heritage: rep,
+                    cash: (revenue_last as f32 * 0.3) as i64,
+                    revenue_last,
+                    rev_base: 0,
+                    prize_league: 0,
+                    prize_euro: 0,
+                    net_spend: 0,
+                    budget_alloc: 0,
+                    willingness,
+                    academy,
+                    title_drought: 0,
+                    registered: Vec::new(),
+                    manager: Manager::new_random(rng, &params),
+                    shape,
+                    consec_titles: 0,
+                    momentum: 0,
+                });
+            }
+        }
+    }
+
     // Fallback only: if the database offered no real European outsiders
     // (e.g. a dataset-free run), build the classic eight procedural ones so
     // the UCL field still has its farmers. When real outsider squads loaded
     // above (league_idx 5), this block is skipped entirely.
     if outsider_clubs.is_empty() {
-    let fillers = [
-        ("FC Porto", 66u8),
-        ("SL Benfica", 65),
-        ("AFC Ajax", 64),
-        ("PSV Eindhoven", 62),
-        ("Celtic FC", 60),
-        ("RB Salzburg", 59),
-        ("Club Brugge", 58),
-        ("Shakhtar Donetsk", 57),
-    ];
-    for (fname, frep) in fillers {
-        let tid = teams.len();
-        let mut local_names: std::collections::HashSet<String> =
-            pool.iter().map(|w| w.name.clone()).collect();
-        let mut pidx = Vec::new();
-        let plan = [
-            (Position::GK, 2),
-            (Position::DEF, 6),
-            (Position::MID, 7),
-            (Position::FWD, 5),
+        let fillers = [
+            ("FC Porto", 66u8),
+            ("SL Benfica", 65),
+            ("AFC Ajax", 64),
+            ("PSV Eindhoven", 62),
+            ("Celtic FC", 60),
+            ("RB Salzburg", 59),
+            ("Club Brugge", 58),
+            ("Shakhtar Donetsk", 57),
         ];
-        // Squad tier maps to low-70s overalls with a few 78+ standouts — the real
-        // shape of an outsider squad (a couple of stars, honest workers behind
-        // them). Uniform mid-70s proved too strong: farmers were winning the
-        // whole competition back-to-back instead of the occasional Porto 2004.
-        let s = (frep as f32 / 2.7).round() as i32;
-        let mut standouts = 3;
-        for (pos, count) in plan {
-            for _ in 0..count {
-                let mut g = Gen::new(rng.gen::<u64>());
-                let tier = if standouts > 0 {
-                    standouts -= 1;
-                    s + 3
-                } else {
-                    s
-                };
-                let gp = g.player(pos, tier);
-                if gp.name.trim().len() < 2 || !local_names.insert(gp.name.clone()) {
-                    continue;
+        for (fname, frep) in fillers {
+            let tid = teams.len();
+            let mut local_names: std::collections::HashSet<String> =
+                pool.iter().map(|w| w.name.clone()).collect();
+            let mut pidx = Vec::new();
+            let plan = [
+                (Position::GK, 2),
+                (Position::DEF, 6),
+                (Position::MID, 7),
+                (Position::FWD, 5),
+            ];
+            // Squad tier maps to low-70s overalls with a few 78+ standouts — the real
+            // shape of an outsider squad (a couple of stars, honest workers behind
+            // them). Uniform mid-70s proved too strong: farmers were winning the
+            // whole competition back-to-back instead of the occasional Porto 2004.
+            let s = (frep as f32 / 2.7).round() as i32;
+            let mut standouts = 3;
+            for (pos, count) in plan {
+                for _ in 0..count {
+                    let mut g = Gen::new(rng.gen::<u64>());
+                    let tier = if standouts > 0 {
+                        standouts -= 1;
+                        s + 3
+                    } else {
+                        s
+                    };
+                    let gp = g.player(pos, tier);
+                    if gp.name.trim().len() < 2 || !local_names.insert(gp.name.clone()) {
+                        continue;
+                    }
+                    let age = gp.age.clamp(16, 36);
+                    let wonder = gp.potential >= 90;
+                    let ovr = age_cap_ovr(gp.overall(), age, wonder);
+                    pidx.push(pool.len());
+                    pool.push(WP {
+                        name: gp.name.clone(),
+                        nation: gp.nation.clone(),
+                        pos,
+                        attrs: gp.attrs,
+                        ovr,
+                        pot: ovr.max(gp.potential).min(94),
+                        age,
+                        team: tid,
+                        retired: false,
+                        intl_retired: false,
+                        intl_retire_age: 0,
+                        club_retire_age: 0,
+                        morale: 70,
+                        fatigue: 0,
+                        adapt: 0,
+                        on_loan: false,
+                        homegrown: false,
+                        apps: 0,
+                        goals: 0,
+                        assists: 0,
+                        rating_sum: 0.0,
+                        rating_apps: 0,
+                        ucl_goals: 0,
+                        el_goals: 0,
+                        intl_goals: 0,
+                        ucl_assists: 0,
+                        el_assists: 0,
+                        intl_assists: 0,
+                        ucl_apps: 0,
+                        el_apps: 0,
+                        intl_apps: 0,
+                        shots: 0,
+                        sot: 0,
+                        key_passes: 0,
+                        big_chances: 0,
+                        passes_att: 0,
+                        passes_cmp: 0,
+                        dribbles_att: 0,
+                        dribbles_cmp: 0,
+                        tackles: 0,
+                        interceptions: 0,
+                        fouls: 0,
+                        saves: 0,
+                        clean_sheets: 0,
+                        league_won: false,
+                        ucl_result: 0,
+                        el_result: 0,
+                        intl_result: 0,
+                        value: market_value(ovr, age, pos),
+                        release_clause: None,
+                        wage: (market_value(ovr, age, pos) * 2 / 5).max(1),
+                        career_earnings: 0,
+                        signing_bonus: 0,
+                        bonus_paid: 0,
+                        contract_option: false,
+                        locked: {
+                            let h = ((pool.len() as u64).wrapping_mul(2654435761) % 3) as u8;
+                            if ovr >= 78 {
+                                2 + h
+                            } else {
+                                h
+                            }
+                        },
+                        path: Vec::new(),
+                        career_goals: 0,
+                        career_assists: 0,
+                        career_kp: 0,
+                        career_bcc: 0,
+                        career_ti: 0,
+                        career_cs: 0,
+                        career_apps: 0,
+                        career_rating_sum: 0.0,
+                        career_rating_apps: 0,
+                        ballons: 0,
+                        peak: 0,
+                        peak_str: 1,
+                    });
                 }
-                let age = gp.age.clamp(16, 36);
-                let wonder = gp.potential >= 90;
-                let ovr = age_cap_ovr(gp.overall(), age, wonder);
-                pidx.push(pool.len());
-                pool.push(WP {
-                    name: gp.name.clone(),
-                    nation: gp.nation.clone(),
-                    pos,
-                    attrs: gp.attrs,
-                    ovr,
-                    pot: ovr.max(gp.potential).min(94),
-                    age,
-                    team: tid,
-                    retired: false,
-                    intl_retired: false,
-                    intl_retire_age: 0,
-                    club_retire_age: 0,
-                    morale: 70,
-                    fatigue: 0,
-                    adapt: 0,
-                    on_loan: false,
-                    homegrown: false,
-                    apps: 0,
-                    goals: 0,
-                    assists: 0,
-                    rating_sum: 0.0,
-                    rating_apps: 0,
-                    ucl_goals: 0,
-                    el_goals: 0,
-                    intl_goals: 0,
-                    ucl_assists: 0,
-                    el_assists: 0,
-                    intl_assists: 0,
-                    ucl_apps: 0,
-                    el_apps: 0,
-                    intl_apps: 0,
-                    shots: 0,
-                    sot: 0,
-                    key_passes: 0,
-                    big_chances: 0,
-                    passes_att: 0,
-                    passes_cmp: 0,
-                    dribbles_att: 0,
-                    dribbles_cmp: 0,
-                    tackles: 0,
-                    interceptions: 0,
-                    fouls: 0,
-                    saves: 0,
-                    clean_sheets: 0,
-                    league_won: false,
-                    ucl_result: 0,
-                    el_result: 0,
-                    intl_result: 0,
-                    value: market_value(ovr, age, pos),
-                    release_clause: None,
-                    wage: (market_value(ovr, age, pos) * 2 / 5).max(1),
-                    career_earnings: 0,
-                    signing_bonus: 0,
-                    bonus_paid: 0,
-                    contract_option: false,
-                    locked: {
-                        let h = ((pool.len() as u64).wrapping_mul(2654435761) % 3) as u8;
-                        if ovr >= 78 { 2 + h } else { h }
-                    },
-                    path: Vec::new(),
-                    career_goals: 0,
-                    career_assists: 0,
-                    career_kp: 0,
-                    career_bcc: 0,
-                    career_ti: 0,
-                    career_cs: 0,
-                    career_apps: 0,
-                    career_rating_sum: 0.0,
-                    career_rating_apps: 0,
-                    ballons: 0,
-                });
             }
-        }
-        if pidx.len() < 11 {
-            for _ in &pidx {
-                pool.pop();
+            if pidx.len() < 11 {
+                for _ in &pidx {
+                    pool.pop();
+                }
+                continue;
             }
-            continue;
+            let shape = pick_shape(&pidx, &pool);
+            let strength = match_strength(&pidx, &pool, frep, shape, &params);
+            let wealth = frep;
+            let willingness =
+                (0.38 + (wealth as f32 / 100.0) * 0.42 + rng.gen_range(0.0..0.12)).clamp(0.3, 0.95);
+            let academy = ((frep as i32) / 24 + rng.gen_range(0..=1)).clamp(1, 5) as u8;
+            let revenue_last = revenue(wealth) as i64;
+            teams.push(Team {
+                name: fname.to_string(),
+                nation: majority_nation(&pidx, &pool), // procedural fallback outsiders
+                league_idx: 5,
+                rep: frep,
+                players: pidx,
+                strength,
+                p: 0,
+                w: 0,
+                d: 0,
+                l: 0,
+                gf: 0,
+                ga: 0,
+                league_titles: 0,
+                ucl_titles: 0,
+                el_titles: 0,
+                super_cups: 0,
+                budget: 0,
+                wealth,
+                heritage: frep,
+                cash: (revenue_last as f32 * 0.3) as i64,
+                revenue_last,
+                rev_base: 0,
+                prize_league: 0,
+                prize_euro: 0,
+                net_spend: 0,
+                budget_alloc: 0,
+                willingness,
+                academy,
+                title_drought: 0,
+                registered: Vec::new(),
+                manager: Manager::new_random(rng, &params),
+                shape,
+                consec_titles: 0,
+                momentum: 0,
+            });
         }
-        let shape = pick_shape(&pidx, &pool);
-        let strength = match_strength(&pidx, &pool, frep, shape, &params);
-        let wealth = frep;
-        let willingness =
-            (0.38 + (wealth as f32 / 100.0) * 0.42 + rng.gen_range(0.0..0.12)).clamp(0.3, 0.95);
-        let academy = ((frep as i32) / 24 + rng.gen_range(0..=1)).clamp(1, 5) as u8;
-        let revenue_last = revenue(wealth) as i64;
-        teams.push(Team {
-            name: fname.to_string(),
-            nation: majority_nation(&pidx, &pool), // procedural fallback outsiders
-            league_idx: 5,
-            rep: frep,
-            players: pidx,
-            strength,
-            p: 0,
-            w: 0,
-            d: 0,
-            l: 0,
-            gf: 0,
-            ga: 0,
-            league_titles: 0,
-            ucl_titles: 0,
-            el_titles: 0,
-            super_cups: 0,
-            budget: 0,
-            wealth,
-            heritage: frep,
-            cash: (revenue_last as f32 * 0.3) as i64,
-            revenue_last,
-            rev_base: 0,
-            prize_league: 0,
-            prize_euro: 0,
-            net_spend: 0,
-            budget_alloc: 0,
-            willingness,
-            academy,
-            title_drought: 0,
-            registered: Vec::new(),
-            manager: Manager::new_random(rng, &params),
-            shape,
-            consec_titles: 0,
-            momentum: 0,
-        });
-    }
     }
 
     // League metadata (labels + confederations), parallel to league_teams.
@@ -2227,6 +4063,14 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
             confed: Some(*confed),
         });
     }
+    for (label, nation, _, _, _, _) in regen_leagues.iter() {
+        league_meta.push(LeagueMeta {
+            label: (*label).to_string(),
+            confed: Some(crate::world_model::confed_of(nation)),
+        });
+    }
+
+    let _ = inject_aditya_prodigy(&mut pool, &mut teams, &league_meta, &params);
 
     let used_names: std::collections::HashSet<String> =
         pool.iter().map(|w| w.name.clone()).collect();
@@ -2247,7 +4091,10 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     let mut nation_pool: Vec<String> = Vec::new();
     for w in &pool {
         let nation = w.nation.trim();
-        if nation.len() < 2 || !valid_nationality(nation) || !seen_nations.insert(nation.to_string()) {
+        if nation.len() < 2
+            || !valid_nationality(nation)
+            || !seen_nations.insert(nation.to_string())
+        {
             continue;
         }
         let tickets = (2.0 + federation_capacity(nation) * 8.0).round() as usize;
@@ -2273,6 +4120,28 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
     let top50_sum: u32 = ovrs.iter().rev().take(50).map(|&v| v as u32).sum();
     let top50_avg = (top50_sum as f32 / 50.0_f32.min(ovrs.len() as f32)).round() as u8;
     let elite_cap = p96.max(top50_avg.saturating_sub(2));
+
+    // Opt-in one-shot physical persistence of the initial regen roster.
+    // In normal play these players are database-grade individuals in memory,
+    // but this switch appends their full CSV rows to `data/players.csv`
+    // (marked `simregen`) so the expanded identities survive in the source
+    // file. The marker is duplicate-safe: later rebuilds do not grow the CSV
+    // indefinitely.
+    if std::env::var("FM_PERSIST_REGEN_DB").ok().as_deref() == Some("1") {
+        let added = append_initial_regen_players_csv(
+            "data/players.csv",
+            &pool,
+            &teams,
+            &league_meta,
+            regen_start,
+        );
+        if added > 0 {
+            eprintln!(
+                "  Persisted {} generated source players to data/players.csv.",
+                added
+            );
+        }
+    }
 
     World {
         pool,
@@ -2304,6 +4173,13 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
 /// Give every pooled player a mind (call once after the initial pool build).
 fn seed_minds(w: &mut World, rng: &mut Pcg64Mcg) {
     w.minds = (0..w.pool.len()).map(|_| PlayerMind::new(rng)).collect();
+    if let Some(i) = w.pool.iter().position(|p| p.name == "Aditya Singh") {
+        w.minds[i].ambition = 0.92;
+        w.minds[i].loyalty = 0.55;
+        w.minds[i].greed = 0.55;
+        w.minds[i].professionalism = 0.95;
+        w.minds[i].contract_happiness = 0.72;
+    }
 }
 
 // ── One season ─────────────────────────────────────────────────────────
@@ -2381,9 +4257,12 @@ fn reset_season(w: &mut World) {
 }
 
 fn intl_kind_for(year: u16) -> IntlKind {
-    // World Cup 2026/2030/2034…, Euros 2028/2032…, AFC Asian Cup 2027/2031/2035
-    // (midway between World Cups, the real calendar), nothing relevant in
-    // CWC years (Club World Cup 2029, 2033).
+    // World Cup 2026/2030/2034…, Euros 2028/2032…, AFC Asian Cup 2027/2031/2035.
+    // The Club World Cup years (2029/2033/2037…) are now also the window
+    // for the world's other major continental championships: Copa América,
+    // AFCON and the CONCACAF Gold Cup rotate through them, one every four
+    // years, so each federation gets its own full international tournament
+    // rather than only friendlies.
     if year % 4 == 2 {
         IntlKind::WorldCup
     } else if year % 4 == 0 {
@@ -2391,7 +4270,11 @@ fn intl_kind_for(year: u16) -> IntlKind {
     } else if year % 4 == 3 {
         IntlKind::AsianCup
     } else {
-        IntlKind::None
+        match (year / 4) % 3 {
+            0 => IntlKind::CopaAmerica,
+            1 => IntlKind::Afcon,
+            _ => IntlKind::GoldCup,
+        }
     }
 }
 
@@ -2424,7 +4307,14 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     for li in 0..BIG5.len() {
         let ids = w.league_teams[li].clone();
         if ids.len() >= 4 {
-            run_league(&ids, &mut w.teams, &mut w.pool, &mut w.minds, &w.params, rng);
+            run_league(
+                &ids,
+                &mut w.teams,
+                &mut w.pool,
+                &mut w.minds,
+                &w.params,
+                rng,
+            );
         }
     }
 
@@ -2452,7 +4342,14 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     for li in (BIG5.len() + 1)..w.league_teams.len() {
         let ids = w.league_teams[li].clone();
         if ids.len() >= 4 {
-            run_league(&ids, &mut w.teams, &mut w.pool, &mut w.minds, &w.params, rng);
+            run_league(
+                &ids,
+                &mut w.teams,
+                &mut w.pool,
+                &mut w.minds,
+                &w.params,
+                rng,
+            );
         }
     }
     let mut extra_tables: Vec<Vec<usize>> = Vec::new();
@@ -2525,8 +4422,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     // Domestic cups (one knockout per league). The winning manager's career
     // record credits it like any other trophy — a cup is a cup.
     let mut cup_winners: Vec<(String, String)> = Vec::new();
-    let mut cup_result: Vec<Option<(usize, usize)>> =
-        vec![None; w.league_teams.len()];
+    let mut cup_result: Vec<Option<(usize, usize)>> = vec![None; w.league_teams.len()];
     for li in 0..w.league_teams.len() {
         if li == 5 {
             continue; // European Outsiders contest Europe, not a domestic cup
@@ -2551,8 +4447,12 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     // the domestic cup, and the winner banks a minor honour + a manager trophy.
     let mut super_cups: Vec<(String, String)> = Vec::new();
     for li in 0..BIG5.len() {
-        let Some(&champ) = tables[li].first() else { continue };
-        let Some((cup_w, cup_f)) = cup_result[li] else { continue };
+        let Some(&champ) = tables[li].first() else {
+            continue;
+        };
+        let Some((cup_w, cup_f)) = cup_result[li] else {
+            continue;
+        };
         let runner = tables[li].get(1).copied();
         // Build the participant list for this league's format, in the real
         // seeding order, then dedupe (a Double winner collapses entries, which
@@ -2611,7 +4511,10 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     }
     let mut fifths: Vec<usize> = tables.iter().filter_map(|t| t.get(4).copied()).collect();
     fifths.sort_by(|&a, &b| {
-        w.teams[b].strength.partial_cmp(&w.teams[a].strength).unwrap_or(std::cmp::Ordering::Equal)
+        w.teams[b]
+            .strength
+            .partial_cmp(&w.teams[a].strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     for &t in fifths.iter().take(4) {
         if !ucl.contains(&t) {
@@ -2655,13 +4558,20 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         d2 += 1;
     }
     let europa_winner = if europa.len() >= 8 {
-        run_cup(&europa, Comp::Europa, &mut w.teams, &mut w.pool, &w.params, rng)
-            .map(|t| {
-                w.teams[t].el_titles += 1;
-                w.teams[t].manager.trophies += 1;
-                w.teams[t].name.clone()
-            })
-            .unwrap_or_else(|| "-".to_string())
+        run_cup(
+            &europa,
+            Comp::Europa,
+            &mut w.teams,
+            &mut w.pool,
+            &w.params,
+            rng,
+        )
+        .map(|t| {
+            w.teams[t].el_titles += 1;
+            w.teams[t].manager.trophies += 1;
+            w.teams[t].name.clone()
+        })
+        .unwrap_or_else(|| "-".to_string())
     } else {
         "-".to_string()
     };
@@ -2689,18 +4599,31 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         if field.len() < 4 {
             return None;
         }
-        let win = run_cup(&field, Comp::League, &mut w.teams, &mut w.pool, &w.params, rng)?;
+        // Confederation cups land in the Europa bucket, not the league: their
+        // goals/apps are continental production, not DB-club league stats.
+        let win = run_cup(
+            &field,
+            Comp::Europa,
+            &mut w.teams,
+            &mut w.pool,
+            &w.params,
+            rng,
+        )?;
         w.teams[win].manager.trophies += 1;
         Some(win)
     };
     let afc_winner_idx = confed_cup(crate::world_model::Confederation::AFC, &mut w, rng);
-    let concacaf_winner_idx =
-        confed_cup(crate::world_model::Confederation::CONCACAF, &mut w, rng);
-    let conmebol_winner_idx =
-        confed_cup(crate::world_model::Confederation::CONMEBOL, &mut w, rng);
-    let afc_winner = afc_winner_idx.map(|t| w.teams[t].name.clone()).unwrap_or_else(|| "-".to_string());
-    let concacaf_winner = concacaf_winner_idx.map(|t| w.teams[t].name.clone()).unwrap_or_else(|| "-".to_string());
-    let conmebol_winner = conmebol_winner_idx.map(|t| w.teams[t].name.clone()).unwrap_or_else(|| "-".to_string());
+    let concacaf_winner_idx = confed_cup(crate::world_model::Confederation::CONCACAF, &mut w, rng);
+    let conmebol_winner_idx = confed_cup(crate::world_model::Confederation::CONMEBOL, &mut w, rng);
+    let afc_winner = afc_winner_idx
+        .map(|t| w.teams[t].name.clone())
+        .unwrap_or_else(|| "-".to_string());
+    let concacaf_winner = concacaf_winner_idx
+        .map(|t| w.teams[t].name.clone())
+        .unwrap_or_else(|| "-".to_string());
+    let conmebol_winner = conmebol_winner_idx
+        .map(|t| w.teams[t].name.clone())
+        .unwrap_or_else(|| "-".to_string());
 
     // Register this season's continental champions for CWC qualification.
     if let Some(t) = ucl_winner_idx {
@@ -2749,15 +4672,18 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         // Coefficient fill: continental record first, then strength.
         let mut cands: Vec<usize> = (0..w.teams.len())
             .filter(|&t| {
-                !field.contains(&t)
-                    && w.league_meta[w.teams[t].league_idx].confed == Some(confed)
+                !field.contains(&t) && w.league_meta[w.teams[t].league_idx].confed == Some(confed)
             })
             .collect();
         cands.sort_by(|&a, &b| {
             let (ta, tb) = (&w.teams[a], &w.teams[b]);
             (tb.ucl_titles + tb.el_titles)
                 .cmp(&(ta.ucl_titles + ta.el_titles))
-                .then(tb.strength.partial_cmp(&ta.strength).unwrap_or(std::cmp::Ordering::Equal))
+                .then(
+                    tb.strength
+                        .partial_cmp(&ta.strength)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
         });
         for &t in &cands {
             if field.len() >= quota {
@@ -2790,10 +4716,32 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
                 }
             }
         };
-        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::UEFA, 12, "UCL"));
-        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::CONMEBOL, 6, "CONMEBOL"));
-        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::AFC, 4, "AFC"));
-        add(&mut field, cwc_quota_field(&w, crate::world_model::Confederation::CONCACAF, 4, "CONCACAF"));
+        add(
+            &mut field,
+            cwc_quota_field(&w, crate::world_model::Confederation::UEFA, 12, "UCL"),
+        );
+        add(
+            &mut field,
+            cwc_quota_field(
+                &w,
+                crate::world_model::Confederation::CONMEBOL,
+                6,
+                "CONMEBOL",
+            ),
+        );
+        add(
+            &mut field,
+            cwc_quota_field(&w, crate::world_model::Confederation::AFC, 4, "AFC"),
+        );
+        add(
+            &mut field,
+            cwc_quota_field(
+                &w,
+                crate::world_model::Confederation::CONCACAF,
+                4,
+                "CONCACAF",
+            ),
+        );
         // OFC: Auckland FC when present (New Zealand's flagship now plays in
         // the A-League block, and would take the Oceania slot by the real rules).
         if let Some(t) = w.teams.iter().position(|t| t.name.starts_with("Auckland")) {
@@ -2803,7 +4751,11 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         }
         // Host nation: USA lifts an MLS slot, Mexico a Liga MX one — rotating
         // (2029 USA, 2033 Mexico, 2037 USA… if hosts have enough teams left).
-        let host_label = if (year / 4) % 2 == 0 { "MLS" } else { "Liga MX" };
+        let host_label = if (year / 4) % 2 == 0 {
+            "MLS"
+        } else {
+            "Liga MX"
+        };
         if let Some(li) = w.league_meta.iter().position(|m| m.label == host_label) {
             for (k, table) in extra_tables.iter().enumerate() {
                 let li2 = BIG5.len() + 1 + k;
@@ -2817,12 +4769,19 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
             }
         }
         if field.len() >= 8 {
-            run_cup(&field, Comp::League, &mut w.teams, &mut w.pool, &w.params, rng)
-                .map(|t| {
-                    w.teams[t].manager.trophies += 1;
-                    w.teams[t].name.clone()
-                })
-                .unwrap_or_else(|| "-".to_string())
+            run_cup(
+                &field,
+                Comp::League,
+                &mut w.teams,
+                &mut w.pool,
+                &w.params,
+                rng,
+            )
+            .map(|t| {
+                w.teams[t].manager.trophies += 1;
+                w.teams[t].name.clone()
+            })
+            .unwrap_or_else(|| "-".to_string())
         } else {
             "-".to_string()
         }
@@ -2851,7 +4810,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
             for p in w.pool.iter_mut() {
                 p.fatigue = p.fatigue.min(25);
             }
-            let mut nations = build_nations(&w.pool, kind, &wc_hosts);
+            let mut nations = build_nations(&w.pool, kind, &wc_hosts, false, &w.national_states);
             if kind == IntlKind::WorldCup {
                 // ── Defending-champion reality check ────────────────────
                 // Repeats are real (Brazil '58/'62) but belong to nations
@@ -2872,9 +4831,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
                             .pool
                             .iter()
                             .filter(|p| {
-                                !p.retired
-                                    && p.nation == champ
-                                    && p.ovr as i32 >= xi_level - 3
+                                !p.retired && p.nation == champ && p.ovr as i32 >= xi_level - 3
                             })
                             .count();
                         // Genuine elite sides (a France/Brazil-class XI) keep
@@ -2886,7 +4843,11 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
                         let repeat_drag = if depth >= 16 {
                             0.99 // true dynasty depth
                         } else if depth >= 12 {
-                            if elite_xi { 0.975 } else { 0.955 }
+                            if elite_xi {
+                                0.975
+                            } else {
+                                0.955
+                            }
                         } else if elite_xi {
                             0.965
                         } else {
@@ -2908,6 +4869,11 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
             } else {
                 run_international(&mut nations, &mut w.pool, &w.params, rng)
             };
+            // Persist the tournament build-up: chemistry and caps carry into
+            // the friendly windows and the next cycle.
+            for n in &nations {
+                w.national_states.insert(n.name.clone(), n.state.clone());
+            }
             if kind == IntlKind::WorldCup {
                 if let Some(name) = &winner {
                     if name != "-" {
@@ -2936,27 +4902,182 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
         w.host_queue.push(next);
     }
 
-    // Friendlies (every non-World-Cup year): a one-round international window
-    // so the whole world's footballers get real top-level minutes, caps and
-    // goals — the mechanism that actually develops outsider-league players
-    // and gives their Ballon scores genuine international volume. Every built
-    // nation (up to 16 pairs) plays one friendly; caps and goals land, but no
-    // "result" is recorded (friendlies don't move the resume the way majors
-    // do).
-    if intl_kind != IntlKind::WorldCup {
-        let mut nations = build_nations(&w.pool, IntlKind::None, &[]);
-        nations.sort_by(|a, b| {
-            b.strength
-                .partial_cmp(&a.strength)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let mut pairs: Vec<(usize, usize)> = Vec::new();
-        let n = nations.len().min(32);
-        for i in 0..n / 2 {
-            pairs.push((i, n - 1 - i));
+    // Friendlies (every year, World Cup included): a broad four-window
+    // calendar so the whole world's footballers get real international
+    // minutes, caps and goals — the mechanism that actually develops
+    // outsider-league players and gives their Ballon scores genuine
+    // international volume. Unlike the old one-round top-32 block, this
+    // uses every federation with a bare XI (neighbors and low-level sides
+    // included) and gives each nation three to five matches: regional
+    // derbies, similar-strength games, and an occasional giant-vs-minnow
+    // mismatch. Caps and goals land, but no "result" is recorded
+    // (friendlies don't move the resume the way majors do).
+    {
+        let mut nations = build_nations(&w.pool, IntlKind::None, &[], true, &w.national_states);
+        if nations.len() >= 2 {
+            // Index order is strongest-first (build_nations sorts).
+            let n = nations.len();
+            // Round 0: similar strength. Round 1: same-confederation,
+            // nearest strength. Round 2: shuffled. Round 3: strongest vs
+            // weakest (the minnow-vs-giant showcase). Each nation plays at
+            // most once per round; the pool drains as matches are played.
+            for round in 0..4u32 {
+                let mut avail: Vec<usize> = (0..n).collect();
+                if round == 2 {
+                    avail.shuffle(rng);
+                }
+                let mut pairs: Vec<(usize, usize)> = Vec::new();
+                if round == 3 {
+                    // Giant-vs-minnow showcase: strongest vs weakest.
+                    for i in 0..(n / 2) {
+                        pairs.push((i, n - 1 - i));
+                    }
+                } else if round == 1 {
+                    // Regional window: greedy same-confederation pairing,
+                    // nearest strength first; leftovers pair cross-confederation.
+                    let mut used = vec![false; n];
+                    for &a in &avail {
+                        if used[a] {
+                            continue;
+                        }
+                        let ca = crate::world_model::confed_of(&nations[a].name);
+                        let mut best: Option<usize> = None;
+                        let mut best_gap = f32::INFINITY;
+                        for &b in &avail {
+                            if b == a || used[b] {
+                                continue;
+                            }
+                            if crate::world_model::confed_of(&nations[b].name) != ca {
+                                continue;
+                            }
+                            let gap = (nations[a].strength - nations[b].strength).abs();
+                            if gap < best_gap {
+                                best_gap = gap;
+                                best = Some(b);
+                            }
+                        }
+                        if let Some(b) = best {
+                            used[a] = true;
+                            used[b] = true;
+                            pairs.push((a, b));
+                        }
+                    }
+                    for &a in &avail {
+                        if used[a] {
+                            continue;
+                        }
+                        let mut best: Option<usize> = None;
+                        let mut best_gap = f32::INFINITY;
+                        for &b in &avail {
+                            if b == a || used[b] {
+                                continue;
+                            }
+                            let gap = (nations[a].strength - nations[b].strength).abs();
+                            if gap < best_gap {
+                                best_gap = gap;
+                                best = Some(b);
+                            }
+                        }
+                        if let Some(b) = best {
+                            used[a] = true;
+                            used[b] = true;
+                            pairs.push((a, b));
+                        }
+                    }
+                } else {
+                    // Similar-strength window (also used for shuffled round 2,
+                    // where `avail` is already shuffled so this is a random
+                    // draw against the grain of the strength sort).
+                    let mut used = vec![false; n];
+                    for &a in &avail {
+                        if used[a] {
+                            continue;
+                        }
+                        let mut best: Option<usize> = None;
+                        let mut best_gap = f32::INFINITY;
+                        for &b in &avail {
+                            if b == a || used[b] {
+                                continue;
+                            }
+                            let gap = (nations[a].strength - nations[b].strength).abs();
+                            if gap < best_gap {
+                                best_gap = gap;
+                                best = Some(b);
+                            }
+                        }
+                        if let Some(b) = best {
+                            used[a] = true;
+                            used[b] = true;
+                            pairs.push((a, b));
+                        }
+                    }
+                }
+                for (a, b) in pairs {
+                    let _ = play_nation(a, b, &nations, &mut w.pool, &w.params, rng);
+                    bump_chem(&mut nations, a, b);
+                }
+                // Drain fatigue between windows so a 4-match year doesn't
+                // leave everyone exhausted into the next season.
+                for p in w.pool.iter_mut() {
+                    if !p.retired {
+                        p.fatigue = p.fatigue.saturating_sub(20);
+                    }
+                }
+            }
         }
-        for (a, b) in pairs {
-            play_nation(a, b, &nations, &mut w.pool, &w.params, rng);
+        // Guest window: federations too thin to field a real side still
+        // play — a real nation hosts anonymous regens who may or may not
+        // contain a decent player. Credit only ever lands on real players.
+        if nations.len() >= 4 {
+            use std::collections::HashMap;
+            let mut counts: HashMap<String, u32> = HashMap::new();
+            for p in w.pool.iter() {
+                if !p.retired && !p.intl_retired {
+                    *counts.entry(p.nation.clone()).or_default() += 1;
+                }
+            }
+            let mut guest_nations: Vec<String> = Vec::new();
+            for n in crate::world_model::nations() {
+                let name = n.name.to_string();
+                if !nations.iter().any(|x| x.name == name)
+                    && counts.get(&name).copied().unwrap_or(0) < 11
+                {
+                    guest_nations.push(name);
+                }
+            }
+            guest_nations.shuffle(rng);
+            for gname in guest_nations.into_iter().take(4) {
+                // Host: prefer a same-confederation nation, else anyone.
+                let gconf = crate::world_model::confed_of(&gname);
+                let host = nations
+                    .iter()
+                    .position(|x| crate::world_model::confed_of(&x.name) == gconf)
+                    .unwrap_or_else(|| rng.gen_range(0..nations.len()));
+                let cap = federation_capacity(&gname);
+                // Mostly weak journeymen; occasionally a one-off decent side.
+                let base = if rng.gen_bool(0.12) {
+                    66.0 + cap * 10.0
+                } else {
+                    48.0 + cap * 16.0
+                };
+                play_guest_friendly(host, &nations, base, &mut w.pool, &w.params, rng);
+                {
+                    let st = &mut nations[host].state;
+                    st.caps_together = st.caps_together.saturating_add(1);
+                    st.chemistry = (st.chemistry + 0.05).min(1.0);
+                    st.familiarity = (st.familiarity + 0.05).min(1.0);
+                }
+                for p in w.pool.iter_mut() {
+                    if !p.retired {
+                        p.fatigue = p.fatigue.saturating_sub(20);
+                    }
+                }
+            }
+        }
+        // Federation programme persist: chemistry and caps carry into next
+        // season, so settled squads keep their edge.
+        for n in &nations {
+            w.national_states.insert(n.name.clone(), n.state.clone());
         }
     }
 
@@ -2964,7 +5085,9 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     // Outlier scorers elsewhere remain visible in all-competitions charts and
     // trigger transfers, but do not displace elite-league scorers in this award.
     let mut boot_idx: Vec<usize> = (0..w.pool.len())
-        .filter(|&i| w.pool[i].team < w.teams.len() && w.teams[w.pool[i].team].league_idx < BIG5.len())
+        .filter(|&i| {
+            w.pool[i].team < w.teams.len() && w.teams[w.pool[i].team].league_idx < BIG5.len()
+        })
         .collect();
     boot_idx.sort_by(|&a, &b| w.pool[b].goals.cmp(&w.pool[a].goals));
     let bi = boot_idx[0];
@@ -3004,6 +5127,7 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
     // now carries media/reputation bias and a per-player narrative swing, so
     // the vote behaves like journalists', not a pure stat formula.
     let mut bd: Vec<(usize, f32)> = (0..w.pool.len())
+        .filter(|&i| w.teams[w.pool[i].team].league_idx < BIG5.len())
         .map(|i| {
             let team = &w.teams[w.pool[i].team];
             let lf = league_factor_for(team.league_idx, &w.league_meta);
@@ -3102,7 +5226,12 @@ fn run_one_season(mut w: &mut World, year: u16, rng: &mut Pcg64Mcg) -> SeasonOut
 
 /// Ballon d'Or score broken into named components so the report can justify
 /// the award bullet by bullet. Returns (total, components in display order).
-fn ballon_breakdown(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> (f32, Vec<(&'static str, String, f32)>) {
+fn ballon_breakdown(
+    w: &WP,
+    club_rep: u8,
+    year: u16,
+    league_factor: f32,
+) -> (f32, Vec<(&'static str, String, f32)>) {
     let mut parts: Vec<(&'static str, String, f32)> = Vec::new();
     let g = w.goals as f32 * 6.0;
     parts.push(("League goals", format!("{} × 6", w.goals), g));
@@ -3117,7 +5246,11 @@ fn ballon_breakdown(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> (f32
     // and country is rewarded, not just the domestic games.
     let total_apps = w.apps + w.ucl_apps + w.el_apps + w.intl_apps;
     let ap = total_apps as f32 * 0.35;
-    parts.push(("Appearances", format!("{} × 0.35 (all comps)", total_apps), ap));
+    parts.push((
+        "Appearances",
+        format!("{} × 0.35 (all comps)", total_apps),
+        ap,
+    ));
     let rt = (w.avg_rating() - 6.5).max(0.0) * 62.0;
     parts.push((
         "Average rating",
@@ -3127,11 +5260,29 @@ fn ballon_breakdown(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> (f32
     let lt = if w.league_won { 35.0 } else { 0.0 };
     parts.push((
         "League title",
-        if w.league_won { "won".to_string() } else { "no".to_string() },
+        if w.league_won {
+            "won".to_string()
+        } else {
+            "no".to_string()
+        },
         lt,
     ));
-    let ug = w.ucl_goals as f32 * 7.0;
-    parts.push(("UCL goals", format!("{} × 7", w.ucl_goals), ug));
+    // Knockout priority: a goal in the Champions League knockouts (and
+    // especially a deep run) counts more than a group-stage stat-pad.
+    let ucl_stage = match w.ucl_result {
+        5 => 1.30,
+        4 => 1.25,
+        3 => 1.15,
+        2 => 1.10,
+        1 => 1.05,
+        _ => 1.0,
+    };
+    let ug = w.ucl_goals as f32 * 7.0 * ucl_stage;
+    parts.push((
+        "UCL goals",
+        format!("{} × 7 ×{:.2} stage", w.ucl_goals, ucl_stage),
+        ug,
+    ));
     let ua = w.ucl_assists as f32 * 5.0;
     parts.push(("UCL assists", format!("{} × 5", w.ucl_assists), ua));
     let ur = match w.ucl_result {
@@ -3154,60 +5305,120 @@ fn ballon_breakdown(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> (f32
         _ => 0.0,
     };
     parts.push(("Europa run", run_label(w.el_result, "EL"), er));
-    let ig = w.intl_goals as f32 * 6.0;
-    parts.push(("International goals", format!("{} × 6", w.intl_goals), ig));
+    // Exploitation normalization: international goals only prove it at a
+    // major tournament. Friendlies (no tournament run at all — the big
+    // stat-padding window against weak or guest sides) count at a heavy
+    // discount; goals in a knockout run count at full weight and more.
+    let intl_w = match w.intl_result {
+        5 => 8.0,
+        4 => 7.5,
+        3 => 7.0,
+        2 => 7.0,
+        1 => 6.5,
+        _ => 2.0,
+    };
+    let ig = w.intl_goals as f32 * intl_w;
+    parts.push((
+        "International goals",
+        format!("{} ×{:.1}", w.intl_goals, intl_w),
+        ig,
+    ));
     let ia = w.intl_assists as f32 * 4.0;
-    parts.push(("International assists", format!("{} × 4", w.intl_assists), ia));
+    parts.push((
+        "International assists",
+        format!("{} × 4", w.intl_assists),
+        ia,
+    ));
     let ir = match w.intl_result {
         5 => 55.0,
         4 => 28.0,
         3 => 14.0,
         _ => 0.0,
     };
-    parts.push(("International run", run_label(w.intl_result, "tournament"), ir));
+    parts.push((
+        "International run",
+        run_label(w.intl_result, "tournament"),
+        ir,
+    ));
     // All-round game, weighted small so it only tips the award to a defender or
     // a holding midfielder in a genuinely monumental season (a Rodri/Modric or
     // a title-winning centre-back), never over a prolific forward in a normal
     // year. Ball-winning: a destroyer's tackles and interceptions.
     let dw = (w.tackles + w.interceptions) as f32 * 0.22;
-    parts.push(("Ball-winning", format!("{} tackles+int × 0.22", w.tackles + w.interceptions), dw));
+    parts.push((
+        "Ball-winning",
+        format!("{} tackles+int × 0.22", w.tackles + w.interceptions),
+        dw,
+    ));
     // Clean sheets reward the men who keep them — defenders and keepers only.
     let is_def = matches!(w.pos, Position::DEF | Position::GK);
-    let cs = if is_def { w.clean_sheets as f32 * 3.2 } else { 0.0 };
+    let cs = if is_def {
+        w.clean_sheets as f32 * 3.2
+    } else {
+        0.0
+    };
     parts.push(("Clean sheets", format!("{} × 3.2", w.clean_sheets), cs));
     // Defensive masterclass: a defender or keeper who anchors a title win with a
     // wall of clean sheets gets a one-off historic bump — the rare season a
     // Cannavaro/Maldini-type actually takes the Ballon off the forwards.
-    let rock = if is_def && w.league_won && w.clean_sheets >= 18 { 35.0 } else { 0.0 };
+    let rock = if is_def && w.league_won && w.clean_sheets >= 18 {
+        35.0
+    } else {
+        0.0
+    };
     parts.push((
         "Defensive masterclass",
-        if rock > 0.0 { format!("title + {} clean sheets", w.clean_sheets) } else { "no".to_string() },
+        if rock > 0.0 {
+            format!("title + {} clean sheets", w.clean_sheets)
+        } else {
+            "no".to_string()
+        },
         rock,
     ));
     // Control of the game: completed passes, dribbles and the final ball before
     // the chance — each tiny, so only a true metronome/creator climbs on them.
-    let poss = w.passes_cmp as f32 * 0.004 + w.dribbles_cmp as f32 * 0.05 + w.key_passes as f32 * 0.3;
+    let poss =
+        w.passes_cmp as f32 * 0.004 + w.dribbles_cmp as f32 * 0.05 + w.key_passes as f32 * 0.3;
     parts.push((
         "Build-up & creation",
-        format!("{} passes, {} dribbles, {} key passes", w.passes_cmp, w.dribbles_cmp, w.key_passes),
+        format!(
+            "{} passes, {} dribbles, {} key passes",
+            w.passes_cmp, w.dribbles_cmp, w.key_passes
+        ),
         poss,
     ));
     // Winning everything in one year is historic — a league + Champions League
     // double (the treble's spine) is rewarded over and above the parts, so the
     // heartbeat of a clean-sweep side (a Rodri/Modric year) can take the award.
-    let sweep = if w.league_won && w.ucl_result == 5 { 45.0 } else { 0.0 };
+    let sweep = if w.league_won && w.ucl_result == 5 {
+        45.0
+    } else {
+        0.0
+    };
     parts.push((
         "Clean-sweep season",
-        if sweep > 0.0 { "league + UCL".to_string() } else { "no".to_string() },
+        if sweep > 0.0 {
+            "league + UCL".to_string()
+        } else {
+            "no".to_string()
+        },
         sweep,
     ));
     // Underdog story: carrying a lower-reputation club to a Champions League
     // final or title is the stuff of legend and voters reward it — the
     // counterweight to the big-club media bias below.
-    let underdog = if club_rep < 78 && w.ucl_result >= 4 { 38.0 } else { 0.0 };
+    let underdog = if club_rep < 78 && w.ucl_result >= 4 {
+        38.0
+    } else {
+        0.0
+    };
     parts.push((
         "Underdog run",
-        if underdog > 0.0 { format!("deep UCL run at rep {}", club_rep) } else { "no".to_string() },
+        if underdog > 0.0 {
+            format!("deep UCL run at rep {}", club_rep)
+        } else {
+            "no".to_string()
+        },
         underdog,
     ));
     // The Ballon is voted by journalists, not computed — so two human factors
@@ -3216,13 +5427,21 @@ fn ballon_breakdown(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> (f32
     // Media & reputation: coverage follows the badge; a superclub star is seen,
     // debated and remembered more than an equal season at a provincial club.
     let media = (club_rep as f32 - 70.0).max(0.0) * 1.1;
-    parts.push(("Media & reputation", format!("club reputation {}", club_rep), media));
+    parts.push((
+        "Media & reputation",
+        format!("club reputation {}", club_rep),
+        media,
+    ));
     // Narrative swing: recency, storyline and voter whimsy — deterministic per
     // player per year (stable within a run), a bounded boost that reorders only
     // genuinely tight races. This is the subjectivity behind every real-world
     // Ballon controversy, instead of a purely robotic formula.
     let swing = ballon_narrative(&w.name, year);
-    parts.push(("Narrative & recency", "journalists' mood".to_string(), swing));
+    parts.push((
+        "Narrative & recency",
+        "journalists' mood".to_string(),
+        swing,
+    ));
     // Top-5-league bias: Ballon voters only watch the big leagues week in,
     // week out, so a player in a top-5 league gets full credit while a star in
     // an outsider league is judged at a discount. The multiplier is merciless
@@ -3271,23 +5490,18 @@ fn run_label(result: u8, comp: &str) -> String {
 
 /// Ballon d'Or league-prestige multiplier for a player, from the league he's
 /// playing in. Callers resolve `league_idx` against `World::league_meta` and
-/// pass this into the breakdown. Top-5 leagues keep full credit; UEFA
-/// outsiders (Porto/Ajax-tier) a small discount; CONMEBOL/CONCACAF/AFC a
-/// steeper one — so a world-class year elsewhere still competes only when
-/// it's undeniably historic (35+ goals, a continental title run). Rare true
-/// outsiders who blast through everything are still reachable.
-fn league_factor_for(league_idx: usize, meta: &[LeagueMeta]) -> f32 {
+/// pass this into the breakdown. Only the top five leagues count; everyone
+/// else scores zero — a 40-goal season in a small league earns headlines
+/// and a transfer, not the trophy.
+fn league_factor_for(league_idx: usize, _meta: &[LeagueMeta]) -> f32 {
+    // Big Five only for the Ballon d'Or: voters judge the award off the
+    // top-five leagues (plus Europe's elite competition and internationals).
+    // Everyone else scores zero — a 40-goal season in a small league earns
+    // headlines and a transfer, not the trophy.
     if league_idx < BIG5.len() {
-        return 1.0;
-    }
-    if league_idx == BIG5.len() {
-        return 0.68; // UEFA outsiders: Porto/Ajax-tier clubs
-    }
-    match meta.get(league_idx).and_then(|m| m.confed) {
-        Some(crate::world_model::Confederation::CONMEBOL) => 0.50,
-        Some(crate::world_model::Confederation::CONCACAF) => 0.44,
-        Some(crate::world_model::Confederation::AFC) => 0.38,
-        _ => 0.58,
+        1.0
+    } else {
+        0.0
     }
 }
 
@@ -3300,11 +5514,7 @@ fn ballon_score(w: &WP, club_rep: u8, year: u16, league_factor: f32) -> f32 {
 /// mean-reverts, and the best over-achieving manager takes a struggling giant's
 /// job — so Barça can slump and recover, Arsenal can have an era, and a great
 /// coach, not just a big badge, drives success.
-fn post_season_evolution(
-    w: &mut World,
-    tables: &[Vec<usize>],
-    rng: &mut Pcg64Mcg,
-) -> Vec<String> {
+fn post_season_evolution(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) -> Vec<String> {
     // 1. Reputation drift by league finish, with mean-reversion toward 65.
     for table in tables {
         let n = table.len();
@@ -3357,7 +5567,8 @@ fn post_season_evolution(
     fallers.sort_by(|&a, &b| w.teams[b].rep.cmp(&w.teams[a].rep)); // biggest club first
     for (i, &riser) in risers.iter().enumerate() {
         if let Some(&faller) = fallers.get(i) {
-            if w.teams[faller].rep > w.teams[riser].rep && w.teams[riser].manager.wants_bigger_job() {
+            if w.teams[faller].rep > w.teams[riser].rep && w.teams[riser].manager.wants_bigger_job()
+            {
                 let rq = w.teams[riser].manager.quality;
                 let fq = w.teams[faller].manager.quality;
                 let rname = w.teams[riser].manager.name.clone();
@@ -3386,7 +5597,10 @@ fn post_season_evolution(
         if rng.gen_bool(w.params.sack_worst_p.clamp(0.0, 1.0) as f64) {
             let old = w.teams[t].manager.name.clone();
             w.teams[t].manager = Manager::fresh_hire(rng, &w.params);
-            moves.push(format!("{} sacks {} after a dismal campaign", w.teams[t].name, old));
+            moves.push(format!(
+                "{} sacks {} after a dismal campaign",
+                w.teams[t].name, old
+            ));
         }
     }
     // Elite expectations: giants are judged on titles, not survival. A rep-88+
@@ -3397,7 +5611,10 @@ fn post_season_evolution(
         for (finish_pos, &t) in table.iter().enumerate() {
             let elite_rep = w.params.elite_rep.round() as u8;
             let elite_pos = w.params.elite_pos.round().max(1.0) as usize;
-            if w.teams[t].rep >= elite_rep && finish_pos + 1 > elite_pos && rng.gen_bool(w.params.sack_elite_p.clamp(0.0, 1.0) as f64) {
+            if w.teams[t].rep >= elite_rep
+                && finish_pos + 1 > elite_pos
+                && rng.gen_bool(w.params.sack_elite_p.clamp(0.0, 1.0) as f64)
+            {
                 let old = w.teams[t].manager.name.clone();
                 w.teams[t].manager = Manager::fresh_hire(rng, &w.params);
                 moves.push(format!(
@@ -3435,7 +5652,9 @@ fn post_season_evolution(
     // Every manager reviews the season (safety follows results) and regresses
     // slowly toward average — eras rise and fade.
     for t in 0..w.teams.len() {
-        w.teams[t].manager.regress(w.params.q_regress.clamp(0.8, 0.99));
+        w.teams[t]
+            .manager
+            .regress(w.params.q_regress.clamp(0.8, 0.99));
     }
     // Security follows overperformance, computed per league table.
     for table in tables {
@@ -3443,7 +5662,9 @@ fn post_season_evolution(
         by_rep.sort_by(|&a, &b| w.teams[b].rep.cmp(&w.teams[a].rep));
         for (finish_pos, &t) in table.iter().enumerate() {
             let rep_pos = by_rep.iter().position(|&x| x == t).unwrap_or(finish_pos);
-            w.teams[t].manager.review_season(rep_pos as i32 - finish_pos as i32);
+            w.teams[t]
+                .manager
+                .review_season(rep_pos as i32 - finish_pos as i32);
         }
     }
     // Age and impatience close the merry-go-round. Managers retire with rising
@@ -3459,10 +5680,7 @@ fn post_season_evolution(
         // poached for a national job, leaves at the top, or the board simply
         // craves a new voice — 30% per season. The fresh hire's inexperience
         // IS the transition dip that ends eras; no artificial nerf needed.
-        if w.teams[t].consec_titles >= 4
-            && w.teams[t].manager.seasons >= 3
-            && rng.gen_bool(0.30)
-        {
+        if w.teams[t].consec_titles >= 4 && w.teams[t].manager.seasons >= 3 && rng.gen_bool(0.30) {
             let old = w.teams[t].manager.name.clone();
             w.teams[t].manager = Manager::fresh_hire(rng, &w.params);
             moves.push(format!(
@@ -3492,11 +5710,9 @@ fn post_season_evolution(
     moves
 }
 
-
-
 fn retire_prob(age: u8, is_gk: bool, ovr: u8, lower_competition: bool) -> f64 {
-    if age >= 42 {
-        return 1.0; // hard cap — nobody plays on at 42
+    if age >= 45 {
+        return 1.0; // hard cap — literally nobody plays on at 45
     }
     let base = if is_gk && !lower_competition {
         // Goalkeepers age differently: the position survives on positioning
@@ -3551,32 +5767,32 @@ fn retire_prob(age: u8, is_gk: bool, ovr: u8, lower_competition: bool) -> f64 {
             _ => 0.99,
         }
     } else if ovr >= 86 {
-        // Elite outfielders can train/restore longer, so the curve shifts
-        // right without moving everyone's median to 38.
+        // Elites (Messi/Ronaldo class) log the longest careers: apex years
+        // at 27-29, then a genuinely elite player can go to 38-41 while a
+        // jobbing journeyman is gone by 35-36.
         match age {
-            0..=34 => 0.0,
-            35 => 0.04,
-            36 => 0.08,
-            37 => 0.16,
-            38 => 0.25,
-            39 => 0.32,
-            40 => 0.38,
-            41 => 0.25,
+            0..=36 => 0.0,
+            37 => 0.04,
+            38 => 0.08,
+            39 => 0.16,
+            40 => 0.25,
+            41 => 0.30,
+            42 => 0.40,
+            43 => 0.45,
             _ => 0.99,
         }
     } else {
-        // General men's professional outfield population: mode/median
-        // around 35, with most exits in the 34-36 window.
+        // General men's professional outfield population: with a prime
+        // window at 26-29, the median exit lands in the late 30s, not
+        // the mid-30s turnover earlier builds used.
         match age {
-            0..=33 => 0.0,
-            34 => 0.18,
-            35 => 0.42,
-            36 => 0.50,
-            37 => 0.35,
-            38 => 0.20,
-            39 => 0.12,
-            40 => 0.06,
-            41 => 0.02,
+            0..=35 => 0.0,
+            36 => 0.15,
+            37 => 0.40,
+            38 => 0.55,
+            39 => 0.45,
+            40 => 0.30,
+            41 => 0.15,
             _ => 0.99,
         }
     };
@@ -3734,8 +5950,7 @@ fn env_mult(academy: u8) -> f32 {
 /// 5 environments — the Ronaldo-cut is the rarest thing in football, not a
 /// level on a growth trajectory.
 fn proof_to_push_past_90(p: &WP) -> bool {
-    let prod = (p.goals + p.assists) >= 20
-        || (p.apps >= 25 && p.avg_rating() >= 8.15);
+    let prod = (p.goals + p.assists) >= 20 || (p.apps >= 25 && p.avg_rating() >= 8.15);
     let stage = p.ucl_result >= 3
         || p.el_result >= 3
         || p.intl_result >= 3
@@ -3745,6 +5960,29 @@ fn proof_to_push_past_90(p: &WP) -> bool {
 
 /// Complex-enough annual development: attributes grow toward potential while
 /// young, plateau in the prime, and decline with age (pace/stamina first).
+/// Generational shape: the "Messi at 39" profile. A late-career prime
+/// that defies the decline curve isn't random luck — it belongs to
+/// players whose technique, vision, dribbling and composure carry them
+/// after the legs go (and to keepers/defenders of a similar elite
+/// build). Generic veterans age on schedule; generational outliers
+/// occasionally don't.
+fn generational_shape(p: &WP) -> bool {
+    let a = &p.attrs;
+    match p.pos {
+        Position::FWD | Position::MID => {
+            a.passing >= 85
+                && a.vision >= 85
+                && a.dribbling >= 85
+                && a.composure >= 88
+                && a.stamina >= 58
+        }
+        Position::DEF => {
+            a.tackling >= 85 && a.heading >= 85 && a.composure >= 85 && a.passing >= 80
+        }
+        Position::GK => a.goalkeeping >= 90 && a.composure >= 86,
+    }
+}
+
 fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng: &mut Pcg64Mcg) {
     // Attributes live on the 0-100 scale, so a year's growth/decline moves a
     // few points (not one). Profiles change unevenly — pace and stamina fade
@@ -3755,6 +5993,33 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng
     let bump = |v: &mut u8, d: i32| {
         *v = (*v as i32 + d).clamp(1, 99) as u8;
     };
+    // Peak window: while it lasts, the player's key weapons all inch up
+    // together (peak_str 1..=2 attribute points a season). This is the
+    // 17/18 Salah year written into the aging model — a real, temporary,
+    // per-player surge, not a permanent rating slot change.
+    if p.peak > 0 {
+        match p.pos {
+            Position::FWD => {
+                bump(&mut p.attrs.shooting, p.peak_str as i32 / 2 + 1);
+                bump(&mut p.attrs.dribbling, 1);
+                bump(&mut p.attrs.composure, 1);
+            }
+            Position::MID => {
+                bump(&mut p.attrs.passing, p.peak_str as i32 / 2 + 1);
+                bump(&mut p.attrs.vision, 1);
+                bump(&mut p.attrs.dribbling, 1);
+            }
+            Position::DEF => {
+                bump(&mut p.attrs.tackling, p.peak_str as i32 / 2 + 1);
+                bump(&mut p.attrs.heading, 1);
+                bump(&mut p.attrs.composure, 1);
+            }
+            Position::GK => {
+                bump(&mut p.attrs.goalkeeping, 1);
+                bump(&mut p.attrs.composure, 1);
+            }
+        }
+    }
     // Growth slows near human limits (see grow_attr): even generational
     // talents stall around 92-94 in their best attributes (Messi/Ronaldo
     // peaked at 94 overall with real weaknesses elsewhere), instead of
@@ -3829,8 +6094,8 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng
                 Position::GK => grow_attr(&mut p.attrs.goalkeeping, 3, rng),
             }
         }
-    } else if p.age <= 25 && rng.gen_bool(dev_mid_p.clamp(0.0, 1.0) as f64) {
-        // Mid-twenties growth is slower, still environment-bound: who develops
+    } else if p.age <= 28 && rng.gen_bool(dev_mid_p.clamp(0.0, 1.0) as f64) {
+        // Late-twenties growth is slower, still environment-bound: who develops
         // and how far may approach the ceiling, but never pass it — the academy
         // wall holds there too. And the 90 wall holds harder: even in a 5★
         // academy, the roll above 90 only grows (one step) when the player
@@ -3848,31 +6113,30 @@ fn develop_player(p: &mut WP, dev_mid_p: f32, youth_boost: f32, academy: u8, rng
                     }
                 }
             } else {
-        match p.pos {
-            Position::FWD => grow_attr(&mut p.attrs.shooting, 3, rng),
-            Position::MID => grow_attr(&mut p.attrs.passing, 3, rng),
-            Position::DEF => grow_attr(&mut p.attrs.tackling, 3, rng),
-            Position::GK => grow_attr(&mut p.attrs.goalkeeping, 3, rng),
-        }
-        // Technique/mentality can still tick up in the mid-twenties.
-        if rng.gen_bool(0.4) {
-            match p.pos {
-                Position::FWD => grow_attr(&mut p.attrs.composure, 2, rng),
-                Position::MID => grow_attr(&mut p.attrs.vision, 2, rng),
-                Position::DEF => grow_attr(&mut p.attrs.composure, 2, rng),
-                Position::GK => grow_attr(&mut p.attrs.composure, 2, rng),
+                match p.pos {
+                    Position::FWD => grow_attr(&mut p.attrs.shooting, 3, rng),
+                    Position::MID => grow_attr(&mut p.attrs.passing, 3, rng),
+                    Position::DEF => grow_attr(&mut p.attrs.tackling, 3, rng),
+                    Position::GK => grow_attr(&mut p.attrs.goalkeeping, 3, rng),
+                }
+                // Technique/mentality can still tick up in the mid-twenties.
+                if rng.gen_bool(0.4) {
+                    match p.pos {
+                        Position::FWD => grow_attr(&mut p.attrs.composure, 2, rng),
+                        Position::MID => grow_attr(&mut p.attrs.vision, 2, rng),
+                        Position::DEF => grow_attr(&mut p.attrs.composure, 2, rng),
+                        Position::GK => grow_attr(&mut p.attrs.composure, 2, rng),
+                    }
+                }
             }
         }
-        }
-        }
-    } else if p.age >= 30 {
-        // Physical decline accelerates with age; technique fades far slower, so
-        // an ageing forward can drop pace yet keep finishing, vision, composure.
-        // Keepers are no exception forever: reflexes (goalkeeping) go from 33,
-        // command (composure) from 36 — a 37-year-old keeper is experienced,
-        // not ageless, so no more Karius-to-PSG-at-peak-value seasons.
-        let sev = 3 + (p.age.saturating_sub(31)) as i32; // ~3..12 points a year
-        bump(&mut p.attrs.pace, -rng.gen_range(2..=sev + 2));
+    } else if p.age >= 31 {
+        // Decline starts in the early 30s and builds gradually; technique
+        // fades far slower, so an ageing forward can lose pace yet keep
+        // finishing, vision, composure. Keepers decay latest: reflexes
+        // (goalkeeping) from 34, command (composure) from 37.
+        let sev = 2 + (p.age.saturating_sub(31)) as i32; // ~2..12 points a year
+        bump(&mut p.attrs.pace, -rng.gen_range(1..=sev + 2));
         bump(&mut p.attrs.stamina, -rng.gen_range(1..=sev + 2));
         if p.pos == Position::GK {
             if p.age >= 33 {
@@ -3934,14 +6198,21 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         let mut pools: HashMap<String, Vec<i32>> = HashMap::new();
         for p in &w.pool {
             if !p.retired && !p.intl_retired && p.nation.trim().len() >= 2 {
-                pools.entry(p.nation.clone()).or_default().push(p.ovr as i32);
+                pools
+                    .entry(p.nation.clone())
+                    .or_default()
+                    .push(p.ovr as i32);
             }
         }
         pools
             .into_iter()
             .map(|(nation, mut vals)| {
                 vals.sort_unstable_by(|a, b| b.cmp(a));
-                let floor = vals.get(10).copied().or_else(|| vals.last().copied()).unwrap_or(50);
+                let floor = vals
+                    .get(10)
+                    .copied()
+                    .or_else(|| vals.last().copied())
+                    .unwrap_or(50);
                 (nation, floor)
             })
             .collect()
@@ -3951,6 +6222,39 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             continue;
         }
         p.age = p.age.saturating_add(1);
+        // ── Peak window ──────────────────────────────────────────────────
+        // True top players don't merely plateau: they have a genuine
+        // "peak-form" stretch where their key weapons all click at once.
+        // Elites (88+) 24-31 enter on a professionalism-weighted roll;
+        // ultra-disciplined ones sometimes ride a second year. A rare
+        // "Indian summer" keeps a 33+ legend (the Messi-at-39 class) in
+        // an anomalous prime year instead of instant decline.
+        if p.peak > 0 {
+            p.peak = p.peak.saturating_sub(1);
+            if p.peak == 0 && w.minds[idx].professionalism > 0.7 && rng.gen_bool(0.22) {
+                // Extension: disciplined peaks sometimes run a second year.
+                p.peak = 1;
+            }
+        } else if p.ovr >= 85 && w.minds[idx].professionalism > 0.55 {
+            let roll = if p.age >= 24 && p.age <= 31 {
+                if p.ovr >= 92 {
+                    0.07
+                } else {
+                    0.045
+                }
+            } else if p.age >= 33 && p.age <= 41 && generational_shape(p) {
+                // Generational profile only: a late prime is a technique
+                // phenomenon (Messi's 90 passing/94 touch/89 vision), not a
+                // random veteran's. 10% a year in the window.
+                0.10
+            } else {
+                0.0
+            };
+            if roll > 0.0 && rng.gen_bool(roll) {
+                p.peak = if p.ovr >= 92 { rng.gen_range(2..=3) } else { 1 };
+                p.peak_str = if rng.gen_bool(0.5) { 2 } else { 1 };
+            }
+        }
         let yb = boosts.get(p.team).copied().unwrap_or(1.0);
         let ac = w.teams.get(p.team).map(|t| t.academy).unwrap_or(3);
         // Federation grant lifts effective academy quality for development:
@@ -3994,7 +6298,11 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             // a surprise to renegotiate from zero.
             let age_f = (1.0 - (p.age.saturating_sub(29)) as f32 * 0.12).max(0.35);
             let mult = (w.params.clause_mult + (p.ovr.saturating_sub(82)) as f32 * 0.12).min(3.0);
-            p.release_clause = Some((v * mult * age_f) as i64);
+            // A signed clause is fixed for the life of the deal. Reprice it
+            // only at renewal/final year or when the contract had no clause.
+            if p.release_clause.is_none() || p.locked <= 1 {
+                p.release_clause = Some((v * mult * age_f) as i64);
+            }
         } else {
             p.release_clause = None;
         }
@@ -4032,6 +6340,19 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
                     if m.loyalty < 0.65 || rng.gen_bool(0.45) {
                         m.requested = true;
                     }
+                    // Veteran holdout: an elite past prime who has turned
+                    // down the money will run the oath down and walk on a
+                    // free transfer, especially if he's ambitious or greedy.
+                    // This is the classic Bosman ending to a club legend's
+                    // tenure — sometimes mercernary, often inevitable.
+                    if p.age >= 29
+                        && p.ovr >= 85
+                        && (m.ambition > 0.7 || m.greed > 0.7)
+                        && rng.gen_bool(0.35)
+                    {
+                        m.requested = true;
+                        m.contract_happiness = m.contract_happiness.min(0.35);
+                    }
                 }
             }
         }
@@ -4064,6 +6385,20 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             w.minds[idx].requested = true;
             w.minds[idx].unhappy = true;
         }
+        // Payday restlessness: a greedy elite past 29 at a settled club
+        // pushes for a money move even mid-dynasty — the mercenary impulse
+        // that gives legends multi-club careers instead of one permanent
+        // home.
+        if p.age >= 29
+            && p.ovr >= 88
+            && !w.minds[idx].requested
+            && (w.minds[idx].greed > 0.75 || w.minds[idx].ambition > 0.85)
+            && rng.gen_bool(0.06)
+        {
+            w.minds[idx].requested = true;
+            w.minds[idx].unhappy = true;
+            w.minds[idx].contract_happiness = w.minds[idx].contract_happiness.min(0.45);
+        }
         let is_gk = p.pos == Position::GK;
         if !p.intl_retired {
             let national_floor = national_thresholds
@@ -4083,14 +6418,12 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         let wealthy_exile = w
             .teams
             .get(p.team)
-            .map(|t| {
-                t.league_idx >= 6 && !lower_competition && t.revenue_last >= 200
-            })
+            .map(|t| t.league_idx >= 6 && !lower_competition && t.revenue_last >= 200)
             .unwrap_or(false)
             && p.intl_retired
             && p.ovr >= 70;
         let raw_retire_prob = retire_prob(p.age, is_gk, p.ovr, lower_competition);
-        let club_retire_prob = if p.age >= 42 {
+        let club_retire_prob = if p.age >= 45 {
             1.0
         } else if wealthy_exile {
             raw_retire_prob * 0.75
@@ -4128,10 +6461,8 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
                 let wage_q = w.teams[p.team].rep >= 88
                     && (p.wage as f32) > (w.teams[p.team].revenue_last as f32) * 0.02;
                 let mercenary = w.minds[idx].ambition > 0.7;
-                let post_intl_payday = p.intl_retired
-                    && (wage_q
-                        || mercenary
-                        || rng.gen_bool(0.32));
+                let post_intl_payday =
+                    p.intl_retired && (wage_q || mercenary || rng.gen_bool(0.32));
                 if wage_q || mercenary || post_intl_payday {
                     // Find the richest leak league that fits.
                     let mut dest: Option<usize> = None;
@@ -4252,12 +6583,13 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
     let nation = if elite_trickle {
         // The one-in-a-hundred-years find: a once-in-a-generation talent
         // any academy could produce. Keep him local to the academy then.
-        w.teams.get(team).map(|t| t.nation.clone()).unwrap_or_default()
+        w.teams
+            .get(team)
+            .map(|t| t.nation.clone())
+            .unwrap_or_default()
     } else {
         match w.teams.get(team) {
-            Some(t) if !t.nation.trim().is_empty() && rng.gen_bool(0.60) => {
-                t.nation.clone()
-            }
+            Some(t) if !t.nation.trim().is_empty() && rng.gen_bool(0.60) => t.nation.clone(),
             _ if !w.nation_pool.is_empty() => {
                 w.nation_pool[rng.gen_range(0..w.nation_pool.len())].clone()
             }
@@ -4375,6 +6707,8 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         career_rating_sum: 0.0,
         career_rating_apps: 0,
         ballons: 0,
+        peak: 0,
+        peak_str: 1,
     });
     w.minds.push(PlayerMind::new(rng));
     idx
@@ -4443,7 +6777,11 @@ fn do_loan(
     w.pool[pi].on_loan = true;
     w.pool[pi].morale = 70;
     moved.insert(pi);
-    w.loans.push(SeasonLoan { player: pi, home: parent, away });
+    w.loans.push(SeasonLoan {
+        player: pi,
+        home: parent,
+        away,
+    });
     format!(
         "{} ({}, {}) -> {} (loan)",
         w.pool[pi].name,
@@ -4464,7 +6802,10 @@ fn record_nemesis(
 ) {
     let tension = tension.clamp(0.0, 1.0);
     if let Some(r) = w.nemesis.iter_mut().find(|r| {
-        r.actor_kind == actor_kind && r.actor_id == actor_id && r.target_kind == target_kind && r.target_id == target_id
+        r.actor_kind == actor_kind
+            && r.actor_id == actor_id
+            && r.target_kind == target_kind
+            && r.target_id == target_id
     }) {
         r.tension = (r.tension + tension).clamp(0.0, 1.0);
         r.memory = r.memory.saturating_add(1);
@@ -4482,24 +6823,40 @@ fn record_nemesis(
     }
 }
 
-fn nemesis_between(w: &World, actor_kind: &str, actor_id: usize, target_kind: &str, target_id: usize) -> f32 {
+fn nemesis_between(
+    w: &World,
+    actor_kind: &str,
+    actor_id: usize,
+    target_kind: &str,
+    target_id: usize,
+) -> f32 {
     w.nemesis
         .iter()
-        .filter(|r| r.actor_kind == actor_kind && r.actor_id == actor_id && r.target_kind == target_kind && r.target_id == target_id)
+        .filter(|r| {
+            r.actor_kind == actor_kind
+                && r.actor_id == actor_id
+                && r.target_kind == target_kind
+                && r.target_id == target_id
+        })
         .map(|r| r.tension)
         .fold(0.0f32, f32::max)
 }
 
-/// Bilateral willingness: may this player move to this buyer? Surplus men go
-/// anywhere within 15 rep points (ambitious ones refuse big steps down);
-/// settled starters need a clearly bigger club, a triggered clause, or a
-/// transfer request (which works laterally like a soft clause). One predicate
-/// for buyer- and seller-initiated paths alike, so neither can bypass it.
+/// Bilateral willingness: may this player move to this buyer? Remaining
+/// contract years are a negotiating position, not an immovable lock: with a
+/// credible offer from a bigger club, a player who is open to moving up can
+/// leave via a normal transfer, a triggered clause, or a negotiated
+/// mutual termination/buyout of the remaining deal. Surplus men go anywhere
+/// within 15 rep points (ambitious ones refuse big steps down); settled
+/// starters need a clearly bigger club, a triggered clause, or a transfer
+/// request (which works laterally like a soft clause). One predicate for
+/// buyer- and seller-initiated paths alike, so neither can bypass it.
 fn transfer_willing(
     surplus: bool,
     clause_deal: bool,
     requested: bool,
     ambition: f32,
+    loyalty: f32,
     buyer_rep: u8,
     seller_rep: u8,
     gap_clause: f32,
@@ -4509,21 +6866,30 @@ fn transfer_willing(
     contract_happiness: f32,
 ) -> bool {
     let desperate = requested || contract_happiness < 0.35;
-    // A release clause is the only clean way past a long committed deal.
+    // A release clause is the cleanest way past a long committed deal.
     if clause_deal {
         return buyer_rep as f32 + gap_clause >= seller_rep as f32;
     }
-    // Contract control: more than one firm year left means the paper deal
-    // is still the player's paper deal. Only a genuine requested exit can
-    // override it; desertion of a big club for a smaller one is not a default.
+    let open_to_move_up = desperate || (ambition >= 0.55 && loyalty <= 0.80);
+    let move_up = buyer_rep as f32 >= seller_rep as f32 + gap_starter;
+    // Contract years do not freeze a player. A bigger club's offer can be
+    // accepted when the player is genuinely open to moving up; the remaining
+    // deal is settled as part of the move. Downward or lateral desertion
+    // still requires a request/desperation.
     if locked > 1 {
-        return desperate && buyer_rep as f32 + gap_clause >= seller_rep as f32;
+        // A dissatisfied superstar will cash in even slightly laterally:
+        // fellow giants pay the money, money clears the clause.
+        if desperate && ovr >= 85 && contract_happiness < 0.5 {
+            return (buyer_rep as f32) + 10.0 >= seller_rep as f32 || (move_up && open_to_move_up);
+        }
+        return (desperate && buyer_rep as f32 + gap_clause >= seller_rep as f32)
+            || (move_up && open_to_move_up);
     }
-    // Final-year elite control: a world-class player under contract does not
-    // casually leave the top flight for a smaller club without either a
-    // request or a clause.
+    // Final-year elite control: a world-class player does not casually leave
+    // the top flight for a smaller club without a request, a clause, or a
+    // genuine move-up offer he is open to.
     if ovr >= 85 && locked > 0 && !desperate {
-        return false;
+        return move_up && open_to_move_up;
     }
     if ovr >= 85 && buyer_rep < seller_rep.saturating_sub(4) && contract_happiness > 0.45 {
         return false;
@@ -4535,6 +6901,28 @@ fn transfer_willing(
         buyer_rep as f32 + gap_clause >= seller_rep as f32
     } else {
         buyer_rep as f32 >= seller_rep as f32 + gap_starter
+    }
+}
+
+/// Resolve club-to-club fee negotiation. A release clause is not an asking
+/// price that can be bargained down: triggering it requires payment in full.
+fn agreed_transfer_fee(
+    ask: i64,
+    buyer_budget: i64,
+    seller_threshold: f32,
+    opening_pct: f32,
+    clause_deal: bool,
+) -> Option<i64> {
+    if clause_deal {
+        return (buyer_budget >= ask).then_some(ask);
+    }
+    let opening = (ask as f32 * opening_pct) as i64;
+    if opening as f32 >= ask as f32 * seller_threshold {
+        Some(opening)
+    } else if buyer_budget >= ask {
+        Some(ask)
+    } else {
+        None
     }
 }
 
@@ -4667,11 +7055,12 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     // amount of money. A calm board, a broke squad, or a transitional manager
     // changes how much of its real revenue share is actually deployed.
     let fallback = net::default_finance_weights();
-    let finance_model = net::finance_net(if w.params.finance_policy.len() == net::FINANCE_WEIGHTS {
-        &w.params.finance_policy
-    } else {
-        &fallback
-    });
+    let finance_model =
+        net::finance_net(if w.params.finance_policy.len() == net::FINANCE_WEIGHTS {
+            &w.params.finance_policy
+        } else {
+            &fallback
+        });
     let wage_bills: Vec<i64> = (0..w.teams.len()).map(|ti| wage_bill(w, ti)).collect();
     let prospect_ratios: Vec<f32> = w
         .teams
@@ -4788,9 +7177,16 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             match sell_surplus(w, ti, &mut moved) {
                 Some((v, name, dest, ovr, age, pot)) => {
                     deals_done += 1;
-                    if let Some(entry) =
-                        sale_line(w.params.log_fee.round() as i64, v, rl(v), name, dest, ovr, age, pot)
-                    {
+                    if let Some(entry) = sale_line(
+                        w.params.log_fee.round() as i64,
+                        v,
+                        rl(v),
+                        name,
+                        dest,
+                        ovr,
+                        age,
+                        pot,
+                    ) {
                         log.push(entry);
                     }
                 }
@@ -4826,8 +7222,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             .unwrap_or_else(|| (w.pool[pi].value as f32 * 1.8) as i64)
             .max(1);
         let agent = (fee as f32 * w.params.agent_fee) as i64;
-        let new_wage = (w.pool[pi].wage as f32
-            * (1.20 + w.minds[pi].greed * 0.25)) as i64;
+        let new_wage = (w.pool[pi].wage as f32 * (1.20 + w.minds[pi].greed * 0.25)) as i64;
         let mut destination: Option<(usize, f32)> = None;
         for buyer in 0..w.teams.len() {
             if buyer == seller || w.teams[buyer].league_idx >= BIG5.len() {
@@ -4836,8 +7231,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             if w.teams[buyer].rep <= w.teams[seller].rep + 5
                 || w.teams[buyer].budget < fee + agent
                 || fee + agent > (w.teams[buyer].revenue_last as f32 * 0.35) as i64
-                || wage_bill(w, buyer) + new_wage
-                    > wage_cap(w.teams[buyer].revenue_last, &w.params)
+                || wage_bill(w, buyer) + new_wage > wage_cap(w.teams[buyer].revenue_last, &w.params)
             {
                 continue;
             }
@@ -4852,7 +7246,9 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 destination = Some((buyer, score));
             }
         }
-        let Some((buyer, _)) = destination else { continue };
+        let Some((buyer, _)) = destination else {
+            continue;
+        };
         let seller_name = w.teams[seller].name.clone();
         let buyer_name = w.teams[buyer].name.clone();
         let player_name = w.pool[pi].name.clone();
@@ -4953,10 +7349,18 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 }
                 for &pi in &w.teams[seller].players {
                     let p = &w.pool[pi];
-                    if moved.contains(&pi) || p.on_loan || p.retired || p.locked > 0 {
+                    // Contract years do not hide a prospect from scouts: a
+                    // committed kid is simply more expensive (priced below),
+                    // not invisible. Only loans/retired players are off-market.
+                    if moved.contains(&pi) || p.on_loan || p.retired {
                         continue;
                     }
-                    if p.age > 22 || p.pot < p.ovr + 8 || p.ovr < 58 || p.pos == Position::GK {
+                    // Already-elite players need a smaller ceiling gap to be
+                    // worth a prospect bid; a 90-rated kid at 95 potential is
+                    // a real target even though he is not +8 from his floor.
+                    let gap_req = if p.ovr >= 88 { 4 } else { 8 };
+                    if p.age > 22 || p.pot < p.ovr + gap_req || p.ovr < 58 || p.pos == Position::GK
+                    {
                         continue;
                     }
                     // Step discipline: 17-18s move ONE rung; 19-21s two;
@@ -5019,7 +7423,10 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     ];
                     let (scout_score, scout_audit) = scout_model.audit(
                         "prospect",
-                        &format!("{} from {} -> {}", p.name, w.teams[seller].name, w.teams[buyer].name),
+                        &format!(
+                            "{} from {} -> {}",
+                            p.name, w.teams[seller].name, w.teams[buyer].name
+                        ),
                         &scout_inputs,
                     );
                     net::append_audit(&scout_audit);
@@ -5046,11 +7453,14 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             // level at real money, or when the books demand it.
             let base_now = market_value(w.pool[pi].ovr, w.pool[pi].age, w.pool[pi].pos) as f32;
             let transformative = ask as f32 >= w.teams[seller].revenue_last as f32 * 0.33;
-            let outgrown = w.pool[pi].ovr >= 74
-                && ask >= (base_now * 1.8) as i64
-                && w.pool[pi].age >= 19;
+            let outgrown =
+                w.pool[pi].ovr >= 74 && ask >= (base_now * 1.8) as i64 && w.pool[pi].age >= 19;
+            // A triggered below-market clause on an elite outlier is not a
+            // negotiation the seller can refuse; the market has already
+            // priced the exit. Treat it as an outgrown sale.
+            let clause_sale = is_clause_opportunity(&w.pool[pi]) && w.pool[pi].ovr >= 88;
             let distressed = w.teams[seller].cash < 0;
-            if !transformative && !outgrown && !distressed {
+            if !transformative && !outgrown && !clause_sale && !distressed {
                 continue;
             }
             let agent = (ask as f32 * w.params.agent_fee) as i64;
@@ -5077,8 +7487,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             w.pool[pi].homegrown = false;
             w.pool[pi].locked = 3 + (rng.gen::<u8>() % 3);
             w.pool[pi].release_clause = None;
-            w.pool[pi].value = (market_value(w.pool[pi].ovr, w.pool[pi].age, w.pool[pi].pos)
-                as f32
+            w.pool[pi].value = (market_value(w.pool[pi].ovr, w.pool[pi].age, w.pool[pi].pos) as f32
                 * w.inflation) as i64;
             w.pool[pi].wage = ((w.pool[pi].value as f32 * 2.0 / 5.0) as i64).max(1);
             w.pool[pi].morale = 75;
@@ -5119,11 +7528,12 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
     // their number comes up. Ambition sets attempts, not priority.
     order.shuffle(rng);
     let manager_fallback = net::default_manager_weights();
-    let manager_model = net::manager_net(if w.params.manager_policy.len() == net::MANAGER_WEIGHTS {
-        &w.params.manager_policy
-    } else {
-        &manager_fallback
-    });
+    let manager_model =
+        net::manager_net(if w.params.manager_policy.len() == net::MANAGER_WEIGHTS {
+            &w.params.manager_policy
+        } else {
+            &manager_fallback
+        });
 
     for &buyer in &order {
         // Scouting knowledge: a manager fully knows their own league, plus a
@@ -5136,15 +7546,17 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 continue;
             }
             for &pi in &w.teams[ti].players.clone() {
-                if w.teams[ti].league_idx == buyer_league || rng.gen_bool(0.40) {
+                let elite_visible = (w.pool[pi].ovr >= 90 && w.pool[pi].age <= 24)
+                    || (w.pool[pi].pot >= 95 && w.pool[pi].age <= 21);
+                if w.teams[ti].league_idx == buyer_league || elite_visible || rng.gen_bool(0.40) {
                     known.insert(pi);
                 }
             }
         }
         let buyer_wage_bill = wage_bill(w, buyer);
         let buyer_cap = wage_cap(w.teams[buyer].revenue_last, &w.params).max(1);
-        let buyer_wage_ratio = (buyer_wage_bill as f32 / w.teams[buyer].revenue_last.max(1) as f32)
-            .clamp(0.0, 1.0);
+        let buyer_wage_ratio =
+            (buyer_wage_bill as f32 / w.teams[buyer].revenue_last.max(1) as f32).clamp(0.0, 1.0);
         let buyer_prospect_ratio = if w.teams[buyer].players.is_empty() {
             0.0
         } else {
@@ -5185,7 +7597,9 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             &manager_inputs,
         );
         net::append_audit(&manager_audit);
-        let attempts = ((1.0 + w.teams[buyer].manager.ambition * 2.0) * (0.75 + manager_score * 0.5)).round() as i32; // 2..4
+        let attempts = ((1.0 + w.teams[buyer].manager.ambition * 2.0)
+            * (0.75 + manager_score * 0.5))
+            .round() as i32; // 2..4
         for _ in 0..attempts {
             let (need_pos, incumbent) = weakest_slot(&w.teams[buyer].players, &w.pool);
             let buyer_rep = w.teams[buyer].rep;
@@ -5193,7 +7607,8 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             // Find the best willing upgrade at the position of need, among players
             // this manager actually knows (same league fully scouted, ~40% of
             // the wider world). Unknown players can't be bid for.
-            let mut target: Option<(usize, i64, f32)> = None; // (idx, ask, rating)
+            let mut target: Option<(usize, i64, f32, f32)> = None;
+            // (idx, ask, selection score, incumbent at candidate's position)
             for ti in 0..w.teams.len() {
                 if ti == buyer {
                     continue;
@@ -5204,23 +7619,34 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     // Loaned players are not on the market mid-loan (recall them
                     // first in real life; here their parent simply doesn't list
                     // them, and the loanee can't sell what it doesn't own).
-                    // Locked players are only priced if a release clause gives
-                    // the buyer a clean legal route.
-                    if moved.contains(&pi)
-                        || (w.pool[pi].locked > 0
-                            && w.pool[pi].release_clause.is_none()
-                            && !w.minds[pi].requested)
-                        || !known.contains(&pi)
-                        || w.pool[pi].on_loan
-                    {
+                    // Remaining contract years are not an immovable lock: if a
+                    // buyer is making a real offer, transfer_willing decides
+                    // whether the player is open to moving up (or a clause /
+                    // request applies). Locked players are priced, not hidden.
+                    if moved.contains(&pi) || !known.contains(&pi) || w.pool[pi].on_loan {
                         continue;
                     }
                     let p = &w.pool[pi];
-                    if p.retired || p.pos != need_pos {
+                    if p.retired {
                         continue;
                     }
                     let rating = p.attrs.overall(p.pos) as f32;
-                    if rating < incumbent + w.params.min_improve {
+                    let Some(candidate_incumbent) = acquisition_incumbent(
+                        &w.teams[buyer].players,
+                        &w.pool,
+                        p,
+                        need_pos,
+                        incumbent,
+                    ) else {
+                        continue;
+                    };
+                    // A below-market clause on a true elite outlier is itself
+                    // a market inefficiency: even if the buyer's weakest
+                    // starter is already 98, a 95+ cheap-clause star is worth
+                    // pursuing as a future-proof investment.
+                    let improvement_ok = rating >= candidate_incumbent + w.params.min_improve
+                        || (is_clause_opportunity(p) && rating >= 95.0);
+                    if !improvement_ok {
                         continue;
                     }
                     // Seller's ask: a triggered release clause is a fixed price
@@ -5254,10 +7680,18 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                             ask = (ask as f32 * 1.6) as i64;
                         }
                     }
+                    // Bosman: an expired contract is a free move — no fee
+                    // changes hands; the destination buys the wages, not the
+                    // player (and fights for backups elsewhere, not for him).
+                    let bosman = p.locked == 0;
+                    if bosman {
+                        ask = 0;
+                    }
                     if w.minds[pi].requested {
                         ask = (ask as f32 * w.params.req_discount) as i64;
                     }
-                    if ask < 1 {
+                    // Zero asking only valid for a Bosman (free at will).
+                    if ask < 1 && !bosman {
                         continue;
                     }
                     let clause_deal = p.release_clause.map_or(false, |rc| ask >= rc);
@@ -5274,6 +7708,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                         clause_deal,
                         w.minds[pi].requested,
                         w.minds[pi].ambition,
+                        w.minds[pi].loyalty,
                         buyer_rep,
                         seller_rep,
                         w.params.gap_clause,
@@ -5289,14 +7724,21 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     // a 25yo prospect beats a 31yo backup by a clear margin —
                     // clubs buy futures, not pasts (no more Karius-to-PSG
                     // seasons). Thirty is the cliff edge, then 2 points a year.
-                    let score = rating - (p.age.saturating_sub(30) as f32) * 2.0;
-                    if target.map_or(true, |(_, _, br)| score > br) {
-                        target = Some((pi, ask, score));
+                    // A deep-undervalue clause on a true elite is the one
+                    // market inefficiency that should dominate the board.
+                    let mut score = rating - (p.age.saturating_sub(30) as f32) * 2.0;
+                    if is_clause_opportunity(p) && rating >= 95.0 {
+                        score += 25.0;
+                    } else {
+                        score -= p.age as f32 * 0.02;
+                    }
+                    if target.map_or(true, |(_, _, best_score, _)| score > best_score) {
+                        target = Some((pi, ask, score, candidate_incumbent));
                     }
                 }
             }
 
-            let (pi, ask, _rating) = match target {
+            let (pi, ask, _rating, target_incumbent) = match target {
                 Some(t) => t,
                 None => break, // nobody worth signing at the need position
             };
@@ -5304,13 +7746,22 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             // Squad registration has teeth at acquisition time: a full 25-man
             // squad must move someone out before buying — sell-to-buy for
             // space, exactly like the wage check below does for money.
+            // Exception: a deep-undervalue clause on an elite is a mandatory
+            // market inefficiency; the buyer can register him at the next
+            // registration even if no clean sell-to-buy destination exists.
             let active_here = w.teams[buyer]
                 .players
                 .iter()
                 .filter(|&&i| !w.pool[i].retired)
                 .count();
             if active_here >= MAX_REGISTERED && sell_surplus(w, buyer, &mut moved).is_none() {
-                continue; // no room and nothing movable — deal dead
+                let bargain_clause = w.pool[pi]
+                    .release_clause
+                    .is_some_and(|rc| ask >= rc && ask <= w.pool[pi].value / 2)
+                    && w.pool[pi].attrs.overall(w.pool[pi].pos) >= 95;
+                if !bargain_clause {
+                    continue; // no room and nothing movable — deal dead
+                }
             }
 
             // Bilateral negotiation between the two clubs' agents. The buyer
@@ -5320,17 +7771,23 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             // at full ask when affordable (a seller never turns down their own
             // asking price); otherwise the deal is dead this window.
             let seller = w.pool[pi].team;
-            let seller_threshold =
-                if w.minds[pi].requested || w.teams[seller].budget < 20 { w.params.sell_distress } else { w.params.sell_base };
-            let mut fee = (ask as f32 * w.params.open_pct) as i64;
-            let mut agreed = fee as f32 >= ask as f32 * seller_threshold;
-            if !agreed && (ask as f32) <= w.teams[buyer].budget as f32 {
-                fee = ask; // one improved bid, take it or leave it
-                agreed = true;
-            }
-            if !agreed {
+            let seller_threshold = if w.minds[pi].requested || w.teams[seller].budget < 20 {
+                w.params.sell_distress
+            } else {
+                w.params.sell_base
+            };
+            let clause_deal = w.pool[pi]
+                .release_clause
+                .is_some_and(|clause| ask >= clause);
+            let Some(fee) = agreed_transfer_fee(
+                ask,
+                w.teams[buyer].budget,
+                seller_threshold,
+                w.params.open_pct,
+                clause_deal,
+            ) else {
                 continue;
-            }
+            };
 
             // Financial Sustainability gate (UEFA-style squad-cost thinking):
             // no single deal may cost more than 35% of the buyer's annual
@@ -5362,9 +7819,7 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 let settled = best_xi_indices(&w.teams[seller].players, &w.pool).contains(&pi);
                 let ransom_mult = if superclasico { 5.0 } else { 3.0 };
                 let bound = superclasico || (rival && settled && !w.minds[pi].requested);
-                if bound
-                    && (w.pool[pi].value as f32 * ransom_mult) as i64 > fee.max(ask)
-                {
+                if bound && (w.pool[pi].value as f32 * ransom_mult) as i64 > fee.max(ask) {
                     continue;
                 }
             }
@@ -5374,12 +7829,19 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             // ambition, reputation gap, request status — so identical deals pass
             // for one individual and fail for another. Genuine need (a big gap
             // at the position) forces even a sceptical network's hand.
-            let need = ((w.pool[pi].attrs.overall(w.pool[pi].pos) as f32 - incumbent) / 10.0)
+            let mut need = ((w.pool[pi].attrs.overall(w.pool[pi].pos) as f32 - target_incumbent)
+                / 10.0)
                 .clamp(0.0, 1.0);
+            // A cheap-clause elite is an investment, not merely a one-slot
+            // upgrade: managers do not need a 10-point gap to pursue him.
+            if clause_deal && w.pool[pi].attrs.overall(w.pool[pi].pos) >= 95 {
+                need = need.max(0.55);
+            }
             let value_fit =
                 (1.0 - fee as f32 / (w.teams[buyer].budget.max(1)) as f32).clamp(0.0, 1.0);
             let wage_room = (1.0
-                - wage_bill(w, buyer) as f32 / (wage_cap(w.teams[buyer].revenue_last, &w.params).max(1)) as f32)
+                - wage_bill(w, buyer) as f32
+                    / (wage_cap(w.teams[buyer].revenue_last, &w.params).max(1)) as f32)
                 .clamp(0.0, 1.0);
             let rep_gap = ((buyer_rep as f32 - w.teams[seller].rep as f32) / 20.0 * 0.5 + 0.5)
                 .clamp(0.0, 1.0);
@@ -5401,7 +7863,16 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 if let Some(sale) = sell_surplus(w, buyer, &mut moved) {
                     if sale.0 >= w.params.log_fee.round() as i64 {
                         let to = sale.2.clone().unwrap_or_else(|| "smaller club".to_string());
-                        log.push((sale.0, format!("{} sold by {} to {} ({}m)", sale.1, w.teams[buyer].name, to, rl(sale.0))));
+                        log.push((
+                            sale.0,
+                            format!(
+                                "{} sold by {} to {} ({}m)",
+                                sale.1,
+                                w.teams[buyer].name,
+                                to,
+                                rl(sale.0)
+                            ),
+                        ));
                     }
                 }
             }
@@ -5420,7 +7891,16 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 if let Some(sale) = sell_surplus(w, buyer, &mut moved) {
                     if sale.0 >= w.params.log_fee.round() as i64 {
                         let to = sale.2.clone().unwrap_or_else(|| "smaller club".to_string());
-                        log.push((sale.0, format!("{} sold by {} to {} ({}m)", sale.1, w.teams[buyer].name, to, rl(sale.0))));
+                        log.push((
+                            sale.0,
+                            format!(
+                                "{} sold by {} to {} ({}m)",
+                                sale.1,
+                                w.teams[buyer].name,
+                                to,
+                                rl(sale.0)
+                            ),
+                        ));
                     }
                 }
                 if wage_bill(w, buyer) + new_wage > cap {
@@ -5467,7 +7947,8 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
             let (ovr, age) = (w.pool[pi].ovr, w.pool[pi].age);
             w.pool[pi].value = (market_value(ovr, age, w.pool[pi].pos) as f32 * w.inflation) as i64;
             // Greedy players negotiate a premium on top of the standard wage.
-            w.pool[pi].wage = (((w.pool[pi].value * 2 / 5).max(1) as f32) * w.minds[pi].wage_mult()) as i64;
+            w.pool[pi].wage =
+                (((w.pool[pi].value * 2 / 5).max(1) as f32) * w.minds[pi].wage_mult()) as i64;
             let departing_request = w.minds[pi].requested;
             // A completed move settles the player: request cleared, mood restored.
             w.minds[pi].requested = false;
@@ -5482,25 +7963,47 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                 let opening: f32 = if departing_request { 0.45 } else { 0.25 };
                 let story = format!(
                     "{} left {} for {} and carried the grudge forward",
-                    w.pool[pi].name,
-                    w.teams[seller].name,
-                    w.teams[buyer].name
+                    w.pool[pi].name, w.teams[seller].name, w.teams[buyer].name
                 );
-                w.pool[pi].morale = (w.pool[pi].morale as i32
-                    - ((opening * 20.0).round() as i32))
+                w.pool[pi].morale = (w.pool[pi].morale as i32 - ((opening * 20.0).round() as i32))
                     .clamp(30, 90) as u8;
                 record_nemesis(w, "player", pi, "club", seller, opening, story);
                 if buyer != seller {
-                    record_nemesis(w, "club", buyer, "club", seller, opening * 0.7, format!("{} bought {} from {}", w.teams[buyer].name, w.pool[pi].name, w.teams[seller].name));
+                    record_nemesis(
+                        w,
+                        "club",
+                        buyer,
+                        "club",
+                        seller,
+                        opening * 0.7,
+                        format!(
+                            "{} bought {} from {}",
+                            w.teams[buyer].name, w.pool[pi].name, w.teams[seller].name
+                        ),
+                    );
                 }
             }
             if fee >= w.params.log_fee.round() as i64 {
-                log.push((fee, format!("{} -> {} ({}m, +{}m agent)", w.pool[pi].name, w.teams[buyer].name, rl(fee), rl(agent))));
+                log.push((
+                    fee,
+                    format!(
+                        "{} -> {} ({}m, +{}m agent)",
+                        w.pool[pi].name,
+                        w.teams[buyer].name,
+                        rl(fee),
+                        rl(agent)
+                    ),
+                ));
             }
             // Star moves are always traceable, whatever the fee: a sub-threshold
             // 82+ move must never become a ghost in the career tables.
             if ovr >= 82 && fee < w.params.log_fee.round() as i64 {
-                star_lines.push(format!("{} -> {} ({}m)", w.pool[pi].name, w.teams[buyer].name, rl(fee)));
+                star_lines.push(format!(
+                    "{} -> {} ({}m)",
+                    w.pool[pi].name,
+                    w.teams[buyer].name,
+                    rl(fee)
+                ));
             }
             // Same for elite prospects: a teenager with a superstar ceiling
             // moving cheap is tomorrow's "where did he come from?" mystery.
@@ -5700,8 +8203,13 @@ fn build_contract_offer(
         0.25
     };
     let cap = wage_cap(team.revenue_last, params);
-    let wage_room = (1.0 - if cap > 0 { current_wage_bill as f32 / cap as f32 } else { 1.0 })
-        .clamp(0.0, 1.0);
+    let wage_room = (1.0
+        - if cap > 0 {
+            current_wage_bill as f32 / cap as f32
+        } else {
+            1.0
+        })
+    .clamp(0.0, 1.0);
     let elite_retention = p.ovr >= 82;
     let urgent = mind.requested || mind.unhappy;
     let demand = p.wage.max(market_wage);
@@ -5753,10 +8261,12 @@ fn build_contract_offer(
         0
     };
     let contract_happiness = if accepted {
-        (0.45 + mind.loyalty * 0.30 + (offer_ratio - 0.9).max(0.0) * 0.35
+        (0.45
+            + mind.loyalty * 0.30
+            + (offer_ratio - 0.9).max(0.0) * 0.35
             + (club_stage - 0.5) * 0.18
             - if mind.requested { 0.20 } else { 0.0 })
-            .clamp(0.0, 1.0)
+        .clamp(0.0, 1.0)
     } else {
         (0.25 + mind.loyalty * 0.20 - if mind.requested { 0.20 } else { 0.0 }).clamp(0.0, 1.0)
     };
@@ -5869,7 +8379,8 @@ fn settle_finances(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) {
         w.teams[t].prize_euro = ((ucl_prize + el_prize) * infl) as i64;
         // Unspent budgets mostly revert — boards reclaim war chests, so piles
         // can't ratchet forever on rollover alone.
-        w.teams[t].cash = (w.teams[t].cash + (w.teams[t].budget as f32 * 0.3) as i64).clamp(-500, 1500);
+        w.teams[t].cash =
+            (w.teams[t].cash + (w.teams[t].budget as f32 * 0.3) as i64).clamp(-500, 1500);
         w.teams[t].cash += revenue - wages - operating;
         // Treasury management: boards sweep everything above their reserve
         // target (300m + ambition × 700m) into dividends, infrastructure and
@@ -5951,9 +8462,7 @@ fn settle_finances(w: &mut World, tables: &[Vec<usize>], rng: &mut Pcg64Mcg) {
         let rev = w.teams[t].revenue_last;
         let ac = w.teams[t].academy;
         let national_cap = federation_academy_cap(&w.teams[t].nation);
-        let sustained_breakthrough = rev > 700
-            && w.teams[t].wealth >= 90
-            && rng.gen_bool(0.01);
+        let sustained_breakthrough = rev > 700 && w.teams[t].wealth >= 90 && rng.gen_bool(0.01);
         let allowed_cap = if sustained_breakthrough {
             (national_cap + 1).min(5)
         } else {
@@ -6015,16 +8524,19 @@ fn sell_surplus(
     for &pi in &w.teams[club].players {
         // Never sell another club's player, and never cash in a club-trained
         // youngster — prospects go out on loan, not onto the market.
-        // Contract control is explicit here: a seller may raid an expired
-        // deal, but a committed player cannot be dumped merely because he is
-        // not in the current XI. A transfer request or release clause is what
-        // makes the player legally/almost legally mercenary.
+        // A surplus man can still be parted with under a mutual
+        // termination/buyout when he is not in the XI and is not strongly
+        // attached: requested, unhappy with his deal, or low-loyalty players
+        // are sellable; a content, loyal contracted player is not dumped.
+        let mutual_exit = w.minds[pi].requested
+            || w.minds[pi].contract_happiness < 0.55
+            || w.minds[pi].loyalty < 0.45;
         if xi.contains(&pi)
             || moved.contains(&pi)
             || w.pool[pi].retired
             || w.pool[pi].on_loan
             || (w.pool[pi].homegrown && w.pool[pi].age <= 21)
-            || (w.pool[pi].locked > 0 && !w.minds[pi].requested)
+            || (w.pool[pi].locked > 0 && !mutual_exit)
         {
             continue;
         }
@@ -6096,10 +8608,14 @@ fn sell_surplus(
     ))
 }
 
-
-
-
-fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<usize> {
+fn run_cup(
+    field: &[usize],
+    comp: Comp,
+    teams: &mut [Team],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> Option<usize> {
     if field.len() < 8 {
         return None;
     }
@@ -6236,25 +8752,57 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
         let (a, b) = (round[0], round[1]);
         let asel = selectable(teams, a);
         let bsel = selectable(teams, b);
-        let hmd = matchday_squad(&asel, pool, teams[a].shape, &teams[a].manager.clone(), comp, rng);
-        let amd = matchday_squad(&bsel, pool, teams[b].shape, &teams[b].manager.clone(), comp, rng);
+        let hmd = matchday_squad(
+            &asel,
+            pool,
+            teams[a].shape,
+            &teams[a].manager.clone(),
+            comp,
+            rng,
+        );
+        let amd = matchday_squad(
+            &bsel,
+            pool,
+            teams[b].shape,
+            &teams[b].manager.clone(),
+            comp,
+            rng,
+        );
         let winner = if hmd.is_empty() || amd.is_empty() {
-            if rng.gen::<f32>() < 0.5 { a } else { b }
+            if rng.gen::<f32>() < 0.5 {
+                a
+            } else {
+                b
+            }
         } else {
             let axi = build_lineup(&hmd, pool);
             let bxi = build_lineup(&amd, pool);
-            let mut side_a = Side { players: &axi, ambition: teams[a].manager.ambition, quality: teams[a].manager.quality, threat: 1.0, shape: Some(team_shape(&teams[a])), width: 50, defensive_line: def_line(&teams[a]), bench: &[], crowd: 1.0 };
-            let mut side_b = Side { players: &bxi, ambition: teams[b].manager.ambition, quality: teams[b].manager.quality, threat: 1.0, shape: Some(team_shape(&teams[b])), width: 50, defensive_line: def_line(&teams[b]), bench: &[], crowd: 1.0 };
+            let mut side_a = Side {
+                players: &axi,
+                ambition: teams[a].manager.ambition,
+                quality: teams[a].manager.quality,
+                threat: 1.0,
+                shape: Some(team_shape(&teams[a])),
+                width: 50,
+                defensive_line: def_line(&teams[a]),
+                bench: &[],
+                crowd: 1.0,
+            };
+            let mut side_b = Side {
+                players: &bxi,
+                ambition: teams[b].manager.ambition,
+                quality: teams[b].manager.quality,
+                threat: 1.0,
+                shape: Some(team_shape(&teams[b])),
+                width: 50,
+                defensive_line: def_line(&teams[b]),
+                bench: &[],
+                crowd: 1.0,
+            };
             let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
             side_a.threat = ta;
             side_b.threat = tb;
-            let o = matchsim::simulate(
-                &side_a,
-                &side_b,
-                Venue::Neutral,
-                (0, 0),
-                rng,
-            );
+            let o = matchsim::simulate(&side_a, &side_b, Venue::Neutral, (0, 0), rng);
             apply_match(&o, comp, pool, p);
             if o.goals_a == o.goals_b {
                 // Level after 90': stronger shootout nerve (keeper + composure)
@@ -6288,9 +8836,21 @@ fn run_cup(field: &[usize], comp: Comp, teams: &mut [Team], pool: &mut [WP], p: 
 
 // ── National teams + tournaments ───────────────────────────────────────
 
-fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Nation> {
+fn build_nations(
+    pool: &[WP],
+    kind: IntlKind,
+    host_nations: &[String],
+    friendly: bool,
+    states: &std::collections::HashMap<String, NationalState>,
+) -> Vec<Nation> {
     let euro_only = kind == IntlKind::Euros;
     let asian_only = kind == IntlKind::AsianCup;
+    let confed_only = match kind {
+        IntlKind::CopaAmerica => Some(crate::world_model::Confederation::CONMEBOL),
+        IntlKind::Afcon => Some(crate::world_model::Confederation::CAF),
+        IntlKind::GoldCup => Some(crate::world_model::Confederation::CONCACAF),
+        IntlKind::None | IntlKind::WorldCup | IntlKind::Euros | IntlKind::AsianCup => None,
+    };
     let wc_field = kind == IntlKind::WorldCup;
     let mut by_nation: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, w) in pool.iter().enumerate() {
@@ -6313,13 +8873,25 @@ fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Na
                 continue;
             }
         }
+        if let Some(c) = confed_only {
+            // Continental championships outside the AFC: full confederation
+            // fields, so Argentina/Brazil dominate Copa América by merit and
+            // CAF's deep bench competes in AFCON, not just in friendlies.
+            if crate::world_model::confed_of(n) != c {
+                continue;
+            }
+        }
         by_nation.entry(n.to_string()).or_default().push(i);
     }
     let mut nations: Vec<Nation> = Vec::new();
     for (name, mut idxs) in by_nation {
         idxs.sort_by(|&a, &b| pool[b].ovr.cmp(&pool[a].ovr));
         idxs.truncate(23);
-        if idxs.len() < 15 {
+        // Major tournaments want a real 15+ pool; the friendly calendar is
+        // deliberately broader (neighbors and low-level nations with a bare
+        // XI) so small federations still get matches.
+        let min_pool = if friendly { 11 } else { 15 };
+        if idxs.len() < min_pool {
             continue;
         }
         let mut ov: Vec<f32> = idxs.iter().map(|&i| pool[i].ovr as f32).collect();
@@ -6346,28 +8918,152 @@ fn build_nations(pool: &[WP], kind: IntlKind, host_nations: &[String]) -> Vec<Na
             0.92
         };
         let programme_edge = 0.90 + federation_capacity(&name) * 0.10;
+        // Persisted federation programme: chemistry and familiarity carry
+        // across seasons (shared fixtures build them), so a settled side
+        // plays sharper than a one-off all-star roster.
+        let state = states.get(&name).cloned().unwrap_or_default();
         nations.push(Nation {
             name,
             players: idxs,
             strength: xi_overall,
             lineup: Vec::new(),
-            state: NationalState::default(),
+            state,
             edge: depth_edge * programme_edge,
         });
     }
-    nations.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
+    // Deterministic order: strength desc, then name asc. The HashMap above
+    // iterates in per-process random order; without the name tie-break,
+    // equal-strength nations would shuffle between runs and the whole
+    // world (and every focal save) would be irreproducible.
+    nations.sort_by(|a, b| {
+        b.strength
+            .partial_cmp(&a.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.name.cmp(&b.name))
+    });
     if wc_field {
         // 2026 allocation: hosts + confederation slots + playoffs (see
-        // qualify_wc_field).
-        let indexed: HashMap<String, (Vec<usize>, f32, f32)> = nations
+        // qualify_wc_field). The persisted federation state travels with
+        // the nation so chemistry survives the qualification round-trip.
+        let indexed: HashMap<String, (Vec<usize>, f32, f32, NationalState)> = nations
             .iter()
-            .map(|n| (n.name.clone(), (n.players.clone(), n.strength, n.edge)))
+            .map(|n| {
+                (
+                    n.name.clone(),
+                    (n.players.clone(), n.strength, n.edge, n.state.clone()),
+                )
+            })
             .collect();
         return qualify_wc_field(pool, &indexed, host_nations);
     }
-    let cap = if euro_only { 24 } else { 32 };
-    nations.truncate(cap);
+    if !friendly {
+        let cap = if euro_only { 24 } else { 32 };
+        nations.truncate(cap);
+    }
     nations
+}
+
+/// A no-name XI for a federation that has no real pool here (too thin to
+/// field a side). These are deliberate "irrelevant regens": generically
+/// competent journeymen who occasionally contain a decent player, but who
+/// leave no career record — friendlies only, never the majors.
+fn guest_xi(base: f32, rng: &mut Pcg64Mcg) -> Vec<MatchPlayer> {
+    fn attr(center: f32, rng: &mut Pcg64Mcg) -> u8 {
+        (center + rng.gen_range(-8.0..=8.0))
+            .round()
+            .clamp(28.0, 97.0) as u8
+    }
+    let shape: [(Position, usize); 4] = [
+        (Position::GK, 1),
+        (Position::DEF, 4),
+        (Position::MID, 3),
+        (Position::FWD, 3),
+    ];
+    let mut xi = Vec::with_capacity(11);
+    for (pos, count) in shape {
+        for _ in 0..count {
+            let id = 1_000_000 + xi.len();
+            let attrs = Attributes {
+                pace: attr(base, rng),
+                shooting: attr(base, rng),
+                passing: attr(base, rng),
+                dribbling: attr(base, rng),
+                tackling: attr(base, rng),
+                heading: attr(base, rng),
+                strength: attr(base, rng),
+                stamina: attr(base, rng),
+                vision: attr(base, rng),
+                composure: attr(base, rng),
+                goalkeeping: attr(base, rng),
+                first_touch: attr(base, rng),
+            };
+            let line = line_of(pos);
+            let (role, _) = best_role_for(&attrs, pos, line);
+            xi.push(MatchPlayer {
+                id,
+                pos,
+                role,
+                attrs,
+                start_fatigue: 0.0,
+                form: 1.0,
+                traits: Vec::new(),
+                weak_foot: 3,
+                foot: crate::model::Foot::Right,
+            });
+        }
+    }
+    xi
+}
+
+/// Play one friendly: a real nation (credited) against a guest XI
+/// (anonymous). The match result itself is discarded — only caps, goals
+/// and ratings for the real side's pool players are kept.
+fn play_guest_friendly(
+    real: usize,
+    nations: &[Nation],
+    guest_base: f32,
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) {
+    let axi = nation_xi(&nations[real].players, pool);
+    if axi.len() < 7 {
+        return;
+    }
+    let bxi = guest_xi(guest_base, rng);
+    let side_a = Side {
+        players: &axi,
+        ambition: 1.0,
+        quality: 1.0,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
+    let side_b = Side {
+        players: &bxi,
+        ambition: 1.0,
+        quality: 1.0,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &[],
+        crowd: 1.0,
+    };
+    let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
+    let sharp = std::env::var("FM_SHARP")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(2.0);
+    let mut side_a = side_a;
+    let mut side_b = side_b;
+    side_a.threat = ta.powf(sharp) * nations[real].edge;
+    side_b.threat = tb.powf(sharp);
+    let o = matchsim::simulate(&side_a, &side_b, Venue::Neutral, (0, 0), rng);
+    apply_match(&o, Comp::Intl, pool, p);
 }
 
 fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
@@ -6410,7 +9106,10 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
                 // national team fields its best eleven, not its most
                 // functional one.
                 let line_bonus = if line_of(w.pos) == line { 15.0 } else { 0.0 };
-                (w.ovr as f32 + line_bonus + best_role_for(&w.attrs, w.pos, line).1 * 0.02, s)
+                (
+                    w.ovr as f32 + line_bonus + best_role_for(&w.attrs, w.pos, line).1 * 0.02,
+                    s,
+                )
             })
             .collect();
         cands.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -6433,6 +9132,81 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
     xi
 }
 
+/// Reserves for a national match: up to 8 more players beyond the XI, best
+/// available per line (a keeper first, then the strongest unused bodies),
+/// so tournaments and friendlies actually have substitutes to use.
+fn nation_bench(players: &[usize], pool: &[WP], xi: &[MatchPlayer]) -> Vec<MatchPlayer> {
+    let in_xi = |pi: usize| xi.iter().any(|m| m.id == pi);
+    let mut rest: Vec<usize> = players.iter().copied().filter(|&pi| !in_xi(pi)).collect();
+    rest.sort_by(|&a, &b| pool[b].ovr.cmp(&pool[a].ovr));
+    let mut bench = Vec::with_capacity(8);
+    // Line coverage first: one reserve per line in turn, then best remaining.
+    for want in [0usize, 1, 2, 3] {
+        for &pi in &rest {
+            if bench.len() >= 8 {
+                break;
+            }
+            if line_of(pool[pi].pos) != want {
+                continue;
+            }
+            if bench.iter().any(|m: &MatchPlayer| m.id == pi) {
+                continue;
+            }
+            let w = &pool[pi];
+            let line = line_of(w.pos);
+            let (role, _) = best_role_for(&w.attrs, w.pos, line);
+            let m = 1.0 + (w.morale as f32 - 65.0) * 0.002;
+            bench.push(MatchPlayer {
+                id: pi,
+                pos: w.pos,
+                role,
+                attrs: w.attrs,
+                start_fatigue: (w.fatigue as f32 / 100.0).clamp(0.0, 1.0),
+                form: m.max(0.6),
+                traits: Vec::new(),
+                weak_foot: 3,
+                foot: crate::model::Foot::Right,
+            });
+        }
+    }
+    for &pi in &rest {
+        if bench.len() >= 8 {
+            break;
+        }
+        if bench.iter().any(|m: &MatchPlayer| m.id == pi) {
+            continue;
+        }
+        let w = &pool[pi];
+        let line = line_of(w.pos);
+        let (role, _) = best_role_for(&w.attrs, w.pos, line);
+        let m = 1.0 + (w.morale as f32 - 65.0) * 0.002;
+        bench.push(MatchPlayer {
+            id: pi,
+            pos: w.pos,
+            role,
+            attrs: w.attrs,
+            start_fatigue: (w.fatigue as f32 / 100.0).clamp(0.0, 1.0),
+            form: m.max(0.6),
+            traits: Vec::new(),
+            weak_foot: 3,
+            foot: crate::model::Foot::Right,
+        });
+    }
+    bench
+}
+
+/// Shared-fixture chemistry: every match together nudges both federations'
+/// chemistry and familiarity up. A settled side plays sharper than a
+/// one-off all-star roster.
+fn bump_chem(nations: &mut [Nation], a: usize, b: usize) {
+    for &i in [a, b].iter() {
+        let st = &mut nations[i].state;
+        st.caps_together = st.caps_together.saturating_add(1);
+        st.chemistry = (st.chemistry + 0.05).min(1.0);
+        st.familiarity = (st.familiarity + 0.05).min(1.0);
+    }
+}
+
 /// Build every national side in the pool for the World Cup field, then apply
 /// the 2026 qualification structure: hosts (USA/CAN/MEX) auto-qualified, then
 /// regional slots — UEFA 16, CAF 9, AFC 8, CONMEBOL 6, CONCACAF 3 extra,
@@ -6442,14 +9216,18 @@ fn nation_xi(players: &[usize], pool: &[WP]) -> Vec<MatchPlayer> {
 /// field degrades gracefully towards 48 without holes.
 fn qualify_wc_field(
     _pool: &[WP],
-    by_name: &HashMap<String, (Vec<usize>, f32, f32)>,
+    by_name: &HashMap<String, (Vec<usize>, f32, f32, NationalState)>,
     host_nations: &[String],
 ) -> Vec<Nation> {
     use crate::world_model::Confederation as C;
     let mut by_confed: HashMap<u8, Vec<(String, Vec<usize>, f32)>> = HashMap::new();
     let mut idx_of: HashMap<String, usize> = HashMap::new();
     let mut all: Vec<Nation> = Vec::new();
-    for (name, (idxs, strength, edge)) in by_name {
+    // Deterministic: iterate the map in name order, not HashMap order.
+    let mut sorted_names: Vec<&String> = by_name.keys().collect();
+    sorted_names.sort();
+    for name in sorted_names {
+        let (idxs, strength, edge, state) = &by_name[name];
         let confed = crate::world_model::confed_of(name);
         let code = match confed {
             C::UEFA => 1,
@@ -6460,11 +9238,102 @@ fn qualify_wc_field(
             C::OFC => 6,
         };
         idx_of.insert(name.clone(), all.len());
-        by_confed.entry(code).or_default().push((name.clone(), idxs.clone(), *strength));
-        all.push(Nation { name: name.clone(), players: idxs.clone(), strength: *strength, lineup: Vec::new(), state: NationalState::default(), edge: *edge });
+        by_confed
+            .entry(code)
+            .or_default()
+            .push((name.clone(), idxs.clone(), *strength));
+        all.push(Nation {
+            name: name.clone(),
+            players: idxs.clone(),
+            strength: *strength,
+            lineup: Vec::new(),
+            state: state.clone(),
+            edge: *edge,
+        });
     }
     for pool in by_confed.values_mut() {
-        pool.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+        pool.sort_by(|a, b| {
+            b.2.partial_cmp(&a.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+    }
+    // Qualification floor + combined ranking score. Pure XI-strength
+    // ordering is what let FIFA-rank-~100 India (str 68.3, but only 7
+    // players within 3 of XI level — a depth of a pub side) take a direct
+    // AFC slot simply because the database has fewer than eight deep AFC
+    // pools. Real qualification weighs world standing and squad depth, so
+    // does this: qscore = XI strength, docked for FIFA-rank distance past
+    // the top 55 (0.08/pt, max 6) and for a thin pool. India: 68.5 − ~3.6
+    // (rank 100) ≈ 64.9; China (rank 70): 68.6 − 1.2 ≈ 67.4. A genuinely
+    // stronger XI still wins on merit — the dock is a tiebreaker, not a
+    // wall (see the two-tier gate below).
+    // Hosts are exempt by protocol; the OFC's single slot is the world
+    // champion's path — the best OFC side qualifies even if its numbers
+    // are low, because there is no other OFC benchmark.
+    let rank_of = |name: &str| -> i32 {
+        crate::world_model::nations()
+            .into_iter()
+            .find(|n| n.name == name)
+            .map(|n| n.ranking as i32)
+            .unwrap_or(150)
+    };
+    let qscore = |name: &String| -> f32 {
+        let (idxs, s, _, _) = &by_name[name];
+        let rank = rank_of(name);
+        let rank_dock = (0.08 * ((rank - 55).max(0) as f32)).min(6.0);
+        let pool = idxs.len() as f32;
+        let depth_dock = if pool < 18.0 {
+            (18.0 - pool) * 0.3
+        } else {
+            0.0
+        };
+        *s - rank_dock - depth_dock
+    };
+    // World-standing gate, two tiers. In the curated ranking table every
+    // known nation is < 150; unknown nations sit at 150+. A *known* rank
+    // past ~85 (India 100, Thailand 107, Indonesia 123) cannot take a
+    // direct regional slot even if its database XI lifts it past 65 —
+    // that is the line between "AFC's 8th best on paper in a thin
+    // database" and an actual World Cup side. BUT it is not a forever
+    // ban: a rank-100 side whose XI genuinely reaches 70 (a World-Cup
+    // calibre XI — today's 48th seed sits near 67 — earned over years of
+    // federation investment, the Aditya arc) can still enter via the
+    // open merit fill. Direct slots stay rank-gated; merit is
+    // strength-gated for everyone.
+    // Unknown-rank nations stay strength-judged, so real-but-uncurated
+    // qualifiers (Venezuela etc.) are not punished for a missing entry.
+    let strength_of =
+        |name: &String| -> f32 { by_name.get(name).map(|(_, s, _, _)| *s).unwrap_or(0.0) };
+    let direct_eligible = |name: &String| -> bool {
+        if host_nations.iter().any(|h| h == name) {
+            return true;
+        }
+        let rank = rank_of(name);
+        if rank < 150 && rank > 85 {
+            return false;
+        }
+        strength_of(name) >= 65.0
+    };
+    let eligible = |name: &String| -> bool {
+        if host_nations.iter().any(|h| h == name) {
+            return true;
+        }
+        let rank = rank_of(name);
+        if rank < 150 && rank > 85 && strength_of(name) < 69.5 {
+            return false;
+        }
+        strength_of(name) >= 65.0
+    };
+    // Re-sort each confederation's queue by combined qualification score,
+    // not raw XI strength (see above).
+    for pool in by_confed.values_mut() {
+        pool.sort_by(|a, b| {
+            qscore(&b.0)
+                .partial_cmp(&qscore(&a.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
     }
     let mut chosen: Vec<String> = Vec::new();
     // Hosts first: they qualify automatically, inside the regional allocation.
@@ -6473,34 +9342,115 @@ fn qualify_wc_field(
             chosen.push(h.clone());
         }
     }
-    // Regional slots by confederation.
+    // Regional slots by confederation. Only eligible sides (strength
+    // floor) may take a direct slot — a slot nobody qualifies for stays
+    // empty here and is reallocated on merit below. Exception: OFC.
     for (code, slots) in [
         (1u8, 16usize), // UEFA
-        (2u8, 9),      // CAF
-        (3u8, 8),      // AFC
-        (4u8, 6),      // CONMEBOL
-        (5u8, 3),      // CONCACAF extra (hosts already in)
-        (6u8, 1),      // OFC
+        (2u8, 9),       // CAF
+        (3u8, 8),       // AFC
+        (4u8, 6),       // CONMEBOL
+        (5u8, 3),       // CONCACAF extra (hosts already in)
+        (6u8, 1),       // OFC
     ] {
         if let Some(list) = by_confed.get(&code) {
-            for (name, _, _) in list.iter().take(slots) {
-                if !chosen.contains(name) {
+            let mut taken = 0;
+            for (name, _, _) in list {
+                if taken >= slots {
+                    break;
+                }
+                if chosen.contains(name) {
+                    continue;
+                }
+                let ok = if code == 6 {
+                    true // OFC champion path
+                } else {
+                    direct_eligible(name)
+                };
+                if ok {
                     chosen.push(name.clone());
+                    taken += 1;
                 }
             }
         }
     }
-    // Intercontinental playoffs: best non-direct CAF + AFC nations.
+    // Intercontinental playoffs: best non-direct CAF + AFC nations. These
+    // are the classic earned-it routes (AFC's 9th-best side, the CAF
+    // playoff change-up), so they use the merit gate, not direct: a
+    // rank-100 federation whose XI has actually reached World-Cup class
+    // (69.5+) can fight its way in through the playoff. Year one it cannot
+    // — the XI is still 68-69 and stays out.
     let direct: Vec<String> = chosen.clone();
     for code in [2u8, 3u8] {
         if let Some(list) = by_confed.get(&code) {
             for (name, _, _) in list {
-                if !direct.contains(name) && !chosen.contains(name) {
+                if !direct.contains(name) && !chosen.contains(name) && eligible(name) {
                     chosen.push(name.clone());
                     break;
                 }
             }
         }
+    }
+    // Merit fill: any regional slot a confederation couldn't fill is
+    // reallocated to the best remaining nations worldwide by combined
+    // qualification score (not raw strength — that is what kept rank-100
+    // India out of the field instead of back in through the side door),
+    // so the field is always the full 48 (the real rulebook's fallback).
+    if chosen.len() < 48 {
+        let mut rest: Vec<String> = by_name
+            .iter()
+            .filter(|(name, _)| !chosen.contains(*name) && eligible(name))
+            .map(|(name, _)| name.clone())
+            .collect();
+        rest.sort_by(|a, b| {
+            qscore(b)
+                .partial_cmp(&qscore(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.cmp(b))
+        });
+        for name in rest.iter().take(48 - chosen.len()) {
+            chosen.push(name.clone());
+        }
+    }
+    // Last resort only: if the eligible world still cannot fill 48
+    // (an artificially thin database, never a real year), backfill by
+    // qscore so the tournament keeps its 48-team format. Never reached
+    // when 48 eligible nations exist.
+    if chosen.len() < 48 {
+        let mut rest: Vec<String> = by_name
+            .iter()
+            .filter(|(name, _)| !chosen.contains(*name))
+            .map(|(name, _)| name.clone())
+            .collect();
+        rest.sort_by(|a, b| {
+            qscore(b)
+                .partial_cmp(&qscore(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.cmp(b))
+        });
+        for name in rest.iter().take(48 - chosen.len()) {
+            chosen.push(name.clone());
+        }
+    }
+
+    // Forensic: near-miss audit for the two nations players always ask
+    // about (stderr only when FM_DEBUG_QUAL=1, so normal runs stay quiet).
+    if std::env::var("FM_DEBUG_QUAL").ok().as_deref() == Some("1") {
+        for suspect in ["India", "China PR", "Qatar", "Indonesia"] {
+            if let Some((_, s, _, _)) = by_name.get(suspect) {
+                eprintln!(
+                    "QUAL-DEBUG {} str={:.1} rank={} qscore={:.1} eligible={} direct={} chosen={}",
+                    suspect,
+                    *s,
+                    rank_of(suspect),
+                    qscore(&suspect.to_string()),
+                    eligible(&suspect.to_string()),
+                    direct_eligible(&suspect.to_string()),
+                    chosen.contains(&suspect.to_string())
+                );
+            }
+        }
+        eprintln!("QUAL-DEBUG chosen={}/48", chosen.len());
     }
 
     let mut out: Vec<Nation> = Vec::new();
@@ -6509,7 +9459,12 @@ fn qualify_wc_field(
             out.push(all[i].clone());
         }
     }
-    out.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap());
+    out.sort_by(|a, b| {
+        b.strength
+            .partial_cmp(&a.strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.name.cmp(&b.name))
+    });
     out
 }
 
@@ -6521,7 +9476,7 @@ fn qualify_wc_field(
 /// style bundles emerge here too). The hosts picked get an automatic slot and
 /// the home-crowd edge during the tournament.
 fn decide_next_hosts(w: &mut World, rng: &mut Pcg64Mcg) -> Vec<String> {
-    let mut nations = build_nations(&w.pool, IntlKind::None, &[]);
+    let mut nations = build_nations(&w.pool, IntlKind::None, &[], false, &w.national_states);
     nations.sort_by(|a, b| {
         b.strength
             .partial_cmp(&a.strength)
@@ -6533,11 +9488,7 @@ fn decide_next_hosts(w: &mut World, rng: &mut Pcg64Mcg) -> Vec<String> {
         .filter(|n| !w.recent_hosts.contains(&n.name))
         .collect();
     if cand.is_empty() {
-        return vec![
-            "United States".into(),
-            "Canada".into(),
-            "Mexico".into(),
-        ];
+        return vec!["United States".into(), "Canada".into(), "Mexico".into()];
     }
     cand.truncate(12);
     // Weighted committee vote (rank-weighted randomness layered on strength).
@@ -6560,8 +9511,7 @@ fn decide_next_hosts(w: &mut World, rng: &mut Pcg64Mcg) -> Vec<String> {
             .iter()
             .copied()
             .filter(|n| {
-                n.name != hosts[0]
-                    && crate::world_model::confed_of(&n.name) == winner_confed
+                n.name != hosts[0] && crate::world_model::confed_of(&n.name) == winner_confed
             })
             .collect();
         partners.sort_by(|a, b| {
@@ -6623,11 +9573,18 @@ fn run_world_cup_2026(
     let mut wclog: Vec<String> = Vec::new();
     wclog.push(format!("== World Cup {} ==", year));
     wclog.push(format!("hosts: {}", hosts.join(", ")));
+    // Tournament-only per-player accumulator (fresh each World Cup).
+    let mut wc_agg: HashMap<usize, WcAgg> = HashMap::new();
     // Order by strength, split into 4 pots (hosts first in pot 1 by strength of
     // their XI — the three hosts are bottom-of-pot-1? in the real structure
     // Pot 1 contains the hosts regardless; ordering by strength within pot 1.
     let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    order.sort_by(|&a, &b| {
+        nations[b]
+            .strength
+            .partial_cmp(&nations[a].strength)
+            .unwrap()
+    });
     for (k, &i) in order.iter().enumerate() {
         let xi_level = nations[i].strength as i32;
         let depth = pool
@@ -6642,14 +9599,30 @@ fn run_world_cup_2026(
             depth,
             nations[i].edge
         ));
-        let roster = nations[i]
-            .players
+        // Show the actual selected lineup (shape quotas + bench) the way a
+        // real match sheet reads, not the top-11 by raw overall.
+        let xi = nation_xi(&nations[i].players, pool);
+        let bench = nation_bench(&nations[i].players, pool, &xi);
+        let pos_tag = |mp: &MatchPlayer| match mp.pos {
+            crate::model::Position::GK => "GK",
+            crate::model::Position::DEF => "DF",
+            crate::model::Position::MID => "MF",
+            crate::model::Position::FWD => "FW",
+        };
+        let roster = xi
             .iter()
-            .take(11)
-            .map(|&pi| format!("{}({})", pool[pi].name, pool[pi].ovr))
+            .map(|mp| format!("{}({} {})", pool[mp.id].name, pos_tag(mp), pool[mp.id].ovr))
             .collect::<Vec<_>>()
             .join(", ");
         wclog.push(format!("    XI: {}", roster));
+        let subs = bench
+            .iter()
+            .map(|mp| format!("{}({} {})", pool[mp.id].name, pos_tag(mp), pool[mp.id].ovr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !subs.is_empty() {
+            wclog.push(format!("    SUBS: {}", subs));
+        }
     }
     let pot_size = (n / 4).max(1);
     let mut pots: Vec<Vec<usize>> = vec![Vec::new(); 4];
@@ -6670,12 +9643,20 @@ fn run_world_cup_2026(
     }
     let groups_n = (n / 4).max(1);
     let mut groups: Vec<Vec<usize>> = vec![Vec::new(); groups_n];
-    // Greedy pot-by-pot placement with confederation diversity.
+    // Greedy pot-by-pot placement with confederation diversity. The draw
+    // itself is random within each pot (as in real draws): without the
+    // shuffle, every year seeded the same and every strong side took the
+    // same group stage down to the last group.
     for poti in 0..4 {
-        let pot = pots[poti].clone();
+        let mut pot = pots[poti].clone();
+        pot.shuffle(rng);
         for &t in &pot {
             let my_confed = crate::world_model::confed_of(&nations[t].name);
-            let seen = |c: C, g: &[usize]| g.iter().filter(|&&x| crate::world_model::confed_of(&nations[x].name) == c).count();
+            let seen = |c: C, g: &[usize]| {
+                g.iter()
+                    .filter(|&&x| crate::world_model::confed_of(&nations[x].name) == c)
+                    .count()
+            };
             let mut best: Option<usize> = None;
             for gi in 0..groups.len() {
                 let g = &groups[gi];
@@ -6704,29 +9685,43 @@ fn run_world_cup_2026(
     // Group stage: round-robin (3/1/0), rank by points → GD → GF → strength.
     let mut advancers: Vec<usize> = Vec::new();
     let mut thirds: Vec<(i32, i32, u32, f32, usize)> = Vec::new();
-    let crowd = |t: usize| -> f32 {
-        if hosts.iter().any(|h| nations[t].name == *h) {
+    // Host crowd edge as a plain fn (no closure capture) so the WC loop
+    // can mutate nation chemistry between fixtures.
+    fn host_crowd(team: &Nation, hosts: &[String]) -> f32 {
+        if hosts.iter().any(|h| team.name == *h) {
             1.18 // home crowd at a hosted tournament
         } else {
             1.0
         }
-    };
+    }
     for g in &groups {
         let mut pts: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         let mut gd: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         let mut gf: HashMap<usize, u32> = g.iter().map(|&t| (t, 0)).collect();
         for a in 0..g.len() {
             for b in (a + 1)..g.len() {
-                let (hg, ag) = play_nation_crowd(
-                    g[a],
-                    g[b],
-                    nations,
-                    pool,
-                    p,
-                    rng,
-                    crowd(g[a]),
-                    crowd(g[b]),
-                );
+                let ca = host_crowd(&nations[g[a]], hosts);
+                let cb = host_crowd(&nations[g[b]], hosts);
+                let (hg, ag, wstats) = play_nation_crowd(g[a], g[b], nations, pool, p, rng, ca, cb);
+                absorb_wc_stats(&wstats, &mut wc_agg);
+                for s in &wstats {
+                    if s.id < pool.len() && pool[s.id].name.contains("Messi") {
+                        let opp = if s.side_a {
+                            nations[g[b]].name.clone()
+                        } else {
+                            nations[g[a]].name.clone()
+                        };
+                        wclog.push(format!(
+                            "  MESSI vs {} [GS {}-{}]: mins={} G={} A={} shots={} onT={} xG={:.2} KP={} BCC={} passes={}/{} dribbles={}/{} tackles={} INT={} fouls={} rating={:.2}",
+                            opp, hg, ag, s.minutes, s.goals, s.assists, s.shots,
+                            s.shots_on_target, s.xg, s.key_passes,
+                            s.big_chances_created, s.passes_cmp, s.passes_att,
+                            s.dribbles_cmp, s.dribbles_att, s.tackles,
+                            s.interceptions, s.fouls, s.rating
+                        ));
+                    }
+                }
+                bump_chem(nations, g[a], g[b]);
                 wclog.push(format!(
                     "GS {} {}-{} {}",
                     nations[g[a]].name, hg, ag, nations[g[b]].name
@@ -6751,7 +9746,12 @@ fn run_world_cup_2026(
                 .cmp(&pts[x])
                 .then(gd[y].cmp(&gd[x]))
                 .then(gf[y].cmp(&gf[x]))
-                .then(nations[*y].strength.partial_cmp(&nations[*x].strength).unwrap())
+                .then(
+                    nations[*y]
+                        .strength
+                        .partial_cmp(&nations[*x].strength)
+                        .unwrap(),
+                )
         });
         wclog.push(format!(
             "GROUP: {}",
@@ -6789,12 +9789,22 @@ fn run_world_cup_2026(
     // Seeded knockout bracket (R32 → RO16 → QF → SF → Final): top seed meets
     // the bottom seed first, winners advance in bracket order — no shuffle.
     let mut sorted = advancers.clone();
-    sorted.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    sorted.sort_by(|&a, &b| {
+        nations[b]
+            .strength
+            .partial_cmp(&nations[a].strength)
+            .unwrap()
+    });
     let mut bracket: Vec<usize> = Vec::with_capacity(sorted.len());
     let half = sorted.len() / 2;
+    // Cross the seeds (strongest vs weakest) but randomize which weak side
+    // each strong side draws — otherwise the same two nations meet in the
+    // same round every single cycle.
+    let mut bottom: Vec<usize> = sorted.iter().skip(sorted.len() - half).copied().collect();
+    bottom.shuffle(rng);
     for i in 0..half {
         bracket.push(sorted[i]);
-        bracket.push(sorted[sorted.len() - 1 - i]);
+        bracket.push(bottom[i]);
     }
     if sorted.len() % 2 == 1 {
         bracket.push(sorted[half]);
@@ -6814,10 +9824,39 @@ fn run_world_cup_2026(
             _ => "KO",
         };
         let mut next = Vec::new();
+        // Odd brackets (a degraded field) must never silently drop a
+        // seeded team: the strongest remaining side gets a logged bye.
         let mut i = 0;
+        if round.len() % 2 == 1 {
+            let bye = round[0];
+            next.push(bye);
+            wclog.push(format!("BYE {}", nations[bye].name));
+            i = 1;
+        }
         while i + 1 < round.len() {
             let (a, b) = (round[i], round[i + 1]);
-            let (ga, gb) = play_nation_crowd(a, b, nations, pool, p, rng, crowd(a), crowd(b));
+            let ca = host_crowd(&nations[a], hosts);
+            let cb = host_crowd(&nations[b], hosts);
+            let (ga, gb, wstats) = play_nation_crowd(a, b, nations, pool, p, rng, ca, cb);
+            absorb_wc_stats(&wstats, &mut wc_agg);
+            for s in &wstats {
+                if s.id < pool.len() && pool[s.id].name.contains("Messi") {
+                    let opp = if s.side_a {
+                        nations[b].name.clone()
+                    } else {
+                        nations[a].name.clone()
+                    };
+                    wclog.push(format!(
+                        "  MESSI vs {} [{} {}-{}]: mins={} G={} A={} shots={} onT={} xG={:.2} KP={} BCC={} passes={}/{} dribbles={}/{} tackles={} INT={} fouls={} rating={:.2}",
+                        opp, round_label, ga, gb, s.minutes, s.goals, s.assists,
+                        s.shots, s.shots_on_target, s.xg, s.key_passes,
+                        s.big_chances_created, s.passes_cmp, s.passes_att,
+                        s.dribbles_cmp, s.dribbles_att, s.tackles, s.interceptions,
+                        s.fouls, s.rating
+                    ));
+                }
+            }
+            bump_chem(nations, a, b);
             let (win, lose) = if ga > gb {
                 (a, b)
             } else if gb > ga {
@@ -6834,8 +9873,7 @@ fn run_world_cup_2026(
                 let nerve = |xi: &[MatchPlayer]| -> f32 {
                     xi.iter()
                         .map(|mp| {
-                            mp.attrs.goalkeeping as f32 * 0.3
-                                + mp.attrs.composure as f32 * 0.7
+                            mp.attrs.goalkeeping as f32 * 0.3 + mp.attrs.composure as f32 * 0.7
                         })
                         .sum::<f32>()
                 };
@@ -6849,12 +9887,7 @@ fn run_world_cup_2026(
             };
             wclog.push(format!(
                 "{} {} {}-{} {} -> {}",
-                round_label,
-                nations[a].name,
-                ga,
-                gb,
-                nations[b].name,
-                nations[win].name
+                round_label, nations[a].name, ga, gb, nations[b].name, nations[win].name
             ));
             if is_semi {
                 sf_losers.push(lose);
@@ -6885,16 +9918,27 @@ fn run_world_cup_2026(
     // Third-place playoff between the two semifinal losers.
     if sf_losers.len() == 2 {
         let [third, fourth] = [sf_losers[0], sf_losers[1]];
-        let (g1, g2) = play_nation_crowd(
-            third,
-            fourth,
-            nations,
-            pool,
-            p,
-            rng,
-            crowd(third),
-            crowd(fourth),
-        );
+        let ca = host_crowd(&nations[third], hosts);
+        let cb = host_crowd(&nations[fourth], hosts);
+        let (g1, g2, wstats) = play_nation_crowd(third, fourth, nations, pool, p, rng, ca, cb);
+        absorb_wc_stats(&wstats, &mut wc_agg);
+        for s in &wstats {
+            if s.id < pool.len() && pool[s.id].name.contains("Messi") {
+                let opp = if s.side_a {
+                    nations[fourth].name.clone()
+                } else {
+                    nations[third].name.clone()
+                };
+                wclog.push(format!(
+                    "  MESSI vs {} [3rd {}-{}]: mins={} G={} A={} shots={} onT={} xG={:.2} KP={} BCC={} passes={}/{} dribbles={}/{} tackles={} INT={} fouls={} rating={:.2}",
+                    opp, g1, g2, s.minutes, s.goals, s.assists, s.shots,
+                    s.shots_on_target, s.xg, s.key_passes, s.big_chances_created,
+                    s.passes_cmp, s.passes_att, s.dribbles_cmp, s.dribbles_att,
+                    s.tackles, s.interceptions, s.fouls, s.rating
+                ));
+            }
+        }
+        bump_chem(nations, third, fourth);
         wclog.push(format!(
             "3rd {} {}-{} {}",
             nations[third].name, g1, g2, nations[fourth].name
@@ -6911,6 +9955,99 @@ fn run_world_cup_2026(
                 pool[pi].intl_result = pool[pi].intl_result.max(3);
             } else {
                 pool[pi].intl_result = pool[pi].intl_result.max(2);
+            }
+        }
+    }
+    // ── Tournament player summary (auditable, WC-only, no friendlies) ──
+    // Messi first, in full — the 39-year-old Indian-summer use case.
+    {
+        let mut leaders: Vec<(&usize, &WcAgg)> =
+            wc_agg.iter().filter(|(_, a)| a.apps > 0).collect();
+        leaders.sort_by(|a, b| {
+            b.1.goals
+                .cmp(&a.1.goals)
+                .then(b.1.assists.cmp(&a.1.assists))
+                .then(b.1.apps.cmp(&a.1.apps))
+        });
+        for (id, a) in &leaders {
+            if **id < pool.len() && pool[**id].name.contains("Messi") {
+                let avg = if a.apps > 0 {
+                    a.rating_sum / a.apps as f32
+                } else {
+                    0.0
+                };
+                let pass_pct = if a.passes_att > 0 {
+                    100.0 * a.passes_cmp as f32 / a.passes_att as f32
+                } else {
+                    0.0
+                };
+                wclog.push(format!(
+                    "MESSI WC {} FINAL: apps={} G={} A={} shots={} onT={} xG={:.2} KP={} BCC={} passes={}/{} ({:.1}%) dribbles={}/{} tackles={} INT={} fouls={} avg_rating={:.2} ovr={} age={} peak_seasons={}",
+                    year,
+                    a.apps,
+                    a.goals,
+                    a.assists,
+                    a.shots,
+                    a.sot,
+                    a.xg,
+                    a.kp,
+                    a.bcc,
+                    a.passes_cmp,
+                    a.passes_att,
+                    pass_pct,
+                    a.dribbles_cmp,
+                    a.dribbles_att,
+                    a.tackles,
+                    a.interceptions,
+                    a.fouls,
+                    avg,
+                    pool[**id].ovr,
+                    pool[**id].age,
+                    pool[**id].peak
+                ));
+            }
+        }
+        // Full Argentina squad table (everyone who played a WC minute).
+        let arg_players: Vec<usize> = pool
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| p.nation == "Argentina" && wc_agg.contains_key(i))
+            .map(|(i, _)| i)
+            .collect();
+        if !arg_players.is_empty() {
+            wclog.push("--- Argentina WC squad (tournament-only) ---".to_string());
+            let mut rows: Vec<(usize, &WcAgg)> =
+                arg_players.iter().map(|&i| (i, &wc_agg[&i])).collect();
+            rows.sort_by(|a, b| b.1.apps.cmp(&a.1.apps).then(b.1.goals.cmp(&a.1.goals)));
+            for (id, a) in rows {
+                let avg = if a.apps > 0 {
+                    a.rating_sum / a.apps as f32
+                } else {
+                    0.0
+                };
+                wclog.push(format!(
+                    "  {} (ovr {} age {} peak {}): apps={} G={} A={} KP={} BCC={} avg={:.2}",
+                    pool[id].name,
+                    pool[id].ovr,
+                    pool[id].age,
+                    pool[id].peak,
+                    a.apps,
+                    a.goals,
+                    a.assists,
+                    a.kp,
+                    a.bcc,
+                    avg
+                ));
+            }
+        }
+        // Golden Boot (tournament) top 5, for context.
+        wclog.push("--- WC scoring leaders (tournament-only) ---".to_string());
+        for (id, a) in leaders.iter().take(5) {
+            if **id < pool.len() {
+                wclog.push(format!(
+                    "  {} ({}): apps={} G={} A={}",
+                    pool[**id].name, pool[**id].nation, a.apps, a.goals, a.assists
+                ));
             }
         }
     }
@@ -6936,7 +10073,7 @@ fn play_nation(
     pool: &mut [WP],
     p: &Params,
     rng: &mut Pcg64Mcg,
-) -> (u32, u32) {
+) -> (u32, u32, Vec<matchsim::MatchStats>) {
     return play_nation_crowd(a, b, nations, pool, p, rng, 1.0, 1.0);
 }
 
@@ -6949,56 +10086,91 @@ fn play_nation_crowd(
     rng: &mut Pcg64Mcg,
     crowd_a: f32,
     crowd_b: f32,
-) -> (u32, u32) {
+) -> (u32, u32, Vec<matchsim::MatchStats>) {
     let axi = nation_xi(&nations[a].players, pool);
     let bxi = nation_xi(&nations[b].players, pool);
     if axi.len() < 7 || bxi.len() < 7 {
-        return (0, 0);
+        return (0, 0, Vec::new());
     }
-    let mut side_a = Side { players: &axi, ambition: 1.0, quality: 1.0, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
-    let mut side_b = Side { players: &bxi, ambition: 1.0, quality: 1.0, threat: 1.0, shape: None, width: 50, defensive_line: 50, bench: &[], crowd: 1.0 };
+    // Real squads, not bare elevens: reserves take the bench so
+    // substitutions and rotation actually happen.
+    let abench = nation_bench(&nations[a].players, pool, &axi);
+    let bbench = nation_bench(&nations[b].players, pool, &bxi);
+    let chem = |i: usize| 0.95 + 0.10 * nations[i].state.chemistry;
+    let mut side_a = Side {
+        players: &axi,
+        ambition: 1.0,
+        quality: 1.0,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &abench,
+        crowd: 1.0,
+    };
+    let mut side_b = Side {
+        players: &bxi,
+        ambition: 1.0,
+        quality: 1.0,
+        threat: 1.0,
+        shape: None,
+        width: 50,
+        defensive_line: 50,
+        bench: &bbench,
+        crowd: 1.0,
+    };
     let (ta, tb) = matchsim::threat_ratio(&side_a, &side_b);
     // Nations meet too rarely for ordinary league variance: a 7-overall gap
     // between two squads of pooled national pros is worth far more in a final
     // than mid-season form suggests. Sharpen the gap (×1.5 on the ratio) so
     // the class difference is priced — favorites become *favorites* (70%+),
     // while a proper minnow run still needs repeated, genuinely lucky nights.
-    let sharp = std::env::var("FM_SHARP").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(2.0);
+    let sharp = std::env::var("FM_SHARP")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(2.0);
     // `edge` is the tournament-sharpness multiplier (defending-champion drag,
     // federation-programme form). It scales how the same eleven performs on
     // the day without touching their underlying class.
-    side_a.threat = ta.powf(sharp) * crowd_a * nations[a].edge;
-    side_b.threat = tb.powf(sharp) * crowd_b * nations[b].edge;
-    let o = matchsim::simulate(
-        &side_a,
-        &side_b,
-        Venue::Neutral,
-        (0, 0),
-        rng,
-    );
+    side_a.threat = ta.powf(sharp) * crowd_a * nations[a].edge * chem(a);
+    side_b.threat = tb.powf(sharp) * crowd_b * nations[b].edge * chem(b);
+    let o = matchsim::simulate(&side_a, &side_b, Venue::Neutral, (0, 0), rng);
+    let stats = o.stats.clone();
     apply_match(&o, Comp::Intl, pool, p);
-    (o.goals_a as u32, o.goals_b as u32)
+    (o.goals_a as u32, o.goals_b as u32, stats)
 }
 
-fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &mut Pcg64Mcg) -> Option<String> {
+fn run_international(
+    nations: &mut [Nation],
+    pool: &mut [WP],
+    p: &Params,
+    rng: &mut Pcg64Mcg,
+) -> Option<String> {
     let n = nations.len();
     if n < 4 {
         return None;
     }
     let groups_n = (n / 4).max(2);
     let mut seeded: Vec<usize> = (0..n).collect();
-    seeded.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    seeded.sort_by(|&a, &b| {
+        nations[b]
+            .strength
+            .partial_cmp(&nations[a].strength)
+            .unwrap()
+    });
     let mut groups: Vec<Vec<usize>> = vec![Vec::new(); groups_n];
     for (i, &t) in seeded.iter().enumerate() {
         groups[i % groups_n].push(t);
     }
     let mut advancing: Vec<usize> = Vec::new();
+    let mut thirds: Vec<(i32, i32, f32, usize)> = Vec::new();
     for g in &groups {
         let mut pts: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         let mut gd: HashMap<usize, i32> = g.iter().map(|&t| (t, 0)).collect();
         for a in 0..g.len() {
             for b in (a + 1)..g.len() {
-                let (hg, ag) = play_nation(g[a], g[b], nations, pool, p, rng);
+                let (hg, ag, _) = play_nation(g[a], g[b], nations, pool, p, rng);
+                bump_chem(nations, g[a], g[b]);
                 *gd.get_mut(&g[a]).unwrap() += hg as i32 - ag as i32;
                 *gd.get_mut(&g[b]).unwrap() += ag as i32 - hg as i32;
                 match hg.cmp(&ag) {
@@ -7013,7 +10185,24 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
         }
         let mut ranked = g.clone();
         ranked.sort_by(|x, y| pts[y].cmp(&pts[x]).then(gd[y].cmp(&gd[x])));
-        advancing.extend(ranked.into_iter().take(2));
+        for (k, &t) in ranked.iter().enumerate() {
+            if k < 2 {
+                advancing.push(t);
+            } else if k == 2 {
+                thirds.push((pts[&t], gd[&t], nations[t].strength, t));
+            }
+        }
+    }
+    // Fill the bracket to the next power of two with the best
+    // third-placed teams (the real Euro format: 12 + 4 thirds = 16).
+    thirds.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.cmp(&a.1))
+            .then(b.2.partial_cmp(&a.2).unwrap())
+    });
+    let target = advancing.len().next_power_of_two();
+    if advancing.len() < target {
+        advancing.extend(thirds.iter().take(target - advancing.len()).map(|x| x.3));
     }
     for &t in &advancing {
         for &pi in &nations[t].players {
@@ -7031,11 +10220,18 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
     // outcomes instead of Greece marching through six coin flips.
     let mut bracket: Vec<usize> = Vec::with_capacity(advancing.len());
     let mut sorted = advancing.clone();
-    sorted.sort_by(|&a, &b| nations[b].strength.partial_cmp(&nations[a].strength).unwrap());
+    sorted.sort_by(|&a, &b| {
+        nations[b]
+            .strength
+            .partial_cmp(&nations[a].strength)
+            .unwrap()
+    });
     let half = sorted.len() / 2;
+    let mut bottom: Vec<usize> = sorted.iter().skip(sorted.len() - half).copied().collect();
+    bottom.shuffle(rng);
     for i in 0..half {
         bracket.push(sorted[i]);
-        bracket.push(sorted[sorted.len() - 1 - i]);
+        bracket.push(bottom[i]);
     }
     if sorted.len() % 2 == 1 {
         bracket.push(sorted[half]);
@@ -7044,10 +10240,17 @@ fn run_international(nations: &mut [Nation], pool: &mut [WP], p: &Params, rng: &
     let mut tag = 2u8;
     while round.len() > 1 {
         let mut next = Vec::new();
+        // Degraded odd brackets give the top remaining seed a bye
+        // (logged nowhere but never dropped silently).
         let mut i = 0;
+        if round.len() % 2 == 1 {
+            next.push(round[0]);
+            i = 1;
+        }
         while i + 1 < round.len() {
             let (a, b) = (round[i], round[i + 1]);
-            let (ga, gb) = play_nation(a, b, nations, pool, p, rng);
+            let (ga, gb, _) = play_nation(a, b, nations, pool, p, rng);
+            bump_chem(nations, a, b);
             let win = if ga > gb {
                 a
             } else if gb > ga {
@@ -7115,9 +10318,12 @@ pub(crate) fn eval_seasons(
             .find(|t| t.name == o.ucl_winner)
             .map(|t| t.rep)
             .unwrap_or(0);
-        let belite = w.pool.iter().find(|p| p.name == o.ballon.0).map(|p| {
-            p.goals >= 20 && (p.league_won || p.ucl_result >= 2 || p.intl_result >= 3)
-        }).unwrap_or(false);
+        let belite = w
+            .pool
+            .iter()
+            .find(|p| p.name == o.ballon.0)
+            .map(|p| p.goals >= 20 && (p.league_won || p.ucl_result >= 2 || p.intl_result >= 3))
+            .unwrap_or(false);
         out.push(SeasonSample {
             champ_pts,
             champs: o.champions.clone(),
@@ -7137,7 +10343,8 @@ pub(crate) fn eval_seasons(
 
 // ── Public: single season (detailed) ───────────────────────────────────
 
-pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let mut rng = Pcg64Mcg::new(seed as u128 | 1);
+pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {
+    let mut rng = Pcg64Mcg::new(seed as u128 | 1);
     let params = Params::load().unwrap_or_default();
     let mut w = build_world(db, params, &mut rng);
     seed_minds(&mut w, &mut rng);
@@ -7197,7 +10404,13 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
 
     lines.push("## European Golden Boot (Big 5)".to_string());
     lines.push(String::new());
-    let mut boot: Vec<usize> = (0..w.pool.len()).collect();
+    // Same Big-5-only filter as the award itself (run_one_season); sorting
+    // the whole pool here used to leak Saudi/MLS scorers into the table.
+    let mut boot: Vec<usize> = (0..w.pool.len())
+        .filter(|&i| {
+            w.pool[i].team < w.teams.len() && w.teams[w.pool[i].team].league_idx < BIG5.len()
+        })
+        .collect();
     boot.sort_by(|&a, &b| w.pool[b].goals.cmp(&w.pool[a].goals));
     for &s in boot.iter().take(5) {
         let p = &w.pool[s];
@@ -7217,34 +10430,146 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     lines.push(String::new());
     lines.push("_Positions: GK, CB, BPD (ball-playing CB), FB, WB (wing-back), DM, DLP (deep playmaker), CM, AP (advanced playmaker), W (winger), IF (inside forward), SS (second striker), TM (target man), ST, F9 (false nine)._".to_string());
     lines.push(String::new());
-    let elig: Vec<usize> = (0..w.pool.len()).filter(|&i| w.pool[i].rating_apps > 0).collect();
-    let outfield: Vec<usize> = elig.iter().copied().filter(|&i| w.pool[i].pos != Position::GK).collect();
-    let elig_pass: Vec<usize> = outfield.iter().copied().filter(|&i| w.pool[i].passes_att >= 600).collect();
-    let elig_rate: Vec<usize> = elig.iter().copied().filter(|&i| w.pool[i].rating_apps >= 15).collect();
-    let gks: Vec<usize> = elig.iter().copied().filter(|&i| w.pool[i].pos == Position::GK).collect();
-    top10(&mut lines, "Goals", "G (A)", &w.pool, &w.teams, &elig,
-        |p| p.overall_goals() as f32, |p| format!("{} ({})", p.overall_goals(), p.overall_assists()));
-    top10(&mut lines, "Assists", "A (G)", &w.pool, &w.teams, &elig,
-        |p| p.overall_assists() as f32, |p| format!("{} ({})", p.overall_assists(), p.overall_goals()));
-    top10(&mut lines, "Big chances created", "BCC", &w.pool, &w.teams, &elig,
-        |p| p.big_chances as f32, |p| format!("{}", p.big_chances));
-    top10(&mut lines, "Key passes", "KP", &w.pool, &w.teams, &elig,
-        |p| p.key_passes as f32, |p| format!("{}", p.key_passes));
-    top10(&mut lines, "Dribbles completed", "Drb", &w.pool, &w.teams, &elig,
-        |p| p.dribbles_cmp as f32, |p| format!("{}", p.dribbles_cmp));
-    top10(&mut lines, "Tackles", "Tkl", &w.pool, &w.teams, &elig,
-        |p| p.tackles as f32, |p| format!("{}", p.tackles));
-    top10(&mut lines, "Interceptions", "Int", &w.pool, &w.teams, &elig,
-        |p| p.interceptions as f32, |p| format!("{}", p.interceptions));
-    top10(&mut lines, "Pass completion (outfield, ≥600 passes)", "Cmp%", &w.pool, &w.teams, &elig_pass,
+    let elig: Vec<usize> = (0..w.pool.len())
+        .filter(|&i| w.pool[i].rating_apps > 0)
+        .collect();
+    let outfield: Vec<usize> = elig
+        .iter()
+        .copied()
+        .filter(|&i| w.pool[i].pos != Position::GK)
+        .collect();
+    let elig_pass: Vec<usize> = outfield
+        .iter()
+        .copied()
+        .filter(|&i| w.pool[i].passes_att >= 600)
+        .collect();
+    let elig_rate: Vec<usize> = elig
+        .iter()
+        .copied()
+        .filter(|&i| w.pool[i].rating_apps >= 15)
+        .collect();
+    let gks: Vec<usize> = elig
+        .iter()
+        .copied()
+        .filter(|&i| w.pool[i].pos == Position::GK)
+        .collect();
+    top10(
+        &mut lines,
+        "Goals",
+        "G (A)",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.overall_goals() as f32,
+        |p| format!("{} ({})", p.overall_goals(), p.overall_assists()),
+    );
+    top10(
+        &mut lines,
+        "Assists",
+        "A (G)",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.overall_assists() as f32,
+        |p| format!("{} ({})", p.overall_assists(), p.overall_goals()),
+    );
+    top10(
+        &mut lines,
+        "Big chances created",
+        "BCC",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.big_chances as f32,
+        |p| format!("{}", p.big_chances),
+    );
+    top10(
+        &mut lines,
+        "Key passes",
+        "KP",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.key_passes as f32,
+        |p| format!("{}", p.key_passes),
+    );
+    top10(
+        &mut lines,
+        "Dribbles completed",
+        "Drb",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.dribbles_cmp as f32,
+        |p| format!("{}", p.dribbles_cmp),
+    );
+    top10(
+        &mut lines,
+        "Tackles",
+        "Tkl",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.tackles as f32,
+        |p| format!("{}", p.tackles),
+    );
+    top10(
+        &mut lines,
+        "Interceptions",
+        "Int",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.interceptions as f32,
+        |p| format!("{}", p.interceptions),
+    );
+    top10(
+        &mut lines,
+        "Pass completion (outfield, ≥600 passes)",
+        "Cmp%",
+        &w.pool,
+        &w.teams,
+        &elig_pass,
         |p| p.passes_cmp as f32 / p.passes_att.max(1) as f32,
-        |p| format!("{:.1}% ({}/{})", p.passes_cmp as f32 / p.passes_att.max(1) as f32 * 100.0, p.passes_cmp, p.passes_att));
-    top10(&mut lines, "Goalkeeper saves", "Sv", &w.pool, &w.teams, &gks,
-        |p| p.saves as f32, |p| format!("{} ({} clean sheets)", p.saves, p.clean_sheets));
-    top10(&mut lines, "Clean sheets", "CS", &w.pool, &w.teams, &elig,
-        |p| p.clean_sheets as f32, |p| format!("{}", p.clean_sheets));
-    top10(&mut lines, "Average rating (≥15 apps)", "Avg", &w.pool, &w.teams, &elig_rate,
-        |p| p.avg_rating(), |p| format!("{:.2}", p.avg_rating()));
+        |p| {
+            format!(
+                "{:.1}% ({}/{})",
+                p.passes_cmp as f32 / p.passes_att.max(1) as f32 * 100.0,
+                p.passes_cmp,
+                p.passes_att
+            )
+        },
+    );
+    top10(
+        &mut lines,
+        "Goalkeeper saves",
+        "Sv",
+        &w.pool,
+        &w.teams,
+        &gks,
+        |p| p.saves as f32,
+        |p| format!("{} ({} clean sheets)", p.saves, p.clean_sheets),
+    );
+    top10(
+        &mut lines,
+        "Clean sheets",
+        "CS",
+        &w.pool,
+        &w.teams,
+        &elig,
+        |p| p.clean_sheets as f32,
+        |p| format!("{}", p.clean_sheets),
+    );
+    top10(
+        &mut lines,
+        "Average rating (≥15 apps)",
+        "Avg",
+        &w.pool,
+        &w.teams,
+        &elig_rate,
+        |p| p.avg_rating(),
+        |p| format!("{:.2}", p.avg_rating()),
+    );
 
     // ── Anomalies: who defied their means, and the story behind it. ──
     // Academy watch: the best teenagers on the books — the next decade's
@@ -7277,11 +10602,20 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
 
     lines.push("## Continental Cups".to_string());
     lines.push(String::new());
-    lines.push(format!("- Champions League: **{}** (top scorer {} {}g)", out.ucl_winner, out.ucl_top.0, out.ucl_top.1));
+    lines.push(format!(
+        "- Champions League: **{}** (top scorer {} {}g)",
+        out.ucl_winner, out.ucl_top.0, out.ucl_top.1
+    ));
     lines.push(format!("- Europa League: **{}**", out.europa_winner));
     lines.push(format!("- AFC Champions League: **{}**", out.afc_winner));
-    lines.push(format!("- CONCACAF Champions Cup: **{}**", out.concacaf_winner));
-    lines.push(format!("- CONMEBOL Libertadores: **{}**", out.conmebol_winner));
+    lines.push(format!(
+        "- CONCACAF Champions Cup: **{}**",
+        out.concacaf_winner
+    ));
+    lines.push(format!(
+        "- CONMEBOL Libertadores: **{}**",
+        out.conmebol_winner
+    ));
     if out.club_world_cup_winner != "-" {
         lines.push(format!(
             "- FIFA Club World Cup: **{}**",
@@ -7296,7 +10630,15 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
         if table.is_empty() {
             continue;
         }
-        lines.push(format!("## {}", w.league_meta[li].label));
+        // The CSV files most CONMEBOL clubs under the continent's cup label;
+        // as a domestic table that must not read as a cup, so display the
+        // group as a premier division (logic and lookups are untouched).
+        let label = if w.league_meta[li].label == "CONMEBOL Libertadores" {
+            "CONMEBOL Premier Division"
+        } else {
+            w.league_meta[li].label.as_str()
+        };
+        lines.push(format!("## {}", label));
         lines.push(String::new());
         lines.push("| # | Club | P | W | D | L | GF | GA | GD | Pts |".to_string());
         lines.push("|---|------|---|---|---|---|----|----|----|-----|".to_string());
@@ -7325,9 +10667,13 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     lines.push(String::new());
     lines.push("| # | Player | Pos | Club | G | Apps |".to_string());
     lines.push("|--:|--------|:--:|------|:-:|:----:|".to_string());
-    let mut ucl: Vec<usize> = (0..w.pool.len()).filter(|&i| w.pool[i].ucl_goals > 0).collect();
+    let mut ucl: Vec<usize> = (0..w.pool.len())
+        .filter(|&i| w.pool[i].ucl_goals > 0)
+        .collect();
     ucl.sort_by(|&a, &b| {
-        w.pool[b].ucl_goals.cmp(&w.pool[a].ucl_goals)
+        w.pool[b]
+            .ucl_goals
+            .cmp(&w.pool[a].ucl_goals)
             .then(w.pool[a].ucl_apps.cmp(&w.pool[b].ucl_apps))
     });
     for (r, &i) in ucl.iter().take(10).enumerate() {
@@ -7361,7 +10707,11 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     by_money.sort_by(|&a, &b| w.teams[b].revenue_last.cmp(&w.teams[a].revenue_last));
     for &t in by_money.iter().take(10) {
         let tm = &w.teams[t];
-        let hg = tm.registered.iter().filter(|&&i| w.pool[i].homegrown).count();
+        let hg = tm
+            .registered
+            .iter()
+            .filter(|&&i| w.pool[i].homegrown)
+            .count();
         lines.push(format!(
             "| {} | {} | {}m | {}m | {:.2} | {} | {} |",
             trunc(&tm.name, 20),
@@ -7379,6 +10729,9 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
         IntlKind::WorldCup => "World Cup",
         IntlKind::Euros => "European Championship",
         IntlKind::AsianCup => "AFC Asian Cup",
+        IntlKind::CopaAmerica => "Copa América",
+        IntlKind::Afcon => "Africa Cup of Nations",
+        IntlKind::GoldCup => "CONCACAF Gold Cup",
         IntlKind::None => "No major tournament",
     };
     lines.push(format!("## International: {}", intl_label));
@@ -7389,6 +10742,7 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
     lines.push("## Ballon d'Or".to_string());
     lines.push(String::new());
     let mut bd: Vec<(usize, f32)> = (0..w.pool.len())
+        .filter(|&i| w.teams[w.pool[i].team].league_idx < BIG5.len())
         .map(|i| {
             let team = &w.teams[w.pool[i].team];
             let lf = league_factor_for(team.league_idx, &w.league_meta);
@@ -7414,7 +10768,12 @@ pub fn simulate_full_season(db: &Database, seed: u64) -> SeasonReport {    let m
             );
             for (label, detail, pts) in parts {
                 if pts.abs() > 0.001 {
-                    lines.push(format!("- {} ({}): {:+} pts", label, detail, pts.round() as i32));
+                    lines.push(format!(
+                        "- {} ({}): {:+} pts",
+                        label,
+                        detail,
+                        pts.round() as i32
+                    ));
                 }
             }
             lines.push(String::new());
@@ -7453,9 +10812,104 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     seed_minds(&mut w, &mut rng);
     let mut history: Vec<SeasonOutcome> = Vec::new();
     let mut pending_transfers: Vec<String> = Vec::new();
+    let mut aditya_history: Vec<serde_json::Value> = Vec::new();
 
     for y in 0..years {
-        let mut out = run_one_season(&mut w, BASE_YEAR + y, &mut rng);
+        let year = BASE_YEAR + y;
+        let mut out = run_one_season(&mut w, year, &mut rng);
+        if let Some(i) = w.pool.iter().position(|p| p.name == "Aditya Singh") {
+            let p = &w.pool[i];
+            let team = &w.teams[p.team];
+            let mind = &w.minds[i];
+            aditya_history.push(serde_json::json!({
+                "focal_player": p.name,
+                "year": year,
+                "age": p.age,
+                "club": team.name,
+                "club_nation": team.nation,
+                "league": w.league_meta.get(team.league_idx).map(|m| m.label.clone()).unwrap_or_default(),
+                "team_rep": team.rep,
+                "team_strength": team.strength,
+                "team_record": format!("{}-{}-{} GF{} GA{}", team.w, team.d, team.l, team.gf, team.ga),
+                "team_shape": format!("{}-{}-{}", team.shape.0, team.shape.1, team.shape.2),
+                "team_academy": team.academy,
+                "overall": p.ovr,
+                "potential": p.pot,
+                "peak_seasons": p.peak,
+                "peak_strength": p.peak_str,
+                "effective_rating": p.effective(),
+                "effective_fresh_rating": p.effective_fresh(),
+                "pace": p.attrs.pace,
+                "shooting": p.attrs.shooting,
+                "passing": p.attrs.passing,
+                "dribbling": p.attrs.dribbling,
+                "tackling": p.attrs.tackling,
+                "heading": p.attrs.heading,
+                "strength": p.attrs.strength,
+                "stamina": p.attrs.stamina,
+                "vision": p.attrs.vision,
+                "composure": p.attrs.composure,
+                "goalkeeping": p.attrs.goalkeeping,
+                "first_touch": p.attrs.first_touch,
+                "apps": p.apps,
+                "league_goals": p.goals,
+                "league_assists": p.assists,
+                "el_apps": p.el_apps,
+                "el_goals": p.el_goals,
+                "el_assists": p.el_assists,
+                "ucl_apps": p.ucl_apps,
+                "ucl_goals": p.ucl_goals,
+                "ucl_assists": p.ucl_assists,
+                "intl_apps": p.intl_apps,
+                "intl_goals": p.intl_goals,
+                "intl_assists": p.intl_assists,
+                "season_overall_goals": p.overall_goals(),
+                "season_overall_assists": p.overall_assists(),
+                "shots": p.shots,
+                "shots_on_target": p.sot,
+                "on_target_pct": if p.shots > 0 { p.sot as f32 / p.shots as f32 } else { 0.0 },
+                "key_passes": p.key_passes,
+                "big_chances": p.big_chances,
+                "passes_att": p.passes_att,
+                "passes_cmp": p.passes_cmp,
+                "pass_completion_pct": if p.passes_att > 0 { p.passes_cmp as f32 / p.passes_att as f32 } else { 0.0 },
+                "dribbles_att": p.dribbles_att,
+                "dribbles_cmp": p.dribbles_cmp,
+                "dribble_success_pct": if p.dribbles_att > 0 { p.dribbles_cmp as f32 / p.dribbles_att as f32 } else { 0.0 },
+                "tackles": p.tackles,
+                "interceptions": p.interceptions,
+                "fouls": p.fouls,
+                "saves": p.saves,
+                "clean_sheets": p.clean_sheets,
+                "average_rating": p.avg_rating(),
+                "morale": p.morale,
+                "fatigue": p.fatigue,
+                "adapt": p.adapt,
+                "on_loan": p.on_loan,
+                "homegrown": p.homegrown,
+                "retired": p.retired,
+                "intl_retired": p.intl_retired,
+                "intl_retire_age": p.intl_retire_age,
+                "club_retire_age": p.club_retire_age,
+                "market_value": p.value,
+                "release_clause": p.release_clause,
+                "wage": p.wage,
+                "career_earnings": p.career_earnings,
+                "signing_bonus": p.signing_bonus,
+                "bonus_paid": p.bonus_paid,
+                "contract_option": p.contract_option,
+                "contract_years": p.locked,
+                "transfer_requested": mind.requested,
+                "contract_happiness": mind.contract_happiness,
+                "league_won": p.league_won,
+                "ucl_result": p.ucl_result,
+                "el_result": p.el_result,
+                "intl_result": p.intl_result,
+                "ballons": p.ballons,
+                "manager": team.manager.name,
+                "club_path": p.path,
+            }));
+        }
         // Attach the summer window that preceded this season.
         out.transfers = std::mem::take(&mut pending_transfers);
         history.push(out);
@@ -7463,6 +10917,75 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             age_and_regen(&mut w, &mut rng);
             let (lines, _, _, _) = transfer_window(&mut w, &mut rng);
             pending_transfers = lines;
+        }
+    }
+
+    if !aditya_history.is_empty() {
+        let _ = std::fs::create_dir_all("sim_dump");
+        if let Ok(s) = serde_json::to_string_pretty(&aditya_history) {
+            let _ = std::fs::write("sim_dump/aditya_singh_career.json", s);
+        }
+        // Focal-point mode: a deterministic, player-centric dossier with the
+        // season ledger, every transfer line that mentions the player, and
+        // every durable Nemesis relationship involving him.
+        if let Some(focal_idx) = w.pool.iter().position(|p| p.name == "Aditya Singh") {
+            let label = |kind: &str, id: usize| -> String {
+                if kind == "player" {
+                    w.pool
+                        .get(id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| "unknown".into())
+                } else {
+                    w.teams
+                        .get(id)
+                        .map(|t| t.name.clone())
+                        .unwrap_or_else(|| "unknown".into())
+                }
+            };
+            let relationships: Vec<serde_json::Value> = w
+                .nemesis
+                .iter()
+                .filter(|r| {
+                    (r.actor_kind == "player" && r.actor_id == focal_idx)
+                        || (r.target_kind == "player" && r.target_id == focal_idx)
+                })
+                .map(|r| {
+                    serde_json::json!({
+                        "actor": label(r.actor_kind, r.actor_id),
+                        "actor_kind": r.actor_kind,
+                        "actor_id": r.actor_id,
+                        "target": label(r.target_kind, r.target_id),
+                        "target_kind": r.target_kind,
+                        "target_id": r.target_id,
+                        "tension": r.tension,
+                        "memory": r.memory,
+                        "story": r.story,
+                    })
+                })
+                .collect();
+            let transfer_lines: Vec<String> = history
+                .iter()
+                .flat_map(|o| {
+                    o.transfers
+                        .iter()
+                        .filter(|line| line.contains("Aditya Singh"))
+                        .cloned()
+                })
+                .collect();
+            let focal = serde_json::json!({
+                "focal_mode": true,
+                "player": "Aditya Singh",
+                "nation": w.pool[focal_idx].nation,
+                "position": w.pool[focal_idx].pos.short(),
+                "starting_overall": aditya_history.first().and_then(|s| s.get("overall")),
+                "starting_potential": aditya_history.first().and_then(|s| s.get("potential")),
+                "seasons": aditya_history.clone(),
+                "relationships": relationships,
+                "transfer_lines": transfer_lines,
+            });
+            if let Ok(s) = serde_json::to_string_pretty(&focal) {
+                let _ = std::fs::write("sim_dump/aditya_singh_focal.json", s);
+            }
         }
     }
 
@@ -7499,11 +11022,7 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             } else {
                 "free agent".to_string()
             };
-            let path: Vec<String> = p
-                .path
-                .iter()
-                .map(|c| format!("\"{}\"", esc(c)))
-                .collect();
+            let path: Vec<String> = p.path.iter().map(|c| format!("\"{}\"", esc(c))).collect();
             j.push_str(&format!(
                 "  {{\"name\":\"{}\",\"nation\":\"{}\",\"pos\":\"{}\",\"age\":{},\"intl_retired\":{},\"intl_retire_age\":{},\"club_retire_age\":{},\"club\":\"{}\",\"ovr\":{},\"pot\":{},\"wage\":{},\"locked\":{},\"career_earnings\":{},\"signing_bonus\":{},\"bonus_paid\":{},\"contract_option\":{},\"apps\":{},\"goals\":{},\"assists\":{},\"kp\":{},\"ballons\":{},\"path\":[{}]}}{}\n",
                 esc(&p.name),
@@ -7548,6 +11067,33 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     ));
     lines.push(String::new());
 
+    if !aditya_history.is_empty() {
+        lines.push("## Aditya Singh prodigy experiment".to_string());
+        lines.push(String::new());
+        lines.push(
+            "| Year | Age | Club | League | OVR | Apps | G | A | INT G | UCL G | Contract |"
+                .to_string(),
+        );
+        lines.push("|---:|---:|------|--------|---:|---:|---:|---:|---:|---:|---:|".to_string());
+        for s in &aditya_history {
+            lines.push(format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                s["year"],
+                s["age"],
+                trunc(s["club"].as_str().unwrap_or(""), 18),
+                trunc(s["league"].as_str().unwrap_or(""), 16),
+                s["overall"],
+                s["apps"],
+                s["league_goals"],
+                s["league_assists"],
+                s["intl_goals"],
+                s["ucl_goals"],
+                s["contract_years"],
+            ));
+        }
+        lines.push(String::new());
+    }
+
     lines.push("## Champions by year".to_string());
     lines.push(String::new());
     lines.push("| Year | Premier League | La Liga | Serie A | Bundesliga | Ligue 1 | UCL | Europa | Intl | AFC CL | CONCACAF | Libertadores | CWC |".to_string());
@@ -7564,6 +11110,9 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             IntlKind::WorldCup => format!("WC: {}", trunc(&o.intl_winner, 13)),
             IntlKind::Euros => format!("Euro: {}", trunc(&o.intl_winner, 11)),
             IntlKind::AsianCup => format!("AC: {}", trunc(&o.intl_winner, 13)),
+            IntlKind::CopaAmerica => format!("Copa: {}", trunc(&o.intl_winner, 11)),
+            IntlKind::Afcon => format!("AFCON: {}", trunc(&o.intl_winner, 11)),
+            IntlKind::GoldCup => format!("Gold: {}", trunc(&o.intl_winner, 11)),
             IntlKind::None => "-".to_string(),
         };
         let cwc = if o.club_world_cup_winner != "-" {
@@ -7627,7 +11176,11 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             } else {
                 format!(
                     ", tied with {}",
-                    o.overall_ties.iter().map(|n| trunc(n, 16)).collect::<Vec<_>>().join(" & ")
+                    o.overall_ties
+                        .iter()
+                        .map(|n| trunc(n, 16))
+                        .collect::<Vec<_>>()
+                        .join(" & ")
                 )
             }
         );
@@ -7647,7 +11200,12 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         lines.push(String::new());
         for (label, detail, pts) in &o.ballon_why {
             if pts.abs() > 0.001 {
-                lines.push(format!("- {} ({}): {:+} pts", label, detail, pts.round() as i32));
+                lines.push(format!(
+                    "- {} ({}): {:+} pts",
+                    label,
+                    detail,
+                    pts.round() as i32
+                ));
             }
         }
         lines.push(String::new());
@@ -7675,11 +11233,7 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     lines.push("## Domestic cups".to_string());
     lines.push(String::new());
     for o in &history {
-        let cups: Vec<String> = o
-            .cup_winners
-            .iter()
-            .map(|(_, c)| trunc(c, 16))
-            .collect();
+        let cups: Vec<String> = o.cup_winners.iter().map(|(_, c)| trunc(c, 16)).collect();
         lines.push(format!("- **{}**: {}", o.year, cups.join(" · ")));
     }
     lines.push(String::new());
@@ -7741,15 +11295,21 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     // All money columns read in 2026 money (see opening books).
     lines.push("## Club finances (why each club can spend what it spends)".to_string());
     lines.push(String::new());
-    lines.push("| Club | Wealth | Revenue | Cash | Will. | Budget | Reg | HG | Loans |".to_string());
-    lines.push("|------|-------:|--------:|-----:|:-----:|-------:|----:|---:|:-----:|".to_string());
+    lines
+        .push("| Club | Wealth | Revenue | Cash | Will. | Budget | Reg | HG | Loans |".to_string());
+    lines
+        .push("|------|-------:|--------:|-----:|:-----:|-------:|----:|---:|:-----:|".to_string());
     let dd = w.inflation.max(1.0);
     let dreal = |v: i64| (v as f32 / dd) as i64;
     let mut by_money: Vec<usize> = (0..w.teams.len()).collect();
     by_money.sort_by(|&a, &b| w.teams[b].revenue_last.cmp(&w.teams[a].revenue_last));
     for &t in by_money.iter().take(16) {
         let tm = &w.teams[t];
-        let hg = tm.registered.iter().filter(|&&i| w.pool[i].homegrown).count();
+        let hg = tm
+            .registered
+            .iter()
+            .filter(|&&i| w.pool[i].homegrown)
+            .count();
         let loans_out = w.loans.iter().filter(|l| l.home == t).count();
         let loans_in = w.loans.iter().filter(|l| l.away == t).count();
         // Budget here is the window's opening allocation (capacity), not the
@@ -7775,7 +11335,10 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     // balance that built these squads, per club — the economy's wiring in
     // public, so a fee that dwarfs a budget or a fortune with no source would
     // show up here, not hide. Also 2026 money.
-    lines.push("## Money flows, last season (base | league merit | Europe | preseason net spend)".to_string());
+    lines.push(
+        "## Money flows, last season (base | league merit | Europe | preseason net spend)"
+            .to_string(),
+    );
     lines.push(String::new());
     lines.push("| Club | Base | Merit | Europe | Net spend |".to_string());
     lines.push("|------|-----:|------:|-------:|----------:|".to_string());
@@ -7794,7 +11357,9 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
 
     lines.push("## Most league titles".to_string());
     lines.push(String::new());
-    let mut by_titles: Vec<usize> = (0..w.teams.len()).filter(|&t| w.teams[t].league_titles > 0).collect();
+    let mut by_titles: Vec<usize> = (0..w.teams.len())
+        .filter(|&t| w.teams[t].league_titles > 0)
+        .collect();
     by_titles.sort_by(|&a, &b| w.teams[b].league_titles.cmp(&w.teams[a].league_titles));
     // Cutoff-inclusive: every club tied at the boundary is shown, so no
     // 1-title champion is silently omitted while another 1-title club appears.
@@ -7814,21 +11379,29 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     }
     lines.push("## Most Champions Leagues".to_string());
     lines.push(String::new());
-    let mut by_ucl: Vec<usize> = (0..w.teams.len()).filter(|&t| w.teams[t].ucl_titles > 0).collect();
+    let mut by_ucl: Vec<usize> = (0..w.teams.len())
+        .filter(|&t| w.teams[t].ucl_titles > 0)
+        .collect();
     by_ucl.sort_by(|&a, &b| w.teams[b].ucl_titles.cmp(&w.teams[a].ucl_titles));
     let mut shown_ucl = 0usize;
     for &t in &by_ucl {
         if shown_ucl >= 6 && w.teams[t].ucl_titles < w.teams[by_ucl[shown_ucl - 1]].ucl_titles {
             break;
         }
-        lines.push(format!("- {} — {}", trunc(&w.teams[t].name, 24), w.teams[t].ucl_titles));
+        lines.push(format!(
+            "- {} — {}",
+            trunc(&w.teams[t].name, 24),
+            w.teams[t].ucl_titles
+        ));
         shown_ucl += 1;
     }
     lines.push(String::new());
 
     lines.push("## Multiple Ballon d'Or winners".to_string());
     lines.push(String::new());
-    let mut multi: Vec<usize> = (0..w.pool.len()).filter(|&i| w.pool[i].ballons > 1).collect();
+    let mut multi: Vec<usize> = (0..w.pool.len())
+        .filter(|&i| w.pool[i].ballons > 1)
+        .collect();
     multi.sort_by(|&a, &b| w.pool[b].ballons.cmp(&w.pool[a].ballons));
     for &i in multi.iter().take(8) {
         lines.push(format!(
@@ -7848,12 +11421,7 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             .manager
             .trophies
             .cmp(&w.teams[a].manager.trophies)
-            .then(
-                w.teams[b]
-                    .manager
-                    .seasons
-                    .cmp(&w.teams[a].manager.seasons),
-            )
+            .then(w.teams[b].manager.seasons.cmp(&w.teams[a].manager.seasons))
     });
     for &t in mgrs.iter().take(8) {
         let tm = &w.teams[t];
@@ -7890,27 +11458,84 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     // ── The players who left the biggest mark over the whole era. ──
     lines.push("## Decade legends (career over the simulated era)".to_string());
     lines.push(String::new());
-    let career: Vec<usize> = (0..w.pool.len()).filter(|&i| w.pool[i].career_apps > 0).collect();
+    let career: Vec<usize> = (0..w.pool.len())
+        .filter(|&i| w.pool[i].career_apps > 0)
+        .collect();
     let career_rate = |p: &WP| -> f32 {
-        if p.career_rating_apps == 0 { 0.0 } else { p.career_rating_sum / p.career_rating_apps as f32 }
+        if p.career_rating_apps == 0 {
+            0.0
+        } else {
+            p.career_rating_sum / p.career_rating_apps as f32
+        }
     };
     // A composite "mark" so an all-round great, not just a poacher, tops it.
     // Stated exactly: career goals + 0.8 per assist + 40 per Ballon d'Or.
-    top10(&mut lines, "Biggest mark (career G + 0.8×A + 40×BdOr)", "G / A / BdOr", &w.pool, &w.teams, &career,
+    top10(
+        &mut lines,
+        "Biggest mark (career G + 0.8×A + 40×BdOr)",
+        "G / A / BdOr",
+        &w.pool,
+        &w.teams,
+        &career,
         |p| p.career_goals as f32 + p.career_assists as f32 * 0.8 + p.ballons as f32 * 40.0,
-        |p| format!("{} / {} / {}", p.career_goals, p.career_assists, p.ballons));
-    top10(&mut lines, "Career goals", "G", &w.pool, &w.teams, &career,
-        |p| p.career_goals as f32, |p| format!("{}", p.career_goals));
-    top10(&mut lines, "Career assists", "A", &w.pool, &w.teams, &career,
-        |p| p.career_assists as f32, |p| format!("{}", p.career_assists));
-    top10(&mut lines, "Career big chances created", "BCC", &w.pool, &w.teams, &career,
-        |p| p.career_bcc as f32, |p| format!("{}", p.career_bcc));
-    top10(&mut lines, "Career key passes", "KP", &w.pool, &w.teams, &career,
-        |p| p.career_kp as f32, |p| format!("{}", p.career_kp));
-    top10(&mut lines, "Highest career earnings", "Earnings (2026m) / bonus", &w.pool, &w.teams, &career,
+        |p| format!("{} / {} / {}", p.career_goals, p.career_assists, p.ballons),
+    );
+    top10(
+        &mut lines,
+        "Career goals",
+        "G",
+        &w.pool,
+        &w.teams,
+        &career,
+        |p| p.career_goals as f32,
+        |p| format!("{}", p.career_goals),
+    );
+    top10(
+        &mut lines,
+        "Career assists",
+        "A",
+        &w.pool,
+        &w.teams,
+        &career,
+        |p| p.career_assists as f32,
+        |p| format!("{}", p.career_assists),
+    );
+    top10(
+        &mut lines,
+        "Career big chances created",
+        "BCC",
+        &w.pool,
+        &w.teams,
+        &career,
+        |p| p.career_bcc as f32,
+        |p| format!("{}", p.career_bcc),
+    );
+    top10(
+        &mut lines,
+        "Career key passes",
+        "KP",
+        &w.pool,
+        &w.teams,
+        &career,
+        |p| p.career_kp as f32,
+        |p| format!("{}", p.career_kp),
+    );
+    top10(
+        &mut lines,
+        "Highest career earnings",
+        "Earnings (2026m) / bonus",
+        &w.pool,
+        &w.teams,
+        &career,
         |p| p.career_earnings as f32 / w.inflation.max(1.0),
-        |p| format!("{}m / {}m", (p.career_earnings as f32 / w.inflation.max(1.0)) as i64,
-            ((p.signing_bonus + p.bonus_paid) as f32 / w.inflation.max(1.0)) as i64));
+        |p| {
+            format!(
+                "{}m / {}m",
+                (p.career_earnings as f32 / w.inflation.max(1.0)) as i64,
+                ((p.signing_bonus + p.bonus_paid) as f32 / w.inflation.max(1.0)) as i64
+            )
+        },
+    );
 
     lines.push("## Nemesis ledger (persistent grudges that reshape futures)".to_string());
     lines.push(String::new());
@@ -7918,13 +11543,23 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         lines.push("- No durable Nemesis relationships yet.".to_string());
     } else {
         let mut rels = w.nemesis.clone();
-        rels.sort_by(|a, b| b.tension.partial_cmp(&a.tension).unwrap_or(std::cmp::Ordering::Equal));
+        rels.sort_by(|a, b| {
+            b.tension
+                .partial_cmp(&a.tension)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for r in rels.iter().take(16) {
             let label = |kind: &str, id: usize| -> String {
                 if kind == "player" {
-                    w.pool.get(id).map(|p| p.name.clone()).unwrap_or_else(|| "unknown".into())
+                    w.pool
+                        .get(id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| "unknown".into())
                 } else {
-                    w.teams.get(id).map(|t| t.name.clone()).unwrap_or_else(|| "unknown".into())
+                    w.teams
+                        .get(id)
+                        .map(|t| t.name.clone())
+                        .unwrap_or_else(|| "unknown".into())
                 }
             };
             lines.push(format!(
@@ -7938,15 +11573,18 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         }
         let mut json = String::new();
         for r in &rels {
-            json.push_str(&serde_json::json!({
-                "actor_kind": r.actor_kind,
-                "actor_id": r.actor_id,
-                "target_kind": r.target_kind,
-                "target_id": r.target_id,
-                "tension": r.tension,
-                "memory": r.memory,
-                "story": r.story
-            }).to_string());
+            json.push_str(
+                &serde_json::json!({
+                    "actor_kind": r.actor_kind,
+                    "actor_id": r.actor_id,
+                    "target_kind": r.target_kind,
+                    "target_id": r.target_id,
+                    "tension": r.tension,
+                    "memory": r.memory,
+                    "story": r.story
+                })
+                .to_string(),
+            );
             json.push('\n');
         }
         let _ = std::fs::create_dir_all("sim_dump");
@@ -7972,7 +11610,11 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             p.career_goals as f32 + p.career_assists as f32 * 0.8 + p.ballons as f32 * 40.0
         };
         let mut cc = cascade;
-        cc.sort_by(|&a, &b| mark(&w.pool[b]).partial_cmp(&mark(&w.pool[a])).unwrap_or(std::cmp::Ordering::Equal));
+        cc.sort_by(|&a, &b| {
+            mark(&w.pool[b])
+                .partial_cmp(&mark(&w.pool[a]))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for &i in cc.iter().take(10) {
             let p = &w.pool[i];
             lines.push(format!(
@@ -7984,7 +11626,11 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
                 p.career_apps,
                 p.career_goals,
                 p.career_assists,
-                if p.ballons > 0 { format!(", {}× Ballon d'Or", p.ballons) } else { String::new() }
+                if p.ballons > 0 {
+                    format!(", {}× Ballon d'Or", p.ballons)
+                } else {
+                    String::new()
+                }
             ));
         }
     }
@@ -7993,9 +11639,27 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     // more tackles — so career ball-winning is led by relegation-battlers,
     // exactly as real tackle charts are. Totals show apps and per-game rate
     // so longevity never reads as godliness.
-    top10(&mut lines, "Career tackles + interceptions", "T+I (apps, per game)", &w.pool, &w.teams, &career,
-        |p| p.career_ti as f32, |p| format!("{} in {} ({:.1}/g)", p.career_ti, p.career_apps,
-            if p.career_apps > 0 { p.career_ti as f32 / p.career_apps as f32 } else { 0.0 }));
+    top10(
+        &mut lines,
+        "Career tackles + interceptions",
+        "T+I (apps, per game)",
+        &w.pool,
+        &w.teams,
+        &career,
+        |p| p.career_ti as f32,
+        |p| {
+            format!(
+                "{} in {} ({:.1}/g)",
+                p.career_ti,
+                p.career_apps,
+                if p.career_apps > 0 {
+                    p.career_ti as f32 / p.career_apps as f32
+                } else {
+                    0.0
+                }
+            )
+        },
+    );
     // Best defenders — QUALITY boards, not raw volume, and split by role so the
     // list isn't wall-to-wall centre-backs. The pure T+I list above is led by
     // relegation-battlers who defend for their lives (the real siege effect);
@@ -8007,16 +11671,22 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
     let cb_career: Vec<usize> = career
         .iter()
         .copied()
-        .filter(|&i| w.pool[i].pos == Position::DEF && w.pool[i].career_apps >= 80 && !is_fb(&w.pool[i]))
+        .filter(|&i| {
+            w.pool[i].pos == Position::DEF && w.pool[i].career_apps >= 80 && !is_fb(&w.pool[i])
+        })
         .collect();
     let fb_career: Vec<usize> = career
         .iter()
         .copied()
-        .filter(|&i| w.pool[i].pos == Position::DEF && w.pool[i].career_apps >= 80 && is_fb(&w.pool[i]))
+        .filter(|&i| {
+            w.pool[i].pos == Position::DEF && w.pool[i].career_apps >= 80 && is_fb(&w.pool[i])
+        })
         .collect();
     let cb_score = |p: &WP| -> f32 {
         let apps = p.career_apps.max(1) as f32;
-        p.career_cs as f32 * 2.0 + (career_rate(p) - 6.5).max(0.0) * 70.0 + (p.career_ti as f32 / apps) * 8.0
+        p.career_cs as f32 * 2.0
+            + (career_rate(p) - 6.5).max(0.0) * 70.0
+            + (p.career_ti as f32 / apps) * 8.0
     };
     let fb_score = |p: &WP| -> f32 {
         let apps = p.career_apps.max(1) as f32;
@@ -8026,17 +11696,58 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
             + (p.career_ti as f32 / apps) * 5.0
             + going_forward * 60.0
     };
-    top10(&mut lines, "Best centre-backs (career: clean sheets + rating + duels)", "CS / avg / T+I·g / role", &w.pool, &w.teams, &cb_career,
+    top10(
+        &mut lines,
+        "Best centre-backs (career: clean sheets + rating + duels)",
+        "CS / avg / T+I·g / role",
+        &w.pool,
+        &w.teams,
+        &cb_career,
         cb_score,
-        |p| format!("{} CS, {:.2}, {:.1}/g, {}", p.career_cs, career_rate(p),
-            p.career_ti as f32 / p.career_apps.max(1) as f32, pos_tag(p)));
-    top10(&mut lines, "Best full-backs & wing-backs (career: solidity + end product)", "CS / avg / A+KP / role", &w.pool, &w.teams, &fb_career,
+        |p| {
+            format!(
+                "{} CS, {:.2}, {:.1}/g, {}",
+                p.career_cs,
+                career_rate(p),
+                p.career_ti as f32 / p.career_apps.max(1) as f32,
+                pos_tag(p)
+            )
+        },
+    );
+    top10(
+        &mut lines,
+        "Best full-backs & wing-backs (career: solidity + end product)",
+        "CS / avg / A+KP / role",
+        &w.pool,
+        &w.teams,
+        &fb_career,
         fb_score,
-        |p| format!("{} CS, {:.2}, {}A {}KP, {}", p.career_cs, career_rate(p),
-            p.career_assists, p.career_kp, pos_tag(p)));
-    let career_rate200: Vec<usize> = career.iter().copied().filter(|&i| w.pool[i].career_rating_apps >= 100).collect();
-    top10(&mut lines, "Career average rating (≥100 apps)", "Avg", &w.pool, &w.teams, &career_rate200,
-        |p| career_rate(p), |p| format!("{:.2}", career_rate(p)));
+        |p| {
+            format!(
+                "{} CS, {:.2}, {}A {}KP, {}",
+                p.career_cs,
+                career_rate(p),
+                p.career_assists,
+                p.career_kp,
+                pos_tag(p)
+            )
+        },
+    );
+    let career_rate200: Vec<usize> = career
+        .iter()
+        .copied()
+        .filter(|&i| w.pool[i].career_rating_apps >= 100)
+        .collect();
+    top10(
+        &mut lines,
+        "Career average rating (≥100 apps)",
+        "Avg",
+        &w.pool,
+        &w.teams,
+        &career_rate200,
+        |p| career_rate(p),
+        |p| format!("{:.2}", career_rate(p)),
+    );
 
     // ── Why the era looked the way it did. ──
     decade_trends(&mut lines, &history, &w);
@@ -8065,7 +11776,10 @@ fn detect_glitches(w: &World, history: &[SeasonOutcome]) -> Vec<String> {
         }
     }
     if max_pts > 102 {
-        out.push(format!("Final-season champion reached {} pts (Juventus' 102 is the real record).", max_pts));
+        out.push(format!(
+            "Final-season champion reached {} pts (Juventus' 102 is the real record).",
+            max_pts
+        ));
     }
 
     for o in history {
@@ -8088,9 +11802,18 @@ fn detect_glitches(w: &World, history: &[SeasonOutcome]) -> Vec<String> {
         }
     }
 
-    let oldest = w.pool.iter().filter(|p| !p.retired).map(|p| p.age).max().unwrap_or(0);
+    let oldest = w
+        .pool
+        .iter()
+        .filter(|p| !p.retired)
+        .map(|p| p.age)
+        .max()
+        .unwrap_or(0);
     if oldest > 42 {
-        out.push(format!("A player is still active at age {} (retirement cap broken).", oldest));
+        out.push(format!(
+            "A player is still active at age {} (retirement cap broken).",
+            oldest
+        ));
     }
 
     // Immortal cup-specialist: a big club's manager surviving a long league
@@ -8190,7 +11913,10 @@ fn boot_line(name: &str, goals: u16, ties: &[String]) -> String {
         format!(
             "{} & {} ({}g each, tied)",
             trunc(name, 16),
-            ties.iter().map(|n| trunc(n, 16)).collect::<Vec<_>>().join(" & "),
+            ties.iter()
+                .map(|n| trunc(n, 16))
+                .collect::<Vec<_>>()
+                .join(" & "),
             goals
         )
     }
@@ -8282,7 +12008,9 @@ fn anomaly_breakdown(lines: &mut Vec<String>, w: &World) {
         }
     }
     if !found {
-        lines.push("- No great shocks: every league broadly followed the money this year.".to_string());
+        lines.push(
+            "- No great shocks: every league broadly followed the money this year.".to_string(),
+        );
     }
     lines.push(String::new());
 }
@@ -8302,7 +12030,12 @@ fn decade_trends(lines: &mut Vec<String>, history: &[SeasonOutcome], w: &World) 
         }
     }
     if let Some((club, n)) = titles.iter().max_by_key(|(_, n)| **n) {
-        let rep = w.teams.iter().find(|t| &t.name == club).map(|t| t.rep).unwrap_or(0);
+        let rep = w
+            .teams
+            .iter()
+            .find(|t| &t.name == club)
+            .map(|t| t.rep)
+            .unwrap_or(0);
         lines.push(format!(
             "- **{}** dominated with {} league titles — the era's deepest resources (reputation ~{}) let it keep reloading its squad through the market and regenerate through decline.",
             trunc(club, 24), n, rep
@@ -8359,7 +12092,10 @@ fn decade_trends(lines: &mut Vec<String>, history: &[SeasonOutcome], w: &World) 
     }
     if let Some((nat, n)) = nations.iter().max_by_key(|(_, n)| **n) {
         if *n >= 2 {
-            lines.push(format!("- **{}** produced the most Ballon d'Or winners ({}) — a golden generation.", nat, n));
+            lines.push(format!(
+                "- **{}** produced the most Ballon d'Or winners ({}) — a golden generation.",
+                nat, n
+            ));
         }
     }
     lines.push(String::new());
@@ -8378,7 +12114,11 @@ fn top10(
     fmt: impl Fn(&WP) -> String,
 ) {
     let mut idx: Vec<usize> = eligible.to_vec();
-    idx.sort_by(|&a, &b| val(&pool[b]).partial_cmp(&val(&pool[a])).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_by(|&a, &b| {
+        val(&pool[b])
+            .partial_cmp(&val(&pool[a]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     lines.push(format!("### {}", title));
     lines.push(String::new());
     lines.push(format!("| # | Player | Pos | Club | {} |", header));
@@ -8397,6 +12137,909 @@ fn top10(
         ));
     }
     lines.push(String::new());
+}
+
+pub mod web_api {
+    use super::*;
+    use serde_json::{json, Value};
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    /// A stored detailed domestic-league result for the interactive/web
+    /// season. `MatchOutcome` contains every starter line and event used by
+    /// the browser; ownership stays in memory for the API process.
+    struct WebMatchRecord {
+        id: usize,
+        week: u32,
+        league_idx: usize,
+        round: usize,
+        home: usize,
+        away: usize,
+        outcome: matchsim::MatchOutcome,
+    }
+
+    struct LeagueSchedule {
+        rounds: Vec<Vec<(usize, usize)>>,
+    }
+
+    struct WebState {
+        world: World,
+        rng: Pcg64Mcg,
+        week: u32,
+        schedules: Vec<LeagueSchedule>,
+        matches: Vec<WebMatchRecord>,
+        seed: u64,
+        began: String,
+    }
+
+    fn make_schedule(team_ids: &[usize]) -> Vec<Vec<(usize, usize)>> {
+        let n = team_ids.len();
+        if n < 2 {
+            return Vec::new();
+        }
+        let even_n = if n % 2 == 1 { n - 1 } else { n };
+        if even_n < 2 {
+            return Vec::new();
+        }
+        let mut order = team_ids[..even_n].to_vec();
+        let mut rounds = Vec::new();
+        for leg in 0..2u8 {
+            for _ in 0..even_n.saturating_sub(1) {
+                let mut pairs = Vec::with_capacity(even_n / 2);
+                for i in 0..even_n / 2 {
+                    let a = order[i];
+                    let b = order[even_n - 1 - i];
+                    pairs.push(if leg == 0 { (a, b) } else { (b, a) });
+                }
+                rounds.push(pairs);
+                let last = order.pop().unwrap();
+                order.insert(1, last);
+            }
+        }
+        rounds
+    }
+
+    impl WebState {
+        fn new(seed: u64) -> Self {
+            let db = Database::load();
+            let mut rng = Pcg64Mcg::new(seed as u128 | 1);
+            let params = Params::load().unwrap_or_default();
+            let mut world = build_world(&db, params, &mut rng);
+            seed_minds(&mut world, &mut rng);
+            reset_season(&mut world);
+            let schedules = world
+                .league_teams
+                .iter()
+                .map(|teams| LeagueSchedule {
+                    rounds: make_schedule(teams),
+                })
+                .collect::<Vec<_>>();
+            Self {
+                world,
+                rng,
+                week: 0,
+                schedules,
+                matches: Vec::new(),
+                seed,
+                began: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| format!("+{}s", d.as_secs()))
+                    .unwrap_or_default(),
+            }
+        }
+
+        fn total_rounds(&self) -> usize {
+            self.schedules
+                .iter()
+                .map(|s| s.rounds.len())
+                .max()
+                .unwrap_or(0)
+        }
+
+        fn remaining_rounds(&self) -> usize {
+            self.total_rounds().saturating_sub(self.week as usize)
+        }
+
+        fn league_name(&self, li: usize) -> String {
+            self.world
+                .league_meta
+                .get(li)
+                .map(|m| m.label.clone())
+                .unwrap_or_else(|| format!("League {}", li))
+        }
+
+        fn league_confed(&self, li: usize) -> String {
+            self.world
+                .league_meta
+                .get(li)
+                .and_then(|m| m.confed)
+                .map(|c| format!("{:?}", c))
+                .unwrap_or_default()
+        }
+
+        fn simulate_one_week(&mut self) -> usize {
+            let round_idx = self.week as usize;
+            let mut played = 0usize;
+            for sched_idx in 0..self.schedules.len() {
+                let Some(round) = self.schedules[sched_idx].rounds.get(round_idx).cloned() else {
+                    continue;
+                };
+                if round.is_empty() {
+                    continue;
+                }
+                let ids = self.world.league_teams[sched_idx].clone();
+                for (home, away) in round {
+                    let Some(outcome) = play_detailed(
+                        home,
+                        away,
+                        Comp::League,
+                        Venue::HomeA,
+                        (0, 0),
+                        &mut self.world.teams,
+                        &mut self.world.pool,
+                        &self.world.params,
+                        &mut self.rng,
+                    ) else {
+                        continue;
+                    };
+                    record_result(
+                        &mut self.world.teams,
+                        home,
+                        away,
+                        outcome.goals_a as u32,
+                        outcome.goals_b as u32,
+                    );
+                    let id = self.matches.len() + 1;
+                    self.matches.push(WebMatchRecord {
+                        id,
+                        week: self.week + 1,
+                        league_idx: sched_idx,
+                        round: round_idx + 1,
+                        home,
+                        away,
+                        outcome,
+                    });
+                    played += 1;
+                }
+                let ids_clone = ids.clone();
+                weekly_recovery(
+                    &ids_clone,
+                    &self.world.teams,
+                    &mut self.world.pool,
+                    &mut self.world.minds,
+                    &self.world.params,
+                );
+            }
+            if played > 0 {
+                self.week += 1;
+            }
+            played
+        }
+    }
+
+    fn team_json(w: &World, ti: usize) -> Value {
+        let t = &w.teams[ti];
+        json!({
+            "id": ti,
+            "name": t.name,
+            "nation": t.nation,
+            "league_idx": t.league_idx,
+            "league": w.league_meta.get(t.league_idx).map(|m| m.label.as_str()).unwrap_or(""),
+            "reputation": t.rep,
+            "strength": t.strength,
+            "squad": t.players.len(),
+            "table": {
+                "played": t.p,
+                "won": t.w,
+                "drawn": t.d,
+                "lost": t.l,
+                "gf": t.gf,
+                "ga": t.ga,
+                "gd": t.gd(),
+                "pts": t.pts(),
+            },
+        })
+    }
+
+    fn player_json(w: &World, i: usize) -> Value {
+        let p = &w.pool[i];
+        let club = w
+            .teams
+            .get(p.team)
+            .map(|t| t.name.as_str())
+            .unwrap_or("free agent");
+        let league = w
+            .teams
+            .get(p.team)
+            .and_then(|t| w.league_meta.get(t.league_idx))
+            .map(|m| m.label.as_str())
+            .unwrap_or("");
+        json!({
+            "id": i,
+            "name": p.name,
+            "nation": p.nation,
+            "position": p.pos.short(),
+            "club": club,
+            "club_index": p.team,
+            "league": league,
+            "age": p.age,
+            "ovr": p.ovr,
+            "pot": p.pot,
+            "apps": p.apps,
+            "goals": p.goals,
+            "assists": p.assists,
+            "rating": if p.rating_apps == 0 { 0.0 } else { p.rating_sum / p.rating_apps as f32 },
+            "shots": p.shots,
+            "sot": p.sot,
+            "key_passes": p.key_passes,
+            "big_chances": p.big_chances,
+            "passes": format!("{}/{}", p.passes_cmp, p.passes_att),
+            "dribbles": format!("{}/{}", p.dribbles_cmp, p.dribbles_att),
+            "tackles": p.tackles,
+            "interceptions": p.interceptions,
+            "fouls": p.fouls,
+            "saves": p.saves,
+            "clean_sheets": p.clean_sheets,
+            "fatigue": p.fatigue,
+            "morale": p.morale,
+            "intl_goals": p.intl_goals,
+            "intl_assists": p.intl_assists,
+            "career": {
+                "apps": p.career_apps,
+                "goals": p.career_goals,
+                "assists": p.career_assists,
+                "kp": p.career_kp,
+                "ballons": p.ballons,
+                "path": p.path,
+            },
+            "attrs": {
+                "pace": p.attrs.pace,
+                "shooting": p.attrs.shooting,
+                "passing": p.attrs.passing,
+                "dribbling": p.attrs.dribbling,
+                "tackling": p.attrs.tackling,
+                "heading": p.attrs.heading,
+                "strength": p.attrs.strength,
+                "stamina": p.attrs.stamina,
+                "vision": p.attrs.vision,
+                "composure": p.attrs.composure,
+                "goalkeeping": p.attrs.goalkeeping,
+                "first_touch": p.attrs.first_touch,
+            }
+        })
+    }
+
+    fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
+        let w = &state.world;
+        json!({
+            "id": m.id,
+            "week": m.week,
+            "round": m.round,
+            "league_idx": m.league_idx,
+            "league": w.league_meta.get(m.league_idx).map(|x| x.label.as_str()).unwrap_or(""),
+            "home_team": m.home,
+            "away_team": m.away,
+            "home": w.teams[m.home].name,
+            "away": w.teams[m.away].name,
+            "home_goals": m.outcome.goals_a,
+            "away_goals": m.outcome.goals_b,
+            "xg": [m.outcome.xg_a, m.outcome.xg_b],
+            "shots": [m.outcome.shots_a, m.outcome.shots_b],
+            "possession": m.outcome.poss_a,
+            "corners": [m.outcome.corners_a, m.outcome.corners_b],
+            "set_piece_goals": [m.outcome.sp_goals_a, m.outcome.sp_goals_b],
+        })
+    }
+
+    fn event_kind_text(kind: matchsim::EventKind) -> &'static str {
+        match kind {
+            matchsim::EventKind::Goal => "goal",
+            matchsim::EventKind::SetPiece => "set piece",
+            matchsim::EventKind::Injury => "injury",
+            matchsim::EventKind::Penalty => "penalty",
+            matchsim::EventKind::RedCard => "red card",
+        }
+    }
+
+    fn query_value(query: &str, key: &str) -> Option<String> {
+        for part in query.split('&').filter(|x| !x.is_empty()) {
+            let mut kv = part.splitn(2, '=');
+            let k = url_decode(kv.next().unwrap_or_default());
+            if k == key {
+                return Some(url_decode(kv.next().unwrap_or_default()));
+            }
+        }
+        None
+    }
+
+    fn url_decode(s: &str) -> String {
+        let mut out = Vec::with_capacity(s.len());
+        let mut chars = s.bytes().peekable();
+        while let Some(b) = chars.next() {
+            match b {
+                b'%' => {
+                    let hi = chars.next().unwrap_or(b'0');
+                    let lo = chars.next().unwrap_or(b'0');
+                    let h = char::from(hi).to_digit(16).unwrap_or(0);
+                    let l = char::from(lo).to_digit(16).unwrap_or(0);
+                    out.push(((h << 4) | l) as u8);
+                }
+                b'+' => out.push(b' '),
+                _ => out.push(b),
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    fn league_table(state: &WebState, li: usize) -> Vec<usize> {
+        if li >= state.world.league_teams.len() {
+            return Vec::new();
+        }
+        rank(&state.world.league_teams[li], &state.world.teams)
+    }
+
+    fn status_json(state: &WebState) -> Value {
+        let total_rounds = state.total_rounds();
+        json!({
+            "ok": true,
+            "service": "football-api",
+            "version": "0.1.0",
+            "year": 2026,
+            "week": state.week,
+            "next_week": state.week + 1,
+            "total_rounds": total_rounds,
+            "remaining_rounds": state.remaining_rounds(),
+            "matches_played": state.matches.len(),
+            "seed": state.seed,
+            "started": state.began,
+        })
+    }
+
+    fn overview_json(state: &WebState) -> Value {
+        let w = &state.world;
+        let played = state.matches.len();
+        let top: Vec<usize> = {
+            let mut idx: Vec<usize> = (0..w.pool.len()).filter(|&i| w.pool[i].apps > 0).collect();
+            idx.sort_by(|&a, &b| {
+                w.pool[b]
+                    .goals
+                    .cmp(&w.pool[a].goals)
+                    .then(w.pool[b].assists.cmp(&w.pool[a].assists))
+            });
+            idx.into_iter().take(12).collect()
+        };
+        let recent = state
+            .matches
+            .iter()
+            .rev()
+            .take(10)
+            .map(|m| match_summary(state, m))
+            .collect::<Vec<_>>();
+        json!({
+            "world": {
+                "year": 2026,
+                "week": state.week,
+                "next_week": state.week + 1,
+                "players": w.pool.len(),
+                "teams": w.teams.len(),
+                "leagues": w.league_teams.len(),
+                "total_rounds": state.total_rounds(),
+                "remaining_rounds": state.remaining_rounds(),
+                "matches_played": played,
+                "seed": state.seed,
+            },
+            "top_scorers": top.into_iter().map(|i| player_json(w, i)).collect::<Vec<_>>(),
+            "recent_matches": recent,
+        })
+    }
+
+    fn leagues_json(state: &WebState) -> Vec<Value> {
+        let w = &state.world;
+        let mut out = Vec::new();
+        for li in 0..w.league_teams.len() {
+            if li == 5 {
+                continue;
+            }
+            let table = league_table(state, li);
+            let leader = table
+                .first()
+                .map(|&t| w.teams[t].name.clone())
+                .unwrap_or_default();
+            out.push(json!({
+                "id": li,
+                "name": w.league_meta.get(li).map(|m| m.label.as_str()).unwrap_or(""),
+                "confederation": state.league_confed(li),
+                "teams": w.league_teams[li].len(),
+                "leader": leader,
+                "rounds": state.schedules[li].rounds.len(),
+                "finished": state.schedules[li].rounds.len() > 0 && state.week as usize >= state.schedules[li].rounds.len(),
+            }));
+        }
+        out
+    }
+
+    fn league_detail_json(state: &WebState, li: usize) -> Value {
+        let w = &state.world;
+        let table = league_table(state, li);
+        let mut scorers: Vec<usize> = (0..w.pool.len())
+            .filter(|&i| w.teams[w.pool[i].team].league_idx == li)
+            .collect();
+        scorers.sort_by(|&a, &b| {
+            w.pool[b]
+                .goals
+                .cmp(&w.pool[a].goals)
+                .then(w.pool[b].assists.cmp(&w.pool[a].assists))
+        });
+        let next_round = state.week as usize;
+        let fixtures = state.schedules[li]
+            .rounds
+            .get(next_round)
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .map(|&(h, a)| {
+                        json!({
+                            "home": w.teams[h].name,
+                            "away": w.teams[a].name,
+                            "home_goals": Value::Null,
+                            "away_goals": Value::Null,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        json!({
+            "league": w.league_meta.get(li).map(|m| m.label.as_str()).unwrap_or(""),
+            "confederation": state.league_confed(li),
+            "week": state.week,
+            "table": table.iter().enumerate().map(|(i, &t)| {
+                let mut x = team_json(w, t);
+                x["position"] = json!(i + 1);
+                x
+            }).collect::<Vec<_>>(),
+            "scorers": scorers.into_iter().take(20).map(|i| player_json(w, i)).collect::<Vec<_>>(),
+            "next_fixtures": fixtures,
+            "recent": state.matches.iter().rev()
+                .filter(|m| m.league_idx == li)
+                .take(20)
+                .map(|m| match_summary(state, m))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn fixtures_json(state: &WebState, week_one_based: Option<usize>) -> Vec<Value> {
+        let week = week_one_based.unwrap_or(state.week.saturating_add(1) as usize);
+        let idx = week.saturating_sub(1);
+        let mut out = Vec::new();
+        for (li, sched) in state.schedules.iter().enumerate() {
+            if li == 5 {
+                continue;
+            }
+            if let Some(pairs) = sched.rounds.get(idx) {
+                for &(h, a) in pairs {
+                    out.push(json!({
+                        "league_idx": li,
+                        "league": state.world.league_meta.get(li).map(|m| m.label.as_str()).unwrap_or(""),
+                        "home": state.world.teams[h].name,
+                        "away": state.world.teams[a].name,
+                        "week": week,
+                    }));
+                }
+            }
+        }
+        out
+    }
+
+    fn players_json(state: &WebState, query: &str) -> Value {
+        let w = &state.world;
+        let q = query_value(query, "q")
+            .or_else(|| query_value(query, "search"))
+            .unwrap_or_default()
+            .to_lowercase();
+        let nation = query_value(query, "nation")
+            .unwrap_or_default()
+            .to_lowercase();
+        let league_name = query_value(query, "league")
+            .unwrap_or_default()
+            .to_lowercase();
+        let position = query_value(query, "position")
+            .unwrap_or_default()
+            .to_uppercase();
+        let min_ovr = query_value(query, "min_ovr")
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(0);
+        let sort = query_value(query, "sort").unwrap_or_else(|| "goals".to_string());
+        let limit = query_value(query, "limit")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(250)
+            .clamp(1, 2000);
+        let offset = query_value(query, "offset")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
+
+        let mut ids: Vec<usize> = w
+            .pool
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.retired)
+            .filter(|(_, p)| {
+                (q.is_empty()
+                    || p.name.to_lowercase().contains(&q)
+                    || p.nation.to_lowercase().contains(&q))
+                    && (nation.is_empty() || p.nation.to_lowercase().contains(&nation))
+                    && (league_name.is_empty()
+                        || w.teams
+                            .get(p.team)
+                            .and_then(|t| w.league_meta.get(t.league_idx))
+                            .map(|m| m.label.to_lowercase())
+                            .map(|l| l.contains(&league_name))
+                            .unwrap_or(false))
+                    && (position.is_empty() || p.pos.short().eq_ignore_ascii_case(&position))
+                    && p.ovr >= min_ovr
+            })
+            .map(|(i, _)| i)
+            .collect();
+        ids.sort_by(|&a, &b| {
+            let (x, y) = (&w.pool[a], &w.pool[b]);
+            let ord = match sort.as_str() {
+                "rating" => y
+                    .avg_rating()
+                    .partial_cmp(&x.avg_rating())
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                "apps" => y.apps.cmp(&x.apps),
+                "assists" => y.assists.cmp(&x.assists).then(y.goals.cmp(&x.goals)),
+                "kp" => y.key_passes.cmp(&x.key_passes),
+                "created" => y.big_chances.cmp(&x.big_chances),
+                "tackles" => (y.tackles + y.interceptions).cmp(&(x.tackles + x.interceptions)),
+                "future" => y.pot.cmp(&x.pot).then(y.ovr.cmp(&x.ovr)),
+                _ => y.goals.cmp(&x.goals).then(y.assists.cmp(&x.assists)),
+            };
+            ord.then(y.ovr.cmp(&x.ovr)).then(x.name.cmp(&y.name))
+        });
+        let total = ids.len();
+        let page = ids
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|i| player_json(w, i))
+            .collect::<Vec<_>>();
+        json!({"total": total, "offset": offset, "limit": limit, "players": page})
+    }
+
+    fn match_detail_json(state: &WebState, id: usize) -> Option<Value> {
+        let m = state.matches.iter().find(|x| x.id == id)?;
+        let w = &state.world;
+        let lines = |side_a: bool| {
+            m.outcome
+                .stats
+                .iter()
+                .filter(|s| s.side_a == side_a)
+                .map(|s| {
+                    let p = &w.pool[s.id];
+                    json!({
+                        "id": s.id,
+                        "name": p.name,
+                        "nation": p.nation,
+                        "position": p.pos.short(),
+                        "ovr": p.ovr,
+                        "rating": s.rating,
+                        "minutes": s.minutes,
+                        "goals": s.goals,
+                        "assists": s.assists,
+                        "shots": s.shots,
+                        "on_target": s.shots_on_target,
+                        "xg": s.xg,
+                        "key_passes": s.key_passes,
+                        "big_chances_created": s.big_chances_created,
+                        "big_chances_missed": s.big_chances_missed,
+                        "passes": format!("{}/{}", s.passes_cmp, s.passes_att),
+                        "dribbles": format!("{}/{}", s.dribbles_cmp, s.dribbles_att),
+                        "tackles": s.tackles,
+                        "interceptions": s.interceptions,
+                        "fouls": s.fouls,
+                        "yellows": s.yellows,
+                        "sent_off": s.sent_off,
+                        "saves": s.saves,
+                        "clean_sheet": s.clean_sheet,
+                        "injury_days": s.injury_days,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let events = m
+            .outcome
+            .events
+            .iter()
+            .map(|e| {
+                json!({
+                    "minute": e.minute,
+                    "side": if e.side_a { "home" } else { "away" },
+                    "type": event_kind_text(e.kind),
+                    "player": w.pool.get(e.actor).map(|p| p.name.clone()).unwrap_or_default(),
+                    "assist": e.assist.and_then(|a| w.pool.get(a)).map(|p| p.name.clone()),
+                })
+            })
+            .collect::<Vec<_>>();
+        Some(json!({
+            "match": match_summary(state, m),
+            "home_lineup": lines(true),
+            "away_lineup": lines(false),
+            "events": events,
+        }))
+    }
+
+    fn write_response(mut stream: TcpStream, status: u16, body: &str, content_type: &str) {
+        let reason = match status {
+            200 => "OK",
+            204 => "No Content",
+            400 => "Bad Request",
+            404 => "Not Found",
+            _ => "Error",
+        };
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status, reason, content_type, body.len(), body
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
+    }
+
+    fn json_response(stream: TcpStream, status: u16, value: &Value) {
+        write_response(
+            stream,
+            status,
+            &serde_json::to_string(value).unwrap_or_default(),
+            "application/json",
+        );
+    }
+
+    fn read_http_request(mut stream: TcpStream) -> Option<(String, String, String, String)> {
+        let mut reader = BufReader::new(stream.try_clone().ok()?);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).ok()?;
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("GET").to_string();
+        let target = parts.next().unwrap_or("/").to_string();
+        let mut content_length = 0usize;
+        loop {
+            let mut header = String::new();
+            let n = reader.read_line(&mut header).ok()?;
+            if n == 0 || header == "\r\n" || header == "\n" {
+                break;
+            }
+            if let Some((k, v)) = header.split_once(':') {
+                if k.trim().eq_ignore_ascii_case("content-length") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        let mut body = Vec::new();
+        if content_length > 0 {
+            body.resize(content_length, 0);
+            reader.read_exact(&mut body).ok()?;
+        }
+        let mut split = target.splitn(2, '?');
+        let path = split.next().unwrap_or("/").to_string();
+        let query = split.next().unwrap_or_default().to_string();
+        Some((
+            method,
+            path,
+            query,
+            String::from_utf8_lossy(&body).into_owned(),
+        ))
+    }
+
+    fn static_path(request_path: &str) -> Option<PathBuf> {
+        let normalized = request_path.trim_start_matches('/');
+        let candidate = if normalized.is_empty() || !normalized.contains('.') {
+            PathBuf::from("web/index.html")
+        } else {
+            PathBuf::from("web").join(normalized)
+        };
+        let canonical = candidate.canonicalize().ok()?;
+        let web_root = PathBuf::from("web").canonicalize().ok()?;
+        if canonical.starts_with(&web_root) && canonical.is_file() {
+            Some(canonical)
+        } else {
+            None
+        }
+    }
+
+    fn content_type(path: &Path) -> &'static str {
+        match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+            "html" | "htm" => "text/html; charset=utf-8",
+            "css" => "text/css; charset=utf-8",
+            "js" | "mjs" => "text/javascript; charset=utf-8",
+            "json" => "application/json",
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
+            "ico" => "image/x-icon",
+            _ => "application/octet-stream",
+        }
+    }
+
+    fn handle_stream(mut stream: TcpStream, state: Arc<Mutex<WebState>>) {
+        let Ok(stream_clone) = stream.try_clone() else {
+            return;
+        };
+        let Some((method, path, query, body)) = read_http_request(stream_clone) else {
+            return;
+        };
+
+        if method.eq_ignore_ascii_case("OPTIONS") {
+            write_response(stream, 204, "", "text/plain");
+            return;
+        }
+
+        if !path.starts_with("/api/") {
+            if let Some(file) = static_path(&path) {
+                if let Ok(bytes) = std::fs::read(&file) {
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            content_type(&file),
+                            bytes.len()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = stream.write_all(&bytes);
+                    let _ = stream.flush();
+                }
+            } else {
+                json_response(stream, 404, &json!({"error": "not found"}));
+            }
+            return;
+        }
+
+        let result = if path == "/api/health" {
+            json!({"ok": true, "service": "football-api", "version": "0.1.0", "world_ready": true})
+        } else if path == "/api/overview" {
+            let s = state.lock().unwrap();
+            overview_json(&s)
+        } else if path == "/api/leagues" {
+            let s = state.lock().unwrap();
+            json!({"leagues": leagues_json(&s)})
+        } else if path.starts_with("/api/league/") {
+            let idx = path
+                .trim_start_matches("/api/league/")
+                .parse::<usize>()
+                .unwrap_or(0);
+            let s = state.lock().unwrap();
+            if idx >= s.world.league_teams.len() || idx == 5 {
+                json!({"error": "league not available"})
+            } else {
+                league_detail_json(&s, idx)
+            }
+        } else if path == "/api/status" || path == "/api/week/status" {
+            let s = state.lock().unwrap();
+            status_json(&s)
+        } else if path == "/api/fixtures" || path == "/api/fixtures/next" {
+            let s = state.lock().unwrap();
+            let target = query_value(&query, "week").and_then(|v| v.parse::<usize>().ok());
+            json!({"week": target.unwrap_or((s.week + 1) as usize), "fixtures": fixtures_json(&s, target)})
+        } else if path == "/api/matches" {
+            let s = state.lock().unwrap();
+            let week_filter = query_value(&query, "week");
+            let league_filter = query_value(&query, "league").and_then(|v| v.parse::<usize>().ok());
+            let matches = s
+                .matches
+                .iter()
+                .rev()
+                .filter(|m| match &week_filter {
+                    Some(v) if v != "all" => week_filter
+                        .as_ref()
+                        .and_then(|x| x.parse::<u32>().ok())
+                        .map(|w| m.week == w)
+                        .unwrap_or(true),
+                    _ => true,
+                })
+                .filter(|m| league_filter.map(|li| m.league_idx == li).unwrap_or(true))
+                .map(|m| match_summary(&s, m))
+                .collect::<Vec<_>>();
+            json!({"matches": matches, "count": s.matches.len()})
+        } else if path.starts_with("/api/match/") {
+            let id = path
+                .trim_start_matches("/api/match/")
+                .parse::<usize>()
+                .unwrap_or(0);
+            let s = state.lock().unwrap();
+            match_detail_json(&s, id).unwrap_or_else(|| json!({"error": "match not found"}))
+        } else if path == "/api/players" || path == "/api/players/search" {
+            let s = state.lock().unwrap();
+            players_json(&s, &query)
+        } else if path.starts_with("/api/player/") {
+            let id = path
+                .trim_start_matches("/api/player/")
+                .parse::<usize>()
+                .unwrap_or(0);
+            let s = state.lock().unwrap();
+            if id < s.world.pool.len() {
+                player_json(&s.world, id)
+            } else {
+                json!({"error": "player not found"})
+            }
+        } else if path == "/api/careers" {
+            match std::fs::read_to_string("sim_dump/careers.json") {
+                Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(json!({"raw": text})),
+                Err(e) => json!({"error": e.to_string()}),
+            }
+        } else if path == "/api/simulate/week" && method.eq_ignore_ascii_case("POST") {
+            let weeks = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("weeks")
+                        .and_then(|x| x.as_u64())
+                        .or_else(|| v.get("count").and_then(|x| x.as_u64()))
+                })
+                .unwrap_or(1)
+                .clamp(1, 10) as usize;
+            let mut s = state.lock().unwrap();
+            let started = s.matches.len();
+            let mut played = 0usize;
+            for _ in 0..weeks {
+                played += s.simulate_one_week();
+            }
+            let played = played.max(s.matches.len().saturating_sub(started));
+            json!({"advanced": weeks, "matches_played": played, "week": s.week, "remaining_rounds": s.remaining_rounds()})
+        } else if path == "/api/world/reset" && method.eq_ignore_ascii_case("POST") {
+            let seed = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("seed")
+                        .and_then(|x| x.as_u64())
+                        .or_else(|| v.get("world_seed").and_then(|x| x.as_u64()))
+                })
+                .unwrap_or(20_260_101);
+            let mut s = state.lock().unwrap();
+            *s = WebState::new(seed);
+            status_json(&s)
+        } else {
+            json!({"error": "unknown endpoint", "path": path})
+        };
+
+        let status = if result.get("error").is_some() {
+            404
+        } else {
+            200
+        };
+        json_response(stream, status, &result);
+    }
+
+    pub fn serve_web_api() {
+        let seed = std::env::var("FM_API_SEED")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(20_260_101)
+            });
+        let port = std::env::var("PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(8080);
+        let started = Instant::now();
+        let state = Arc::new(Mutex::new(WebState::new(seed)));
+        let listener = TcpListener::bind(("0.0.0.0", port)).expect("could not bind API port");
+        println!(
+            "Crouton alpha web API + dashboard: http://localhost:{}/ (ready in {:?})",
+            port,
+            started.elapsed()
+        );
+        for stream in listener.incoming() {
+            match stream {
+                Ok(s) => {
+                    let st = Arc::clone(&state);
+                    std::thread::spawn(move || handle_stream(s, st));
+                }
+                Err(_) => continue,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -8422,15 +13065,7 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn mkp(
-        name: &str,
-        pos: Position,
-        v: u8,
-        age: u8,
-        pot: u8,
-        team: usize,
-        homegrown: bool,
-    ) -> WP {
+    fn mkp(name: &str, pos: Position, v: u8, age: u8, pot: u8, team: usize, homegrown: bool) -> WP {
         WP {
             name: name.to_string(),
             nation: "Testland".to_string(),
@@ -8499,6 +13134,8 @@ mod tests {
             career_rating_sum: 0.0,
             career_rating_apps: 0,
             ballons: 0,
+            peak: 0,
+            peak_str: 1,
         }
     }
 
@@ -8560,27 +13197,91 @@ mod tests {
         let mut big: Vec<usize> = Vec::new();
         big.push(push(mkp("Big Keeper", Position::GK, 80, 28, 80, 0, false)));
         for k in 0..4 {
-            big.push(push(mkp(&format!("Big Def {}", k), Position::DEF, 80, 27, 80, 0, false)));
+            big.push(push(mkp(
+                &format!("Big Def {}", k),
+                Position::DEF,
+                80,
+                27,
+                80,
+                0,
+                false,
+            )));
         }
         for k in 0..4 {
-            big.push(push(mkp(&format!("Big Mid {}", k), Position::MID, 80, 26, 80, 0, false)));
+            big.push(push(mkp(
+                &format!("Big Mid {}", k),
+                Position::MID,
+                80,
+                26,
+                80,
+                0,
+                false,
+            )));
         }
         for k in 0..2 {
-            big.push(push(mkp(&format!("Big Fwd {}", k), Position::FWD, 80, 25, 80, 0, false)));
+            big.push(push(mkp(
+                &format!("Big Fwd {}", k),
+                Position::FWD,
+                80,
+                25,
+                80,
+                0,
+                false,
+            )));
         }
         let prospect = push(mkp("Kid Prospect", Position::MID, 70, 19, 85, 0, true));
         big.push(prospect);
         let mut small: Vec<usize> = Vec::new();
-        small.push(push(mkp("Small Keeper", Position::GK, 65, 29, 65, 1, false)));
+        small.push(push(mkp(
+            "Small Keeper",
+            Position::GK,
+            65,
+            29,
+            65,
+            1,
+            false,
+        )));
         for k in 0..4 {
-            small.push(push(mkp(&format!("Small Def {}", k), Position::DEF, 65, 28, 65, 1, false)));
+            small.push(push(mkp(
+                &format!("Small Def {}", k),
+                Position::DEF,
+                65,
+                28,
+                65,
+                1,
+                false,
+            )));
         }
         for k in 0..2 {
-            small.push(push(mkp(&format!("Small Mid {}", k), Position::MID, 65, 27, 65, 1, false)));
+            small.push(push(mkp(
+                &format!("Small Mid {}", k),
+                Position::MID,
+                65,
+                27,
+                65,
+                1,
+                false,
+            )));
         }
-        small.push(push(mkp("Small Weakmid", Position::MID, 55, 30, 55, 1, false)));
+        small.push(push(mkp(
+            "Small Weakmid",
+            Position::MID,
+            55,
+            30,
+            55,
+            1,
+            false,
+        )));
         for k in 0..3 {
-            small.push(push(mkp(&format!("Small Fwd {}", k), Position::FWD, 65, 26, 65, 1, false)));
+            small.push(push(mkp(
+                &format!("Small Fwd {}", k),
+                Position::FWD,
+                65,
+                26,
+                65,
+                1,
+                false,
+            )));
         }
         let minds = (0..pool.len()).map(|_| PlayerMind::new(rng)).collect();
         let teams = vec![
@@ -8623,11 +13324,20 @@ mod tests {
     fn loans_flow_to_starters_and_return() {
         let mut rng = Pcg64Mcg::new(3);
         let mut w = mini_world(&mut rng);
-        let prospect = w.pool.iter().position(|p| p.name == "Kid Prospect").unwrap();
+        let prospect = w
+            .pool
+            .iter()
+            .position(|p| p.name == "Kid Prospect")
+            .unwrap();
         transfer_window(&mut w, &mut rng);
         // The prospect must be on loan at the small club (a starter there),
         // not sold, not retired, with the loan recorded and a fee paid.
-        assert_eq!(w.loans.len(), 1, "expected exactly one loan, got {:?}", w.loans.len());
+        assert_eq!(
+            w.loans.len(),
+            1,
+            "expected exactly one loan, got {:?}",
+            w.loans.len()
+        );
         let loan = w.loans[0];
         assert_eq!((loan.player, loan.home, loan.away), (prospect, 0, 1));
         assert!(w.pool[prospect].on_loan);
@@ -8635,7 +13345,10 @@ mod tests {
         assert!(w.teams[1].players.contains(&prospect));
         assert!(!w.teams[0].players.contains(&prospect));
         assert!(!w.pool[prospect].retired);
-        assert!(w.pool[prospect].homegrown, "loans must keep club-trained status");
+        assert!(
+            w.pool[prospect].homegrown,
+            "loans must keep club-trained status"
+        );
         // Returns come home next window.
         return_loans(&mut w);
         assert!(w.loans.is_empty());
@@ -8652,7 +13365,15 @@ mod tests {
         // Bloat Big FC to 27 actives with the homegrown prospect ranked last.
         for k in 0..14 {
             let i = w.pool.len();
-            w.pool.push(mkp(&format!("Filler {}", k), Position::MID, 78, 24, 78, 0, false));
+            w.pool.push(mkp(
+                &format!("Filler {}", k),
+                Position::MID,
+                78,
+                24,
+                78,
+                0,
+                false,
+            ));
             w.teams[0].players.push(i);
             w.minds.push(PlayerMind::new(&mut rng));
         }
@@ -8689,7 +13410,11 @@ mod tests {
             );
         }
         // The protected prospect is still owned (never sold), here or on loan.
-        let prospect = w.pool.iter().position(|p| p.name == "Kid Prospect").unwrap();
+        let prospect = w
+            .pool
+            .iter()
+            .position(|p| p.name == "Kid Prospect")
+            .unwrap();
         assert!(!w.pool[prospect].retired);
         assert!(w.pool[prospect].team == 0 || w.pool[prospect].team == 1);
     }
@@ -8740,8 +13465,18 @@ mod tests {
         let s_dm = ballon_score(&dm, rep, year, 1.0);
         let s_modest = ballon_score(&modest, rep, year, 1.0);
         let s_elite = ballon_score(&elite, rep, year, 1.0);
-        assert!(s_dm > s_modest, "all-round DM {:.0} should beat a modest forward {:.0}", s_dm, s_modest);
-        assert!(s_elite > s_dm, "a prolific forward {:.0} should still edge the DM {:.0}", s_elite, s_dm);
+        assert!(
+            s_dm > s_modest,
+            "all-round DM {:.0} should beat a modest forward {:.0}",
+            s_dm,
+            s_modest
+        );
+        assert!(
+            s_elite > s_dm,
+            "a prolific forward {:.0} should still edge the DM {:.0}",
+            s_elite,
+            s_dm
+        );
     }
 
     #[test]
@@ -8757,7 +13492,10 @@ mod tests {
         let reg = register_squad(&idxs, &pool);
         assert_eq!(reg.len(), 25);
         let kid = pool.len() - 1;
-        assert!(reg.contains(&kid), "homegrown floor must rescue the last-ranked prospect");
+        assert!(
+            reg.contains(&kid),
+            "homegrown floor must rescue the last-ranked prospect"
+        );
         // ...by displacing exactly one non-homegrown.
         assert_eq!(reg.iter().filter(|&&i| !pool[i].homegrown).count(), 24);
         let _ = rng;
@@ -8777,7 +13515,10 @@ mod tests {
         assert!(sc == 0 || sc == 1);
         let ff = super_cup_winner(&[0, 1, 0, 1], &w.teams, &w.params, &mut rng).unwrap();
         assert!(ff == 0 || ff == 1);
-        assert_eq!(super_cup_winner(&[0], &w.teams, &w.params, &mut rng), Some(0));
+        assert_eq!(
+            super_cup_winner(&[0], &w.teams, &w.params, &mut rng),
+            Some(0)
+        );
         assert_eq!(super_cup_winner(&[], &w.teams, &w.params, &mut rng), None);
     }
 
@@ -8797,8 +13538,16 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(fullbacks > 30, "almost no full-backs generated ({}/200)", fullbacks);
-        assert!(centre > 30, "almost no centre-backs generated ({}/200)", centre);
+        assert!(
+            fullbacks > 30,
+            "almost no full-backs generated ({}/200)",
+            fullbacks
+        );
+        assert!(
+            centre > 30,
+            "almost no centre-backs generated ({}/200)",
+            centre
+        );
     }
 
     #[test]
@@ -8882,7 +13631,8 @@ mod tests {
                 0
             } else {
                 (t.cash.max(0) as f32 * 0.15
-                    + t.revenue_last as f32 * effective_will * w.params.budget_ratio) as i64
+                    + t.revenue_last as f32 * effective_will * w.params.budget_ratio)
+                    as i64
             };
         }
         assert_eq!(w.teams[0].budget, 0, "insolvent club got an allocation");
@@ -8926,7 +13676,8 @@ mod tests {
         w.teams[1].league_idx = 0;
         w.teams[1].rep = 78;
         let deadwood = w.pool.len();
-        w.pool.push(mkp("Deadwood", Position::MID, 70, 24, 70, 0, false));
+        w.pool
+            .push(mkp("Deadwood", Position::MID, 70, 24, 70, 0, false));
         w.teams[0].players.push(deadwood);
         w.minds.push(PlayerMind::new(&mut rng));
         let di = w.minds.len() - 1;
@@ -8938,32 +13689,127 @@ mod tests {
             w.pool[deadwood].team, 0,
             "insolvent club failed to move surplus man"
         );
-        assert!(!w.pool[deadwood].retired, "surplus man destroyed instead of sold");
+        assert!(
+            !w.pool[deadwood].retired,
+            "surplus man destroyed instead of sold"
+        );
     }
 
     #[test]
     fn transfer_willing_requested_goes_lateral() {
         // A requesting settled starter may leave laterally (soft clause) but
         // never downward for money: dynasties rot through exits, not freefalls.
-        assert!(transfer_willing(false, false, true, 0.9, 95, 99, 4.0, 8.0, 0, 70, 0.8));
-        assert!(transfer_willing(false, false, true, 0.9, 99, 99, 4.0, 8.0, 0, 70, 0.8));
-        assert!(!transfer_willing(false, false, true, 0.9, 70, 99, 4.0, 8.0, 0, 70, 0.8));
+        assert!(transfer_willing(
+            false, false, true, 0.9, 0.5, 95, 99, 4.0, 8.0, 0, 70, 0.8
+        ));
+        assert!(transfer_willing(
+            false, false, true, 0.9, 0.5, 99, 99, 4.0, 8.0, 0, 70, 0.8
+        ));
+        assert!(!transfer_willing(
+            false, false, true, 0.9, 0.5, 70, 99, 4.0, 8.0, 0, 70, 0.8
+        ));
         // Unrequested settled starters need a clearly bigger club.
-        assert!(!transfer_willing(false, false, false, 0.9, 95, 99, 4.0, 8.0, 0, 70, 0.8));
-        assert!(transfer_willing(false, false, false, 0.9, 99, 90, 4.0, 8.0, 0, 70, 0.8));
+        assert!(!transfer_willing(
+            false, false, false, 0.9, 0.5, 95, 99, 4.0, 8.0, 0, 70, 0.8
+        ));
+        assert!(transfer_willing(
+            false, false, false, 0.9, 0.5, 99, 90, 4.0, 8.0, 0, 70, 0.8
+        ));
         // Surplus men circulate within 15 rep points; ambitious ones refuse
         // even smaller drops, while low-ambition veterans wind down freely.
-        assert!(transfer_willing(true, false, false, 0.9, 80, 90, 4.0, 8.0, 0, 70, 0.8));
-        assert!(!transfer_willing(true, false, false, 0.9, 70, 90, 4.0, 8.0, 0, 70, 0.8));
-        assert!(transfer_willing(true, false, false, 0.3, 76, 90, 4.0, 8.0, 0, 70, 0.8));
-        assert!(!transfer_willing(true, false, false, 0.3, 70, 90, 4.0, 8.0, 0, 70, 0.8));
-        // Contract control: a long deal is not a suggestion. Big players cannot leave
-        // late in a committed deal without a request, and elite men do not drop a
-        // big tier while still happy with their money.
-        assert!(!transfer_willing(true, false, false, 0.9, 88, 90, 4.0, 8.0, 4, 86, 0.8));
-        assert!(!transfer_willing(true, false, false, 0.9, 76, 90, 4.0, 8.0, 1, 86, 0.8));
-        assert!(transfer_willing(true, false, true, 0.9, 88, 90, 4.0, 8.0, 4, 86, 0.25));
-        assert!(transfer_willing(true, true, false, 0.9, 88, 90, 4.0, 8.0, 5, 89, 0.9));
+        assert!(transfer_willing(
+            true, false, false, 0.9, 0.5, 80, 90, 4.0, 8.0, 0, 70, 0.8
+        ));
+        assert!(!transfer_willing(
+            true, false, false, 0.9, 0.5, 70, 90, 4.0, 8.0, 0, 70, 0.8
+        ));
+        assert!(transfer_willing(
+            true, false, false, 0.3, 0.5, 76, 90, 4.0, 8.0, 0, 70, 0.8
+        ));
+        assert!(!transfer_willing(
+            true, false, false, 0.3, 0.5, 70, 90, 4.0, 8.0, 0, 70, 0.8
+        ));
+        // Contract control no longer means a hard lock: a bigger club's
+        // credible offer can be accepted when the player is open to moving
+        // up. Downward or lateral desertion still needs a request or
+        // desperation, and elite men do not drop a tier while content.
+        assert!(!transfer_willing(
+            true, false, false, 0.9, 0.5, 88, 90, 4.0, 8.0, 4, 86, 0.8
+        ));
+        assert!(!transfer_willing(
+            true, false, false, 0.9, 0.5, 76, 90, 4.0, 8.0, 1, 86, 0.8
+        ));
+        assert!(transfer_willing(
+            true, false, true, 0.9, 0.5, 88, 90, 4.0, 8.0, 4, 86, 0.25
+        ));
+        assert!(transfer_willing(
+            true, true, false, 0.9, 0.5, 88, 90, 4.0, 8.0, 5, 89, 0.9
+        ));
+        // A long deal is settleable for a genuine move up: an ambitious,
+        // not-very-loyal prodigy at a small club can leave for a giant.
+        assert!(transfer_willing(
+            false, false, false, 0.92, 0.55, 99, 60, 4.0, 8.0, 5, 94, 0.72
+        ));
+        // The same offer does not move a loyal, content player.
+        assert!(!transfer_willing(
+            false, false, false, 0.92, 0.95, 99, 60, 4.0, 8.0, 5, 94, 0.72
+        ));
+        // And an open player still does not drop down a tier on a long deal.
+        assert!(!transfer_willing(
+            false, false, false, 0.92, 0.55, 60, 99, 4.0, 8.0, 5, 94, 0.72
+        ));
+    }
+
+    #[test]
+    fn below_market_clause_creates_opportunistic_target() {
+        let mut pool = Vec::new();
+        let mut buyer = Vec::new();
+        for (pos, count, rating) in [
+            (Position::GK, 1, 90),
+            (Position::DEF, 4, 70),
+            (Position::MID, 3, 90),
+            (Position::FWD, 3, 90),
+        ] {
+            for n in 0..count {
+                let i = pool.len();
+                pool.push(mkp(
+                    &format!("Starter-{pos:?}-{n}"),
+                    pos,
+                    rating,
+                    25,
+                    rating,
+                    0,
+                    false,
+                ));
+                buyer.push(i);
+            }
+        }
+        let (need_pos, incumbent) = weakest_slot(&buyer, &pool);
+        assert_eq!(need_pos, Position::DEF);
+
+        let mut prodigy = mkp("Clause prodigy", Position::FWD, 94, 15, 99, 1, false);
+        prodigy.value = 225;
+        prodigy.release_clause = Some(5);
+        prodigy.locked = 5;
+        let replacement = acquisition_incumbent(&buyer, &pool, &prodigy, need_pos, incumbent);
+        assert_eq!(replacement, Some(90.0));
+        assert!(94.0 >= replacement.unwrap() + 2.0);
+
+        prodigy.release_clause = None;
+        assert_eq!(
+            acquisition_incumbent(&buyer, &pool, &prodigy, need_pos, incumbent),
+            None
+        );
+        prodigy.release_clause = Some(300);
+        assert!(!is_clause_opportunity(&prodigy));
+    }
+
+    #[test]
+    fn release_clause_must_be_paid_in_full() {
+        assert_eq!(agreed_transfer_fee(5, 100, 0.75, 0.80, true), Some(5));
+        assert_eq!(agreed_transfer_fee(5, 4, 0.75, 0.80, true), None);
+        // An ordinary distressed sale may still accept the opening offer.
+        assert_eq!(agreed_transfer_fee(5, 100, 0.75, 0.80, false), Some(4));
     }
 
     #[test]
@@ -9019,7 +13865,10 @@ mod tests {
                 break;
             }
         }
-        assert!(seen, "a 71-year-old manager never retired across 20 seasons");
+        assert!(
+            seen,
+            "a 71-year-old manager never retired across 20 seasons"
+        );
     }
 
     #[test]
@@ -9086,10 +13935,10 @@ mod tests {
 
         let _ = rng;
         assert_eq!(retire_prob(33, false, 75, false), 0.0);
-        assert!(retire_prob(35, false, 75, false) > 0.34);
-        assert!(retire_prob(39, false, 75, false) > 0.08);
-        assert!(retire_prob(41, false, 75, false) < retire_prob(39, false, 75, false));
-        assert_eq!(retire_prob(42, false, 75, false), 1.0);
+        assert_eq!(retire_prob(35, false, 75, false), 0.0);
+        assert!(retire_prob(38, false, 75, false) > 0.5);
+        assert!(retire_prob(41, false, 75, false) < retire_prob(38, false, 75, false));
+        assert_eq!(retire_prob(45, false, 75, false), 1.0);
     }
 
     #[test]

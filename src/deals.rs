@@ -71,10 +71,8 @@ impl TransferOffer {
     }
 
     pub fn counter(&mut self, new_base: i64) -> bool {
-        if matches!(
-            self.state,
-            OfferState::Sent | OfferState::Countered
-        ) && self.rounds < Self::max_rounds()
+        if matches!(self.state, OfferState::Sent | OfferState::Countered)
+            && self.rounds < Self::max_rounds()
         {
             self.base_fee = new_base;
             self.state = OfferState::Countered;
@@ -406,7 +404,10 @@ mod tests {
 
     #[test]
     fn ai_accepts_at_asking() {
-        assert_eq!(ai_evaluate(100, 100, 36, false, false, false), AiResponse::Accept);
+        assert_eq!(
+            ai_evaluate(100, 100, 36, false, false, false),
+            AiResponse::Accept
+        );
     }
 
     #[test]
@@ -419,7 +420,10 @@ mod tests {
 
     #[test]
     fn ai_rejects_lowball() {
-        assert_eq!(ai_evaluate(50, 100, 36, false, false, false), AiResponse::Reject);
+        assert_eq!(
+            ai_evaluate(50, 100, 36, false, false, false),
+            AiResponse::Reject
+        );
     }
 
     #[test]

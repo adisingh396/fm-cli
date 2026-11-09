@@ -18,8 +18,8 @@
 //! ~30±5, UCL winners almost always elite clubs, Ballon winners score 20+
 //! for contending teams, 4-10 big-fee deals per window, record fees €100-300m.
 
-use serde::{Deserialize, Serialize};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::data::Database;
 use crate::net;
@@ -176,7 +176,10 @@ impl Params {
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        std::fs::write("tuned_params.json", serde_json::to_string_pretty(self).unwrap())
+        std::fs::write(
+            "tuned_params.json",
+            serde_json::to_string_pretty(self).unwrap(),
+        )
     }
 
     /// Clamp every field to sane ranges (keeps mutants realistic).
@@ -361,7 +364,10 @@ pub fn loss(samples: &[SeasonSample]) -> f32 {
     if samples.is_empty() {
         return 1e9;
     }
-    let pts: Vec<f32> = samples.iter().flat_map(|s| s.champ_pts.iter().map(|&p| p as f32)).collect();
+    let pts: Vec<f32> = samples
+        .iter()
+        .flat_map(|s| s.champ_pts.iter().map(|&p| p as f32))
+        .collect();
     let pm = mean(&pts);
     let psd = sd(&pts, pm);
     let boots: Vec<f32> = samples.iter().map(|s| s.boot as f32).collect();
@@ -372,7 +378,8 @@ pub fn loss(samples: &[SeasonSample]) -> f32 {
     l += ((bm - 30.0) / 5.0).powi(2); // golden boot ~30±5
     let over52 = samples.iter().filter(|s| s.boot > 52).count() as f32;
     l += over52 * 4.0; // freak boots heavily penalized
-    let ucl_elite = samples.iter().filter(|s| s.ucl_rep >= 80).count() as f32 / samples.len() as f32;
+    let ucl_elite =
+        samples.iter().filter(|s| s.ucl_rep >= 80).count() as f32 / samples.len() as f32;
     l += 2.0 * (1.0 - ucl_elite).powi(2); // UCL winners almost always elite
     let belite = samples.iter().filter(|s| s.ballon_elite).count() as f32 / samples.len() as f32;
     l += 1.5 * (0.9 - belite).powi(2); // Ballon winners score 20+ for contenders
@@ -408,7 +415,10 @@ pub fn loss(samples: &[SeasonSample]) -> f32 {
         if total == 0 {
             continue;
         }
-        let hhi: f32 = counts.values().map(|&c| (c as f32 / total as f32).powi(2)).sum();
+        let hhi: f32 = counts
+            .values()
+            .map(|&c| (c as f32 / total as f32).powi(2))
+            .sum();
         l += if hhi > 0.6 {
             (hhi - 0.6).powi(2) * 4.0
         } else if hhi < 0.2 {
@@ -510,7 +520,8 @@ pub fn calibrate(
     for g in 0..generations {
         let mut scored: Vec<(f32, usize)> = Vec::new();
         for (i, p) in pop.iter().enumerate() {
-            let samples = crate::season::eval_seasons(db, p, eval_seasons, seed + g as u64 * 100 + i as u64);
+            let samples =
+                crate::season::eval_seasons(db, p, eval_seasons, seed + g as u64 * 100 + i as u64);
             let l = loss(&samples);
             scored.push((l, i));
             if l < best_loss {
@@ -526,7 +537,11 @@ pub fn calibrate(
             scored[scored.len() / 2].0
         );
         let elite_n = (pop_size / 3).max(1);
-        let elites: Vec<Params> = scored.iter().take(elite_n).map(|&(_, i)| pop[i].clone()).collect();
+        let elites: Vec<Params> = scored
+            .iter()
+            .take(elite_n)
+            .map(|&(_, i)| pop[i].clone())
+            .collect();
         let mut next: Vec<Params> = vec![best.clone()];
         while next.len() < pop_size {
             let parent = &elites[(rng.gen::<usize>()) % elites.len()];

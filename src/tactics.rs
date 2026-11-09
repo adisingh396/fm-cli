@@ -91,9 +91,16 @@ const GK: Slot = Slot::new(50, 4);
 const SHAPE_442: Shape = Shape {
     slots: [
         GK,
-        Slot::new(14, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(86, 18), // back 4
-        Slot::new(14, 46), Slot::new(38, 44), Slot::new(62, 44), Slot::new(86, 46), // mid 4
-        Slot::new(40, 74), Slot::new(60, 74),                                     // front 2
+        Slot::new(14, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(86, 18), // back 4
+        Slot::new(14, 46),
+        Slot::new(38, 44),
+        Slot::new(62, 44),
+        Slot::new(86, 46), // mid 4
+        Slot::new(40, 74),
+        Slot::new(60, 74), // front 2
     ],
 };
 
@@ -101,9 +108,16 @@ const SHAPE_442: Shape = Shape {
 const SHAPE_433: Shape = Shape {
     slots: [
         GK,
-        Slot::new(14, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(86, 18),
-        Slot::new(50, 34), Slot::new(36, 46), Slot::new(64, 46),                   // DM + 2 CM
-        Slot::new(18, 72), Slot::new(50, 78), Slot::new(82, 72),                   // LW ST RW
+        Slot::new(14, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(86, 18),
+        Slot::new(50, 34),
+        Slot::new(36, 46),
+        Slot::new(64, 46), // DM + 2 CM
+        Slot::new(18, 72),
+        Slot::new(50, 78),
+        Slot::new(82, 72), // LW ST RW
     ],
 };
 
@@ -112,9 +126,16 @@ const SHAPE_433: Shape = Shape {
 const SHAPE_433F: Shape = Shape {
     slots: [
         GK,
-        Slot::new(14, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(86, 18),
-        Slot::new(28, 42), Slot::new(50, 42), Slot::new(72, 42),                   // flat 3
-        Slot::new(18, 72), Slot::new(50, 78), Slot::new(82, 72),
+        Slot::new(14, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(86, 18),
+        Slot::new(28, 42),
+        Slot::new(50, 42),
+        Slot::new(72, 42), // flat 3
+        Slot::new(18, 72),
+        Slot::new(50, 78),
+        Slot::new(82, 72),
     ],
 };
 
@@ -122,10 +143,16 @@ const SHAPE_433F: Shape = Shape {
 const SHAPE_4141: Shape = Shape {
     slots: [
         GK,
-        Slot::new(14, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(86, 18),
-        Slot::new(50, 32),                                                       // anchor
-        Slot::new(16, 50), Slot::new(40, 50), Slot::new(60, 50), Slot::new(84, 50),// mid 4
-        Slot::new(50, 76),                                                       // lone ST
+        Slot::new(14, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(86, 18),
+        Slot::new(50, 32), // anchor
+        Slot::new(16, 50),
+        Slot::new(40, 50),
+        Slot::new(60, 50),
+        Slot::new(84, 50), // mid 4
+        Slot::new(50, 76), // lone ST
     ],
 };
 
@@ -133,10 +160,16 @@ const SHAPE_4141: Shape = Shape {
 const SHAPE_4411: Shape = Shape {
     slots: [
         GK,
-        Slot::new(14, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(86, 18),
-        Slot::new(14, 46), Slot::new(38, 44), Slot::new(62, 44), Slot::new(86, 46),
-        Slot::new(50, 62),                                                       // #10
-        Slot::new(50, 78),                                                       // striker
+        Slot::new(14, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(86, 18),
+        Slot::new(14, 46),
+        Slot::new(38, 44),
+        Slot::new(62, 44),
+        Slot::new(86, 46),
+        Slot::new(50, 62), // #10
+        Slot::new(50, 78), // striker
     ],
 };
 
@@ -145,11 +178,16 @@ const SHAPE_4411: Shape = Shape {
 const SHAPE_442D: Shape = Shape {
     slots: [
         GK,
-        Slot::new(16, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(84, 18),
-        Slot::new(50, 34),                                                       // DM (point)
-        Slot::new(38, 48), Slot::new(62, 48),                                    // shuttlers
-        Slot::new(50, 60),                                                       // #10
-        Slot::new(40, 76), Slot::new(60, 76),                                    // front 2
+        Slot::new(16, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(84, 18),
+        Slot::new(50, 34), // DM (point)
+        Slot::new(38, 48),
+        Slot::new(62, 48), // shuttlers
+        Slot::new(50, 60), // #10
+        Slot::new(40, 76),
+        Slot::new(60, 76), // front 2
     ],
 };
 
@@ -157,11 +195,16 @@ const SHAPE_442D: Shape = Shape {
 const SHAPE_352: Shape = Shape {
     slots: [
         GK,
-        Slot::new(28, 17), Slot::new(50, 16), Slot::new(72, 17),                   // back 3
-        Slot::new(10, 44),                                                       // LWB
-        Slot::new(40, 44), Slot::new(50, 42), Slot::new(60, 44),                   // 3 CM
-        Slot::new(90, 44),                                                       // RWB
-        Slot::new(42, 74), Slot::new(58, 74),                                      // front 2
+        Slot::new(28, 17),
+        Slot::new(50, 16),
+        Slot::new(72, 17), // back 3
+        Slot::new(10, 44), // LWB
+        Slot::new(40, 44),
+        Slot::new(50, 42),
+        Slot::new(60, 44), // 3 CM
+        Slot::new(90, 44), // RWB
+        Slot::new(42, 74),
+        Slot::new(58, 74), // front 2
     ],
 };
 
@@ -169,12 +212,16 @@ const SHAPE_352: Shape = Shape {
 const SHAPE_352A: Shape = Shape {
     slots: [
         GK,
-        Slot::new(28, 17), Slot::new(50, 16), Slot::new(72, 17),
-        Slot::new(10, 54),                                                       // LWB high
-        Slot::new(38, 44), Slot::new(50, 40), Slot::new(62, 44),
-        Slot::new(90, 54),                                                       // RWB high
-        Slot::new(50, 64),                                                       // advanced mid
-        Slot::new(50, 78),                                                       // striker
+        Slot::new(28, 17),
+        Slot::new(50, 16),
+        Slot::new(72, 17),
+        Slot::new(10, 54), // LWB high
+        Slot::new(38, 44),
+        Slot::new(50, 40),
+        Slot::new(62, 44),
+        Slot::new(90, 54), // RWB high
+        Slot::new(50, 64), // advanced mid
+        Slot::new(50, 78), // striker
     ],
 };
 
@@ -182,12 +229,16 @@ const SHAPE_352A: Shape = Shape {
 const SHAPE_3421: Shape = Shape {
     slots: [
         GK,
-        Slot::new(28, 17), Slot::new(50, 16), Slot::new(72, 17),
-        Slot::new(10, 46),                                                       // LWB
-        Slot::new(40, 44), Slot::new(60, 44),                                    // 2 CM
-        Slot::new(90, 46),                                                       // RWB
-        Slot::new(34, 64), Slot::new(66, 64),                                    // two #10s
-        Slot::new(50, 78),                                                       // striker
+        Slot::new(28, 17),
+        Slot::new(50, 16),
+        Slot::new(72, 17),
+        Slot::new(10, 46), // LWB
+        Slot::new(40, 44),
+        Slot::new(60, 44), // 2 CM
+        Slot::new(90, 46), // RWB
+        Slot::new(34, 64),
+        Slot::new(66, 64), // two #10s
+        Slot::new(50, 78), // striker
     ],
 };
 
@@ -195,9 +246,16 @@ const SHAPE_3421: Shape = Shape {
 const SHAPE_343: Shape = Shape {
     slots: [
         GK,
-        Slot::new(28, 17), Slot::new(50, 16), Slot::new(72, 17),
-        Slot::new(10, 46), Slot::new(40, 44), Slot::new(60, 44), Slot::new(90, 46),
-        Slot::new(20, 72), Slot::new(50, 78), Slot::new(80, 72),                   // front 3
+        Slot::new(28, 17),
+        Slot::new(50, 16),
+        Slot::new(72, 17),
+        Slot::new(10, 46),
+        Slot::new(40, 44),
+        Slot::new(60, 44),
+        Slot::new(90, 46),
+        Slot::new(20, 72),
+        Slot::new(50, 78),
+        Slot::new(80, 72), // front 3
     ],
 };
 
@@ -205,10 +263,16 @@ const SHAPE_343: Shape = Shape {
 const SHAPE_4231: Shape = Shape {
     slots: [
         GK,
-        Slot::new(14, 18), Slot::new(38, 17), Slot::new(62, 17), Slot::new(86, 18),
-        Slot::new(42, 36), Slot::new(58, 36),                                    // double pivot
-        Slot::new(20, 58), Slot::new(50, 60), Slot::new(80, 58),                   // 3 AM
-        Slot::new(50, 78),                                                       // striker
+        Slot::new(14, 18),
+        Slot::new(38, 17),
+        Slot::new(62, 17),
+        Slot::new(86, 18),
+        Slot::new(42, 36),
+        Slot::new(58, 36), // double pivot
+        Slot::new(20, 58),
+        Slot::new(50, 60),
+        Slot::new(80, 58), // 3 AM
+        Slot::new(50, 78), // striker
     ],
 };
 
@@ -217,9 +281,16 @@ const SHAPE_4231: Shape = Shape {
 const SHAPE_532: Shape = Shape {
     slots: [
         GK,
-        Slot::new(10, 26), Slot::new(30, 17), Slot::new(50, 16), Slot::new(70, 17), Slot::new(90, 26), // WB CB CB CB WB
-        Slot::new(38, 46), Slot::new(50, 44), Slot::new(62, 46),                  // 3 CM
-        Slot::new(42, 74), Slot::new(58, 74),                                     // front 2
+        Slot::new(10, 26),
+        Slot::new(30, 17),
+        Slot::new(50, 16),
+        Slot::new(70, 17),
+        Slot::new(90, 26), // WB CB CB CB WB
+        Slot::new(38, 46),
+        Slot::new(50, 44),
+        Slot::new(62, 46), // 3 CM
+        Slot::new(42, 74),
+        Slot::new(58, 74), // front 2
     ],
 };
 
@@ -227,9 +298,16 @@ const SHAPE_532: Shape = Shape {
 const SHAPE_541: Shape = Shape {
     slots: [
         GK,
-        Slot::new(10, 26), Slot::new(30, 17), Slot::new(50, 16), Slot::new(70, 17), Slot::new(90, 26), // back 5
-        Slot::new(20, 47), Slot::new(40, 45), Slot::new(60, 45), Slot::new(80, 47), // mid 4
-        Slot::new(50, 76),                                                        // lone ST
+        Slot::new(10, 26),
+        Slot::new(30, 17),
+        Slot::new(50, 16),
+        Slot::new(70, 17),
+        Slot::new(90, 26), // back 5
+        Slot::new(20, 47),
+        Slot::new(40, 45),
+        Slot::new(60, 45),
+        Slot::new(80, 47), // mid 4
+        Slot::new(50, 76), // lone ST
     ],
 };
 
