@@ -1,5 +1,5 @@
-// Crouton Alpha web configuration.
-// The Rust backend can serve this dashboard itself. When it is hosted
-// separately (including on a cloud computer), override the API base in the
-// dashboard settings or with a query parameter such as `?api=https://host`.
-window.FM_API_BASE = 'http://127.0.0.1:8080';
+// Crouton Alpha web configuration. This points the deployed frontend at the
+// running Rust backend through the Cloudflare tunnel. To use a different host,
+// override it from the dashboard's "API endpoint" field or with
+// `?api=https://your-api.example`.
+window.FM_API_BASE = 'https://plasma-checks-league-trinity.trycloudflare.com';

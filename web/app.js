@@ -5,13 +5,15 @@
   const DEFAULT_API = 'http://127.0.0.1:8080';
 
   function storedApi() {
-    return localStorage.getItem('fm-web-api-base') || WINDOW_API_BASE();
+    const saved = localStorage.getItem('fm-web-api-base');
+    if (saved && !['http://127.0.0.1:8080', 'http://localhost:8080'].includes(saved.trim())) return saved.trim().replace(/\/$/, '');
+    return WINDOW_API_BASE();
   }
   function WINDOW_API_BASE() {
     const q = new URLSearchParams(location.search).get('api');
     if (q) return q.replace(/\/$/, '');
     const cfg = window.FM_API_BASE;
-    if (cfg && !['', 'http://127.0.0.1:8080', 'http://localhost:8080'].includes(cfg)) return cfg.replace(/\/$/, '');
+    if (cfg) return cfg.replace(/\/$/, '');
     return location.origin && location.origin !== 'null' ? location.origin : DEFAULT_API;
   }
   let API = storedApi();
@@ -82,7 +84,7 @@
     $('view-subtitle').textContent = 'Live status of the 2026 living world.';
     $('app').innerHTML = `
       <div class="hero">
-        <div><div class="pill good">Live · week ${w.week ?? 0}</div><h2>One interconnected world. Eleven million decisions at a time.</h2><p>Simulate one week at a time, inspect every match, and zoom into every player. Ballon narratives, national teams, regional cups, transfers, national pools and the data lab all share the same underlying world state.</p></div>
+        <div><div class="pill">Live world · Week ${w.week ?? 0}</div><h2>Season control room: advance fixtures, open matches, audit every player.</h2><p>The Rust simulation supplies every table, stat line and career record shown here. Use the controls in the left rail to move the entire world forward, then drill into the result you care about.</p></div>
         <div class="hero-metrics">
           ${kpi('Players', fmt(w.players), 'world pool')}
           ${kpi('Database players', fmt(w.database_players), `${fmt(w.database_clubs)} source clubs`)}
@@ -101,7 +103,7 @@
         <div class="card"><h3>Top scorers</h3>${top.length ? `<div class="row-list">${top.slice(0, 6).map((p, i) => `<div class="row"><span>${i+1}. <button class="linklike" data-player="${esc(p.handle || p.id)}">${esc(p.name)}</button><div class="small">${esc(p.club)} · ${esc(p.league || '')}</div></span><strong>${p.goals} goals</strong></div>`).join('')}</div>` : '<p>No scorer data yet.</p>'}</div>
       </div>
       <div class="grid cols-2"><div class="card"><h2>Latest match signals</h2>${scoreboard(state.overview?.recent_matches || [], 8)}</div>
-      <div class="card"><h2>Your next decision</h2><p>Open a match and inspect the 22 start-line stat lines, expected goals, shot quality, possession, events and ratings. Open a player to see season, career and attribute detail.</p><button data-page="fixtures">Open fixtures</button> <button data-page="players">Open player laboratory</button></div></div>`;
+      <div class="card"><h2>How to inspect the world</h2><p>Open any match to see the 22 starter lines, expected goals, shot mix, possession and events. Open any player to see attributes, season microdata, career totals and the source-database dossier.</p><button data-page="fixtures">Open fixtures</button> <button data-page="players">Open player laboratory</button></div></div>`;
     bindDynamic();
   }
 
@@ -368,5 +370,5 @@
   });
 
   $('api-base').value = API;
-  api('/api/health').then(async () => { await refreshAll(); await loadPlayers(); }).catch((e) => { setStatus(`Could not connect — ${e.message}`, false); $('app').innerHTML = `<div class="alert"><strong>API unavailable.</strong> Set its URL in the left panel, or start the Rust backend with <code>cargo run --release -- serve</code>. ${esc(e.message)}</div>`; });
+  api('/api/health').then(async () => { await refreshAll(); await loadPlayers(); }).catch((e) => { setStatus(`Could not connect — ${e.message}`, false); $('app').innerHTML = `<div class="alert"><strong>Simulation API is unreachable.</strong><p>The frontend is loaded, but the Rust backend did not answer at <code>${esc(API)}</code>. Start it with <code>cargo run --release -- serve</code> from the project root, check that the tunnel/process is still running, or enter a different endpoint in the left rail.</p><p><a href="${esc(API)}" target="_blank" rel="noreferrer">Open backend dashboard</a> · <a href="/api/health" target="_blank" rel="noreferrer">Health check</a></p><p>${esc(e.message)}</p></div>`; });
 })();

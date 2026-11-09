@@ -3,21 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Crouton Alpha football observatory: live simulated leagues, fixtures, match detail and a 23k-player laboratory." />
+  <meta name="theme-color" content="#0a0d0a" />
   <title>Crouton Alpha — Football Observatory</title>
   <link rel="icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/styles.css" />
   <script src="/config.js"></script>
 </head>
 <body>
-  <aside id="sidebar">
+  <a class="skip-link" href="#app">Skip to dashboard</a>
+  <aside id="sidebar" aria-label="Dashboard controls">
     <div class="brand">
-      <div class="mark">CA</div>
+      <div class="mark" aria-hidden="true">CA</div>
       <div>
         <div class="brand-title">Crouton Alpha</div>
         <div class="brand-sub">Football Observatory</div>
       </div>
     </div>
-    <nav>
+    <nav aria-label="Primary">
       <button data-page="overview" class="active">Overview</button>
       <button data-page="leagues">Leagues</button>
       <button data-page="fixtures">Fixtures</button>
@@ -37,8 +40,8 @@
     </div>
     <div class="sidebar-card">
       <span class="kpi-label">API endpoint</span>
-      <input id="api-base" spellcheck="false" placeholder="http://127.0.0.1:8080" />
-      <button id="save-api" class="secondary" style="width:100%">Use this endpoint</button>
+      <input id="api-base" aria-label="API endpoint" spellcheck="false" placeholder="https://plasma-checks-league-trinity.trycloudflare.com" />
+      <button id="save-api" class="secondary">Use endpoint</button>
       <span id="api-status">Not connected</span>
     </div>
     <div class="sidebar-card small">
@@ -49,18 +52,18 @@
   <main>
     <header>
       <div>
-        <div class="eyebrow">Crouton Alpha · live observatory</div>
         <h1 id="view-title">Overview</h1>
         <p id="view-subtitle">The whole simulated world, from title races to one-off bit-part players.</p>
       </div>
       <div class="header-actions">
-        <input id="global-search" placeholder="Search player, club, league…" />
+        <input id="global-search" aria-label="Global player search" placeholder="Search player, club, league…" />
         <button id="refresh">Refresh data</button>
       </div>
     </header>
     <section id="app" aria-live="polite"></section>
   </main>
 
+  <noscript><div style="padding:24px">This dashboard requires JavaScript to load the live simulation API.</div></noscript>
   <div id="toast" role="status"></div>
   <script src="/app.js"></script>
 </body>
