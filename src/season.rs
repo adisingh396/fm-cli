@@ -868,7 +868,7 @@ fn market_value(ovr: u8, age: u8, pos: Position) -> i64 {
     // same abstract-millions band the sim was tuned around.
     let base = (ovr as f32 / 33.0).powf(4.8);
     // Age curve with real teeth past 30: veterans keep their ability but lose
-    // market value fast, so 30+ stars stop moving for €200m+ — ability alone
+    // market value fast, so 30+ stars stop moving for €200m+ - ability alone
     // never prices a declining asset like a peak one.
     let age_f = if age <= 27 {
         1.0 + (27 - age) as f32 * 0.04
@@ -877,6 +877,72 @@ fn market_value(ovr: u8, age: u8, pos: Position) -> i64 {
     };
     let pos_f = if pos == Position::GK { 0.55 } else { 1.0 };
     (base * age_f * pos_f).max(1.0) as i64
+}
+
+/// Purchasing-power / salary market factor. Deliberately separate from the
+/// Ballon d'Or league factor (which is zero outside the Big Five).
+fn market_league_factor(league_idx: usize, meta: &[LeagueMeta]) -> f32 {
+    if league_idx < BIG5.len() { return 1.0; }
+    let label = meta.get(league_idx).map(|m| m.label.as_str()).unwrap_or("");
+    match label {
+        "Saudi Pro League" => 0.85,
+        "MLS" => 0.38,
+        "Chinese Super League" => 0.30,
+        "J-League" | "K League 1" => 0.25,
+        "A-League" => 0.16,
+        "Indian Super League" => 0.08,
+        _ if meta.get(league_idx).and_then(|m| m.confed)
+            == Some(crate::world_model::Confederation::UEFA) => 0.55,
+        _ => 0.20,
+    }
+}
+
+fn weekly_wage_for(league_idx: usize, ovr: u8, value_m: i64, meta: &[LeagueMeta]) -> i64 {
+    let label = meta.get(league_idx).map(|m| m.label.as_str()).unwrap_or("");
+    let raw = ((value_m as f32 * 0.80) as i64).max(1); // internal unit: €k/week
+    match label {
+        "Indian Super League" => raw.clamp(3, 15),
+        "A-League" => raw.clamp(4, 30),
+        "J-League" | "K League 1" => raw.clamp(6, 55),
+        "MLS" => raw.clamp(6, 120),
+        "Saudi Pro League" => if ovr >= 75 { raw.max(40).min(700) } else { raw.min(80) },
+        _ if league_idx < BIG5.len() && ovr >= 70 => raw.max(70).min(650),
+        _ => raw,
+    }
+}
+
+/// Value/wage for a player at his actual club: the abstract market value
+/// scaled by the purchasing power of his league and his importance in the
+/// squad. The European elite's wages start around €70k/wk and run
+/// astronomical; an equally good ISL or MLS star lives in a $3-15k/wk world.
+fn market_value_at(w: &World, pi: usize) -> i64 {
+    let p = &w.pool[pi];
+    let league_idx = w.teams.get(p.team).map(|t| t.league_idx).unwrap_or(5);
+    let lf = market_league_factor(league_idx, &w.league_meta);
+    // Importance: how far above his own squad's average he stands. A starter
+    // at a top side is worth far more than the same body on the bench.
+    let importance = w
+        .teams
+        .get(p.team)
+        .map(|t| {
+            let mut ovrs: Vec<u8> = t.players.iter().map(|&i| w.pool[i].ovr).collect();
+            ovrs.sort_unstable();
+            let avg = ovrs.iter().map(|&v| v as f32).sum::<f32>() / ovrs.len().max(1) as f32;
+            (p.ovr as f32 / avg.max(1.0)).clamp(0.6, 1.8)
+        })
+        .unwrap_or(1.0);
+    (market_value(p.ovr, p.age, p.pos) as f32
+        * lf
+        * (0.65 + 0.75 * importance))
+    .max(1.0) as i64
+}
+
+/// Refresh a player's value and wage to the current market at his club.
+fn refresh_value_wage(w: &mut World, pi: usize) {
+    let value = market_value_at(w, pi);
+    let li = w.teams.get(w.pool[pi].team).map(|t| t.league_idx).unwrap_or(5);
+    w.pool[pi].value = value;
+    w.pool[pi].wage = weekly_wage_for(li, w.pool[pi].ovr, value, &w.league_meta);
 }
 
 /// Club revenue estimate in abstract "millions", anchored to the Deloitte
@@ -4192,7 +4258,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
 
-    World {
+    let mut world = World {
         pool,
         minds: Vec::new(), // filled just below, one mind per player
         teams,
@@ -4216,7 +4282,11 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         free_agents: Vec::new(),
         national_states: HashMap::new(),
         used_names,
+    };
+    for pi in 0..world.pool.len() {
+        refresh_value_wage(&mut world, pi);
     }
+    world
 }
 
 /// Give every pooled player a mind (call once after the initial pool build).
@@ -4253,7 +4323,7 @@ fn reset_season(w: &mut World) {
         p.career_bcc += p.big_chances as u32;
         p.career_ti += (p.tackles + p.interceptions) as u32;
         p.career_cs += p.clean_sheets as u32;
-        p.career_apps += p.apps as u32;
+        p.career_apps += p.overall_apps() as u32;
         p.career_rating_sum += p.rating_sum;
         p.career_rating_apps += p.rating_apps as u32;
         p.apps = 0;
@@ -6335,6 +6405,26 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
             })
             .collect()
     };
+    // Market multipliers are frozen before mutating the pool, avoiding a
+    // mutable/immutable borrow overlap while still pricing every player by
+    // his league and importance in his actual squad.
+    let team_market: Vec<(f32, f32, usize)> = w
+        .teams
+        .iter()
+        .map(|t| {
+            let avg = if t.players.is_empty() {
+                70.0
+            } else {
+                t.players.iter().map(|&i| w.pool[i].ovr as f32).sum::<f32>()
+                    / t.players.len() as f32
+            };
+            (
+                market_league_factor(t.league_idx, &w.league_meta),
+                avg.max(1.0),
+                t.league_idx,
+            )
+        })
+        .collect();
     for (idx, p) in w.pool.iter_mut().enumerate() {
         if p.retired {
             continue;
@@ -6387,8 +6477,13 @@ fn age_and_regen(w: &mut World, rng: &mut Pcg64Mcg) {
         // bills trivial within a decade, so nobody ever needs to sell, top
         // clubs hoard everyone, mid-table defenses starve on kids, and the
         // 2060s fill with 70-goal seasons against hollowed-out leagues.
-        p.value = (market_value(p.ovr, p.age, p.pos) as f32 * w.inflation) as i64;
-        p.wage = ((p.wage as f32 * w.params.inflation.clamp(1.0, 1.15)) as i64).max(1);
+        let (lf, team_avg, li) = team_market.get(p.team).copied().unwrap_or((0.5, 70.0, 5));
+        let importance = (p.ovr as f32 / team_avg).clamp(0.6, 1.8);
+        p.value = (market_value(p.ovr, p.age, p.pos) as f32
+            * lf
+            * (0.65 + 0.75 * importance)
+            * w.inflation) as i64;
+        p.wage = weekly_wage_for(li, p.ovr, p.value, &w.league_meta);
         // Superstar wage spiral: elite players' agents demand a cut of what the
         // CLUB earns (6–16% of revenue by greed), not just a multiple of market
         // value. Hoarding three 95s means each takes a sixth of turnover, so
@@ -7022,6 +7117,35 @@ fn transfer_willing(
     } else {
         buyer_rep as f32 >= seller_rep as f32 + gap_starter
     }
+}
+
+/// Career-arc sanity for destination choice. Global stars in or near their
+/// prime do not abandon Champions League football for Saudi/MLS/ISL simply
+/// because that buyer has cash. A genuine late-career move (35+) can happen,
+/// and elite UEFA clubs outside the Big Five remain valid destinations.
+fn prestige_destination_allowed(w: &World, pi: usize, buyer: usize) -> bool {
+    let p = &w.pool[pi];
+    let seller = p.team;
+    let buyer_league = w.teams[buyer].league_idx;
+    let seller_league = w.teams[seller].league_idx;
+    let buyer_uefa = w.league_meta.get(buyer_league).and_then(|m| m.confed)
+        == Some(crate::world_model::Confederation::UEFA);
+    let seller_uefa = w.league_meta.get(seller_league).and_then(|m| m.confed)
+        == Some(crate::world_model::Confederation::UEFA);
+    let buyer_is_elite_uefa = buyer_league < BIG5.len()
+        || (buyer_uefa && w.teams[buyer].rep >= 80);
+    let seller_is_elite_uefa = seller_league < BIG5.len()
+        || (seller_uefa && w.teams[seller].rep >= 80);
+
+    if (p.pot >= 88 && p.age <= 29) || (p.ovr >= 84 && p.age <= 34) {
+        if seller_is_elite_uefa && !buyer_is_elite_uefa {
+            return false;
+        }
+        if !buyer_is_elite_uefa && w.minds[pi].ambition >= 0.55 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Resolve club-to-club fee negotiation. A release clause is not an asking
@@ -7744,6 +7868,9 @@ fn transfer_window(w: &mut World, rng: &mut Pcg64Mcg) -> (Vec<String>, usize, i6
                     // whether the player is open to moving up (or a clause /
                     // request applies). Locked players are priced, not hidden.
                     if moved.contains(&pi) || !known.contains(&pi) || w.pool[pi].on_loan {
+                        continue;
+                    }
+                    if !prestige_destination_allowed(w, pi, buyer) {
                         continue;
                     }
                     let p = &w.pool[pi];
@@ -9783,6 +9910,12 @@ fn run_world_cup_2026(
             let mut best: Option<usize> = None;
             for gi in 0..groups.len() {
                 let g = &groups[gi];
+                // Exactly one nation from this pot per group. Without this,
+                // confederation constraints could push two pot teams into one
+                // group, producing impossible 5-team and 3-team groups.
+                if g.len() >= poti + 1 {
+                    continue;
+                }
                 let ok = match my_confed {
                     C::UEFA => seen(C::UEFA, g) < 2,
                     _ => seen(my_confed, g) == 0,
@@ -9795,6 +9928,7 @@ fn run_world_cup_2026(
                 groups
                     .iter()
                     .enumerate()
+                    .filter(|(_, g)| g.len() == poti)
                     .min_by_key(|(_, g)| g.len())
                     .map(|(i, _)| i)
                     .unwrap_or(0)
@@ -11162,7 +11296,7 @@ pub fn simulate_decade(db: &Database, years: u16, seed: u64) -> SeasonReport {
         p.career_bcc += p.big_chances as u32;
         p.career_ti += (p.tackles + p.interceptions) as u32;
         p.career_cs += p.clean_sheets as u32;
-        p.career_apps += p.apps as u32;
+        p.career_apps += p.overall_apps() as u32;
         p.career_rating_sum += p.rating_sum;
         p.career_rating_apps += p.rating_apps as u32;
     }
@@ -12354,6 +12488,20 @@ pub mod web_api {
         min_potential: u8,
     }
 
+    /// Interactive club/player negotiation exposed to manager mode.
+    struct WebNegotiation {
+        id: u64,
+        buyer: usize,
+        seller: usize,
+        player: usize,
+        offer: i64,
+        wage: i64,
+        counter_fee: i64,
+        counter_wage: i64,
+        exchange: Option<usize>,
+        status: String,
+    }
+
     /// Pseudo-league id used by the browser for European cup matches. Every
     /// real domestic league has a small index, so a dedicated sentinel keeps
     /// `/api/league/<id>` and the match list grouping unambiguous.
@@ -12441,6 +12589,9 @@ pub mod web_api {
         world_by_database: std::collections::HashMap<PlayerId, usize>,
         rng: Pcg64Mcg,
         week: u32,
+        /// Domestic round index, separate from the calendar week. UCL and
+        /// international-break weeks pause the league calendar.
+        league_round: u32,
         /// Calendar year of the current season (2026-27 season = 2026).
         year: u16,
         /// Completed seasons since the world was created.
@@ -12461,6 +12612,15 @@ pub mod web_api {
         scout_assignments: Vec<(u64, ScoutCriteria, u32, u32)>,
         /// Next scouting assignment id.
         scout_next_id: u64,
+        negotiations: Vec<WebNegotiation>,
+        negotiation_next_id: u64,
+        /// National-team-only position instructions. Applied around
+        /// international windows and restored before club football resumes.
+        national_positions: std::collections::HashMap<usize, Position>,
+        /// Summer tournament matchdays waiting to be revealed one Play tick
+        /// at a time; prevents one click from simulating the whole World Cup.
+        summer_pending: Vec<Vec<WebMatchRecord>>,
+        summer_result: Option<(u16, String, String)>,
         schedules: Vec<LeagueSchedule>,
         /// European cup state for the interactive season. `None` when the
         /// world has no European clubs.
@@ -12561,16 +12721,16 @@ pub mod web_api {
             ring.insert(1, last);
         }
         let knockout = vec![
-            KnockoutRound::new("Knockout Play-off", 20),
-            KnockoutRound::new("Round of 16", 23),
-            KnockoutRound::new("Quarter-final", 26),
-            KnockoutRound::new("Semi-final", 29),
-            KnockoutRound::new("Final", 32),
+            KnockoutRound::new("Knockout Play-off", 29),
+            KnockoutRound::new("Round of 16", 33),
+            KnockoutRound::new("Quarter-final", 37),
+            KnockoutRound::new("Semi-final", 41),
+            KnockoutRound::new("Final", 45),
         ];
         Some(UclCup {
             field: teams,
             phase_pairs,
-            phase_weeks: vec![3, 5, 7, 9, 11, 13, 15, 17],
+            phase_weeks: vec![4, 7, 10, 13, 16, 19, 22, 25],
             standings: Vec::new(),
             knockout,
         })
@@ -12751,6 +12911,7 @@ pub mod web_api {
                 world_by_database,
                 rng,
                 week: 0,
+                league_round: 0,
                 year: BASE_YEAR,
                 seasons_done: 0,
                 total_matches: 0,
@@ -12758,6 +12919,11 @@ pub mod web_api {
                 archives: Vec::new(),
                 scout_assignments: Vec::new(),
                 scout_next_id: 1,
+                negotiations: Vec::new(),
+                negotiation_next_id: 1,
+                national_positions: std::collections::HashMap::new(),
+                summer_pending: Vec::new(),
+                summer_result: None,
                 schedules,
                 ucl,
                 matches: Vec::new(),
@@ -12778,7 +12944,7 @@ pub mod web_api {
         }
 
         fn remaining_rounds(&self) -> usize {
-            self.total_rounds().saturating_sub(self.week as usize)
+            self.total_rounds().saturating_sub(self.league_round as usize)
         }
 
         fn league_name(&self, li: usize) -> String {
@@ -12810,11 +12976,21 @@ pub mod web_api {
             // instead of freezing at 38/38 — summer internationals (a World
             // Cup in 2026/2030…), aging and regens, the transfer window, then
             // a fresh season.
-            if season_len > 0 && self.week as usize >= season_len && ucl_done {
+            if !self.summer_pending.is_empty() || self.summer_result.is_some()
+                || (season_len > 0 && self.league_round as usize >= season_len && ucl_done)
+            {
                 return self.rollover_season();
             }
-            let round_idx = self.week as usize;
+            let round_idx = self.league_round as usize;
             let mut played = 0usize;
+            let ucl_slot = self.ucl.as_ref().map(|c| {
+                c.phase_weeks.contains(&self.week)
+                    || c.knockout.iter().any(|r| r.week == self.week && !r.done)
+            }).unwrap_or(false);
+            let intl_slot = self.week == 8 || self.week == 20;
+            // UCL and international dates are real breaks in the domestic
+            // calendar: the league round counter does not move this week.
+            if !ucl_slot && !intl_slot && round_idx < season_len {
             for sched_idx in 0..self.schedules.len() {
                 let Some(round) = self.schedules[sched_idx].rounds.get(round_idx).cloned() else {
                     continue;
@@ -12870,19 +13046,14 @@ pub mod web_api {
                     &self.world.params,
                 );
             }
+            self.league_round += 1;
+            }
             played += self.simulate_ucl_week();
             played += self.simulate_intl_week();
             // Advance the week when anything happened, or when the Champions
             // League still has rounds scheduled beyond the domestic season
             // (so small-league worlds don't stall before the final).
-            let ucl_pending = self
-                .ucl
-                .as_ref()
-                .map(|c| c.knockout.iter().any(|r| !r.done && r.week >= self.week))
-                .unwrap_or(false);
-            if played > 0 || ucl_pending {
-                self.week += 1;
-            }
+            self.week += 1;
             played
         }
 
@@ -12891,8 +13062,8 @@ pub mod web_api {
         /// Every friendly is recorded like any other match, so caps, goals
         /// and ratings are visible on player pages and the match wire.
         fn simulate_intl_week(&mut self) -> usize {
-            const AUTUMN_BREAK: u32 = 11; // week 12, one-based
-            const SPRING_BREAK: u32 = 24; // week 25, one-based
+            const AUTUMN_BREAK: u32 = 8; // dedicated calendar break
+            const SPRING_BREAK: u32 = 20;
             let rounds: &[u32] = if self.week == AUTUMN_BREAK {
                 &[0, 1]
             } else if self.week == SPRING_BREAK {
@@ -12902,6 +13073,7 @@ pub mod web_api {
             };
             let week = self.week + 1;
             let season = self.year;
+            let instructions = self.national_positions.clone();
             let mut recorded = 0usize;
             let WebState {
                 world,
@@ -12932,7 +13104,9 @@ pub mod web_api {
                 recorded += 1;
             };
             let sink: IntlSink = Some(&mut rec);
+            let restore = apply_national_positions(world, &instructions);
             friendly_windows(world, rng, rounds, sink);
+            restore_national_positions(world, restore);
             recorded
         }
 
@@ -12945,75 +13119,97 @@ pub mod web_api {
         /// Match history is retained with a season tag so player pages keep
         /// showing last season's run.
         fn rollover_season(&mut self) -> usize {
-            let year = self.year;
-            let kind = intl_kind_for(year);
-            let week_base = self.total_rounds() as u32 + 1;
-            let season = self.year;
-            let WebState {
-                world,
-                matches,
-                rng,
-                ..
-            } = self;
-            let mut week_counter = week_base;
-            let mut rec = |o: matchsim::MatchOutcome,
-                           home: &str,
-                           away: &str,
-                           comp: &str,
-                           stage: &str| {
-                let id = matches.len() + 1;
-                matches.push(WebMatchRecord {
-                    id,
-                    week: week_counter,
-                    season,
-                    league_idx: INTL_LEAGUE_ID,
-                    round: 0,
-                    home: usize::MAX,
-                    away: usize::MAX,
-                    comp: Comp::Intl,
-                    stage: format!("{} · {}", comp, stage),
-                    home_name: Some(home.to_string()),
-                    away_name: Some(away.to_string()),
-                    outcome: o,
-                });
-                week_counter += 1;
-            };
-            let sink: IntlSink = Some(&mut rec);
-            let winner = summer_major_tournament(world, year, rng, sink);
-            let kind_label = match kind {
-                IntlKind::WorldCup => "World Cup".to_string(),
-                IntlKind::Euros => "UEFA Euros".to_string(),
-                IntlKind::AsianCup => "AFC Asian Cup".to_string(),
-                IntlKind::CopaAmerica => "Copa América".to_string(),
-                IntlKind::Afcon => "Africa Cup of Nations".to_string(),
-                IntlKind::GoldCup => "Gold Cup".to_string(),
-                IntlKind::None => "Internationals".to_string(),
-            };
-            if winner != "-" {
-                self.last_intl = Some((year, kind_label, winner));
+            // First tick after the club season: simulate the summer behind a
+            // staging buffer, then reveal one matchday per Play tick.
+            if self.summer_pending.is_empty() && self.summer_result.is_none() {
+                let year = self.year;
+                let kind = intl_kind_for(year);
+                let kind_label = match kind {
+                    IntlKind::WorldCup => "World Cup", IntlKind::Euros => "UEFA Euros",
+                    IntlKind::AsianCup => "AFC Asian Cup", IntlKind::CopaAmerica => "Copa América",
+                    IntlKind::Afcon => "Africa Cup of Nations", IntlKind::GoldCup => "Gold Cup",
+                    IntlKind::None => "Internationals",
+                }.to_string();
+                let instructions = self.national_positions.clone();
+                let mut temp: Vec<WebMatchRecord> = Vec::new();
+                {
+                    let world = &mut self.world;
+                    let rng = &mut self.rng;
+                    let mut rec = |o: matchsim::MatchOutcome, home: &str, away: &str, comp: &str, stage: &str| {
+                        temp.push(WebMatchRecord {
+                            id: 0, week: 0, season: year, league_idx: INTL_LEAGUE_ID,
+                            round: 0, home: usize::MAX, away: usize::MAX, comp: Comp::Intl,
+                            stage: format!("{} · {}", comp, stage),
+                            home_name: Some(home.to_string()), away_name: Some(away.to_string()), outcome: o,
+                        });
+                    };
+                    let restore = apply_national_positions(world, &instructions);
+                    let winner = summer_major_tournament(world, year, rng, Some(&mut rec));
+                    restore_national_positions(world, restore);
+                    self.summer_result = Some((year, kind_label, winner));
+                }
+
+                // Three separate group matchdays (each nation once per tick),
+                // then one tick per knockout round.
+                let mut group_days: Vec<Vec<WebMatchRecord>> = vec![Vec::new(), Vec::new(), Vec::new()];
+                let mut stages: Vec<(String, Vec<WebMatchRecord>)> = Vec::new();
+                for m in temp {
+                    if m.stage.ends_with("Group Stage") {
+                        let hn = m.home_name.clone().unwrap_or_default();
+                        let an = m.away_name.clone().unwrap_or_default();
+                        let mut target = 0;
+                        for d in 0..group_days.len() {
+                            let used = group_days[d].iter().any(|x| {
+                                x.home_name.as_deref() == Some(&hn) || x.away_name.as_deref() == Some(&hn)
+                                    || x.home_name.as_deref() == Some(&an) || x.away_name.as_deref() == Some(&an)
+                            });
+                            if !used { target = d; break; }
+                        }
+                        group_days[target].push(m);
+                    } else if let Some((_, rows)) = stages.iter_mut().find(|(s, _)| *s == m.stage) {
+                        rows.push(m);
+                    } else {
+                        stages.push((m.stage.clone(), vec![m]));
+                    }
+                }
+                self.summer_pending.extend(group_days.into_iter().filter(|d| !d.is_empty()));
+                self.summer_pending.extend(stages.into_iter().map(|(_, rows)| rows));
             }
-            // Bank the finished season before the reset wipes the tables:
-            // champions, full league tables, top scorers, the UCL final and
-            // the international tournament all survive as an archive.
+
+            let mut batch = if self.summer_pending.is_empty() { Vec::new() } else { self.summer_pending.remove(0) };
+            let played = batch.len();
+            for mut m in batch.drain(..) {
+                m.id = self.matches.len() + 1;
+                m.week = self.week + 1;
+                self.matches.push(m);
+            }
+            self.week += 1;
+            if self.summer_pending.is_empty() {
+                self.finish_rollover();
+            }
+            played
+        }
+
+        fn finish_rollover(&mut self) {
+            let year = self.year;
+            if let Some((y, kind, winner)) = self.summer_result.take() {
+                if winner != "-" { self.last_intl = Some((y, kind, winner)); }
+            }
             let archive = self.build_season_archive(year);
+            if let Some(id) = archive.pointer("/awards/ballon_dor/0/id").and_then(|v| v.as_u64()) {
+                if let Some(p) = self.world.pool.get_mut(id as usize) { p.ballons = p.ballons.saturating_add(1); }
+            }
             self.archives.push(archive);
-            let (world, rng) = (&mut self.world, &mut self.rng);
-            age_and_regen(world, rng);
-            let _ = transfer_window(world, rng);
+            age_and_regen(&mut self.world, &mut self.rng);
+            let _ = transfer_window(&mut self.world, &mut self.rng);
             reset_season(&mut self.world);
             self.week = 0;
+            self.league_round = 0;
             self.year += 1;
             self.seasons_done += 1;
-            self.schedules = self
-                .world
-                .league_teams
-                .iter()
-                .map(|teams| LeagueSchedule {
-                    rounds: make_schedule(teams),
-                })
-                .collect::<Vec<_>>();
+            self.schedules = self.world.league_teams.iter()
+                .map(|teams| LeagueSchedule { rounds: make_schedule(teams) }).collect();
             self.ucl = build_ucl(&self.world, &mut self.rng);
-            0
         }
 
         /// Snapshot a completed season: every league's champion, final table
@@ -13129,12 +13325,58 @@ pub mod web_api {
                     })).collect::<Vec<_>>(),
                 })
             });
+
+            // Ballon d'Or top 30 with the same scoring formula as the batch
+            // simulator, plus an attribute-balanced Team of the Season.
+            let mut ballot: Vec<(usize, f32)> = (0..w.pool.len())
+                .filter(|&i| w.pool[i].overall_apps() > 0 && !w.pool[i].retired)
+                .map(|i| {
+                    let t = &w.teams[w.pool[i].team];
+                    let lf = league_factor_for(t.league_idx, &w.league_meta);
+                    (i, ballon_score(&w.pool[i], t.rep, year, lf))
+                })
+                .collect();
+            ballot.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let top30: Vec<Value> = ballot.iter().take(30).enumerate().map(|(rank, &(i, points))| {
+                let t = &w.teams[w.pool[i].team];
+                let lf = league_factor_for(t.league_idx, &w.league_meta);
+                let (_, parts) = ballon_breakdown(&w.pool[i], t.rep, year, lf);
+                json!({
+                    "rank": rank + 1, "id": i,
+                    "name": w.pool[i].name, "club": t.name,
+                    "nation": w.pool[i].nation, "position": w.pool[i].pos.short(),
+                    "points": points,
+                    "apps": w.pool[i].overall_apps(),
+                    "goals": w.pool[i].overall_goals(),
+                    "assists": w.pool[i].overall_assists(),
+                    "breakdown": parts.into_iter().map(|(label, detail, pts)| json!({
+                        "label": label, "detail": detail, "points": pts,
+                    })).collect::<Vec<_>>(),
+                })
+            }).collect();
+            let mut best_xi: Vec<Value> = Vec::new();
+            for (pos, count) in [(Position::GK, 1usize), (Position::DEF, 4), (Position::MID, 3), (Position::FWD, 3)] {
+                best_xi.extend(ballot.iter()
+                    .filter(|(i, _)| w.pool[*i].pos == pos)
+                    .take(count)
+                    .map(|&(i, points)| json!({
+                        "id": i, "name": w.pool[i].name,
+                        "club": w.teams[w.pool[i].team].name,
+                        "nation": w.pool[i].nation,
+                        "position": w.pool[i].pos.short(), "points": points,
+                    })));
+            }
+            let ucl_detail = ucl_detail_json(self);
             json!({
                 "year": year,
                 "season": format!("{}-{}", year, (year + 1) % 100),
                 "leagues": leagues,
-                "ucl": {"final": ucl, "top_scorer": ucl_top_scorer},
+                "ucl": {"final": ucl, "top_scorer": ucl_top_scorer, "detail": ucl_detail},
                 "international": intl,
+                "awards": {
+                    "ballon_dor": top30,
+                    "best_xi": best_xi,
+                },
             })
         }
 
@@ -13397,6 +13639,10 @@ pub mod web_api {
             "reputation": t.rep,
             "strength": t.strength,
             "squad": t.players.len(),
+            "academy": t.academy,
+            "registered": t.registered.len(),
+            "reserves": t.players.len().saturating_sub(t.registered.len().min(t.players.len())),
+            "youth_players": t.players.iter().filter(|&&i| w.pool[i].age <= 21).count(),
             "table": {
                 "played": t.p,
                 "won": t.w,
@@ -13492,7 +13738,7 @@ pub mod web_api {
                 p
             })
             .collect::<Vec<_>>();
-        let next_round = state.week as usize;
+        let next_round = state.league_round as usize;
         let next_fixtures = state.schedules[t.league_idx]
             .rounds
             .get(next_round)
@@ -13718,6 +13964,9 @@ pub mod web_api {
             "fatigue": p.fatigue,
             "morale": p.morale,
             "ban_games": p.ban_games,
+            "market_value": p.value * 1_000_000,
+            "wage_weekly": p.wage * 1_000,
+            "contract_years": p.locked,
             "intl_goals": p.intl_goals,
             "intl_assists": p.intl_assists,
             "intl_apps": p.intl_apps,
@@ -13836,9 +14085,54 @@ pub mod web_api {
     /// Full live player detail. A database-backed world player carries its
     /// original `data/players.csv` contract/personality/profile alongside the
     /// evolving in-world attributes and statistics.
+    fn player_season_history_json(state: &WebState, world_idx: usize) -> Value {
+        // [apps, goals, assists, minutes, rating_apps] + rating sum per
+        // competition for every season retained by the web world.
+        let mut years: std::collections::BTreeMap<
+            u16,
+            std::collections::BTreeMap<&'static str, (u32, u32, u32, u32, u32, f32)>,
+        > = std::collections::BTreeMap::new();
+        for m in &state.matches {
+            let comp = match m.comp {
+                Comp::League => "league",
+                Comp::Ucl => "ucl",
+                Comp::Europa => "europa",
+                Comp::Intl => "international",
+            };
+            for s in m.outcome.stats.iter().filter(|s| s.id == world_idx) {
+                let e = years.entry(m.season).or_default().entry(comp).or_insert((0, 0, 0, 0, 0, 0.0));
+                e.0 += 1;
+                e.1 += s.goals as u32;
+                e.2 += s.assists as u32;
+                e.3 += s.minutes as u32;
+                e.4 += 1;
+                e.5 += s.rating;
+            }
+        }
+        json!(years.into_iter().rev().map(|(year, comps)| {
+            let competition: serde_json::Map<String, Value> = comps.iter().map(|(name, v)| {
+                ((*name).to_string(), json!({
+                    "apps": v.0, "goals": v.1, "assists": v.2,
+                    "minutes": v.3,
+                    "rating": if v.4 == 0 { 0.0 } else { v.5 / v.4 as f32 },
+                }))
+            }).collect();
+            let total = comps.values().fold((0u32, 0u32, 0u32, 0u32), |a, v| {
+                (a.0 + v.0, a.1 + v.1, a.2 + v.2, a.3 + v.3)
+            });
+            json!({
+                "year": year,
+                "season": format!("{}-{}", year, (year + 1) % 100),
+                "total": {"apps": total.0, "goals": total.1, "assists": total.2, "minutes": total.3},
+                "competitions": competition,
+            })
+        }).collect::<Vec<_>>())
+    }
+
     fn player_detail_json(state: &WebState, world_idx: usize) -> Value {
         let mut out = player_json(&state.world, world_idx);
         out["honours"] = player_honours_json(state, world_idx);
+        out["season_history"] = player_season_history_json(state, world_idx);
         if let Some(db_id) = state.world.pool[world_idx].db_id {
             if let Some(&db_idx) = state.database_index.get(&db_id) {
                 out["profile"] = source_profile_json(state, db_idx);
@@ -13930,6 +14224,34 @@ pub mod web_api {
         } else {
             result_label(p.intl_result)
         };
+        let mut award_history: Vec<Value> = Vec::new();
+        for a in &state.archives {
+            let year = a.get("year").and_then(|v| v.as_u64()).unwrap_or(0);
+            if let Some(ranking) = a.pointer("/awards/ballon_dor").and_then(|v| v.as_array()) {
+                if let Some(row) = ranking.iter().find(|r| r.get("id").and_then(|v| v.as_u64()) == Some(world_idx as u64)) {
+                    let rank = row.get("rank").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if rank <= 30 {
+                        award_history.push(json!({"year": year, "award": "Ballon d'Or", "rank": rank, "points": row.get("points")}));
+                    }
+                }
+            }
+            if a.pointer("/awards/best_xi").and_then(|v| v.as_array())
+                .map(|xi| xi.iter().any(|r| r.get("id").and_then(|v| v.as_u64()) == Some(world_idx as u64)))
+                .unwrap_or(false)
+            {
+                award_history.push(json!({"year": year, "award": "World Best XI"}));
+            }
+            if let Some(ls) = a.get("leagues").and_then(|v| v.as_array()) {
+                for l in ls {
+                    if l.pointer("/top_scorer/id").and_then(|v| v.as_u64()) == Some(world_idx as u64) {
+                        award_history.push(json!({"year": year, "award": "Golden Boot", "competition": l.get("name"), "goals": l.pointer("/top_scorer/goals")}));
+                    }
+                }
+            }
+            if a.pointer("/ucl/top_scorer/id").and_then(|v| v.as_u64()) == Some(world_idx as u64) {
+                award_history.push(json!({"year": year, "award": "Champions League Golden Boot", "goals": a.pointer("/ucl/top_scorer/goals")}));
+            }
+        }
         json!({
             "ballons": p.ballons,
             "league": league_name,
@@ -13951,6 +14273,7 @@ pub mod web_api {
                 "europa_league": p.el_result == 5,
                 "international": p.intl_result == 5,
             },
+            "award_history": award_history,
         })
     }
 
@@ -14375,6 +14698,203 @@ pub mod web_api {
         json!({"started": id, "due_week": due + 1})
     }
 
+    fn transfer_market_json(state: &WebState, buyer: usize, q: &str) -> Value {
+        if buyer >= state.world.teams.len() {
+            return json!({"error": "buyer team not found"});
+        }
+        let query = q.to_lowercase();
+        let mut ids: Vec<usize> = (0..state.world.pool.len())
+            .filter(|&i| {
+                let p = &state.world.pool[i];
+                !p.retired && !p.on_loan && p.team != buyer
+                    && (query.is_empty() || p.name.to_lowercase().contains(&query)
+                        || p.nation.to_lowercase().contains(&query)
+                        || state.world.teams[p.team].name.to_lowercase().contains(&query))
+            })
+            .filter(|&i| prestige_destination_allowed(&state.world, i, buyer))
+            .collect();
+        ids.sort_by(|&a, &b| state.world.pool[b].ovr.cmp(&state.world.pool[a].ovr)
+            .then(state.world.pool[b].pot.cmp(&state.world.pool[a].pot)));
+        json!({"players": ids.into_iter().take(100).map(|i| {
+            let p = &state.world.pool[i];
+            json!({
+                "id": i, "name": p.name, "age": p.age,
+                "position": p.pos.short(), "nation": p.nation,
+                "club": state.world.teams[p.team].name, "club_id": p.team,
+                "ovr": p.ovr, "pot": p.pot,
+                "value_m": p.value, "asking_m": ((p.value as f32 * 1.25).ceil() as i64).max(1),
+                "wage_k": p.wage,
+            })
+        }).collect::<Vec<_>>()})
+    }
+
+    fn execute_web_transfer(
+        state: &mut WebState,
+        buyer: usize,
+        player: usize,
+        fee: i64,
+        wage: i64,
+        exchange: Option<usize>,
+    ) -> Result<(), String> {
+        if buyer >= state.world.teams.len() || player >= state.world.pool.len() {
+            return Err("team/player not found".into());
+        }
+        let seller = state.world.pool[player].team;
+        if seller == buyer { return Err("player is already at your club".into()); }
+        if !prestige_destination_allowed(&state.world, player, buyer) {
+            return Err("player rejected the sporting project".into());
+        }
+        let exchange_credit = exchange
+            .filter(|&x| x < state.world.pool.len() && state.world.pool[x].team == buyer)
+            .map(|x| (state.world.pool[x].value as f32 * 0.80) as i64)
+            .unwrap_or(0);
+        let cash = (fee - exchange_credit).max(0);
+        if state.world.teams[buyer].budget < cash {
+            return Err("buyer cannot afford the cash component".into());
+        }
+        state.world.teams[seller].players.retain(|&x| x != player);
+        state.world.teams[buyer].players.push(player);
+        state.world.teams[buyer].budget -= cash;
+        state.world.teams[seller].budget += cash;
+        state.world.pool[player].team = buyer;
+        state.world.pool[player].wage = wage.max(1);
+        state.world.pool[player].locked = 4;
+        state.world.pool[player].homegrown = false;
+        state.world.pool[player].path.push(state.world.teams[buyer].name.clone());
+        if let Some(x) = exchange.filter(|&x| x < state.world.pool.len() && state.world.pool[x].team == buyer) {
+            state.world.teams[buyer].players.retain(|&p| p != x);
+            state.world.teams[seller].players.push(x);
+            state.world.pool[x].team = seller;
+            state.world.pool[x].homegrown = false;
+            state.world.pool[x].path.push(state.world.teams[seller].name.clone());
+        }
+        for t in [buyer, seller] {
+            state.world.teams[t].registered = register_squad(&state.world.teams[t].players, &state.world.pool);
+        }
+        Ok(())
+    }
+
+    fn transfer_offer_json(state: &mut WebState, body: &Value) -> Value {
+        let buyer = body.get("buyer").and_then(|v| v.as_u64()).unwrap_or(usize::MAX as u64) as usize;
+        let player = body.get("player").and_then(|v| v.as_u64()).unwrap_or(usize::MAX as u64) as usize;
+        if buyer >= state.world.teams.len() || player >= state.world.pool.len() {
+            return json!({"error": "buyer/player not found"});
+        }
+        let seller = state.world.pool[player].team;
+        let kind = body.get("kind").and_then(|v| v.as_str()).unwrap_or("transfer");
+        if kind == "loan" {
+            let fee = body.get("fee_m").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+            if state.world.teams[buyer].budget < fee { return json!({"error": "loan fee is unaffordable"}); }
+            state.world.teams[seller].players.retain(|&x| x != player);
+            state.world.teams[buyer].players.push(player);
+            state.world.teams[buyer].budget -= fee;
+            state.world.teams[seller].budget += fee;
+            state.world.pool[player].team = buyer;
+            state.world.pool[player].on_loan = true;
+            state.world.loans.push(SeasonLoan { player, home: seller, away: buyer });
+            return json!({"status": "accepted", "kind": "loan", "message": "season loan agreed"});
+        }
+        let offer = body.get("fee_m").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+        let wage = body.get("wage_k").and_then(|v| v.as_i64()).unwrap_or(0).max(1);
+        let exchange = body.get("exchange").and_then(|v| v.as_u64()).map(|v| v as usize);
+        let p = &state.world.pool[player];
+        let counter_fee = ((p.value as f32 * if p.ovr >= 85 { 1.45 } else { 1.20 }).ceil() as i64).max(1);
+        let counter_wage = ((p.wage as f32 * 1.18).ceil() as i64).max((p.value as f32 * 0.55) as i64).max(1);
+        let exchange_credit = exchange.filter(|&x| x < state.world.pool.len() && state.world.pool[x].team == buyer)
+            .map(|x| (state.world.pool[x].value as f32 * 0.80) as i64).unwrap_or(0);
+        if offer + exchange_credit >= counter_fee && wage >= counter_wage {
+            return match execute_web_transfer(state, buyer, player, offer, wage, exchange) {
+                Ok(()) => json!({"status": "accepted", "message": "transfer completed"}),
+                Err(e) => json!({"error": e}),
+            };
+        }
+        let id = state.negotiation_next_id;
+        state.negotiation_next_id += 1;
+        state.negotiations.push(WebNegotiation {
+            id, buyer, seller, player, offer, wage, counter_fee, counter_wage,
+            exchange, status: "countered".into(),
+        });
+        json!({
+            "status": "countered", "negotiation_id": id,
+            "club_counter_m": counter_fee,
+            "player_wage_counter_k": counter_wage,
+            "message": format!("{} want €{}m; the player wants €{}k/wk", state.world.teams[seller].name, counter_fee, counter_wage),
+        })
+    }
+
+    fn transfer_respond_json(state: &mut WebState, body: &Value) -> Value {
+        let id = body.get("negotiation_id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let decision = body.get("decision").and_then(|v| v.as_str()).unwrap_or("reject");
+        let Some(pos) = state.negotiations.iter().position(|n| n.id == id) else {
+            return json!({"error": "negotiation not found"});
+        };
+        let n = state.negotiations.remove(pos);
+        if decision != "accept" { return json!({"status": "rejected"}); }
+        match execute_web_transfer(state, n.buyer, n.player, n.counter_fee, n.counter_wage, n.exchange) {
+            Ok(()) => json!({"status": "accepted", "message": "counter accepted; transfer completed"}),
+            Err(e) => json!({"error": e}),
+        }
+    }
+
+    fn nations_json(state: &WebState) -> Value {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for p in &state.world.pool {
+            if !p.retired && !p.intl_retired && p.nation.len() > 1 {
+                *counts.entry(p.nation.clone()).or_default() += 1;
+            }
+        }
+        let mut rows: Vec<(String, usize)> = counts.into_iter().filter(|(_, n)| *n >= 11).collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        json!({"nations": rows.into_iter().map(|(name, players)| json!({"name": name, "players": players})).collect::<Vec<_>>()})
+    }
+
+    fn nation_team_json(state: &WebState, nation: &str) -> Value {
+        let mut ids: Vec<usize> = state.world.pool.iter().enumerate()
+            .filter(|(_, p)| !p.retired && !p.intl_retired && p.nation.eq_ignore_ascii_case(nation))
+            .map(|(i, _)| i).collect();
+        ids.sort_by(|&a, &b| state.world.pool[b].ovr.cmp(&state.world.pool[a].ovr));
+        json!({
+            "nation": nation,
+            "players": ids.into_iter().take(30).map(|i| {
+                let mut p = player_json(&state.world, i);
+                p["national_position"] = json!(state.national_positions.get(&i).copied().unwrap_or(state.world.pool[i].pos).short());
+                p
+            }).collect::<Vec<_>>()
+        })
+    }
+
+    fn nation_action_json(state: &mut WebState, body: &Value) -> Value {
+        let player = body.get("player").and_then(|v| v.as_u64()).unwrap_or(usize::MAX as u64) as usize;
+        let nation = body.get("nation").and_then(|v| v.as_str()).unwrap_or("");
+        if player >= state.world.pool.len() || !state.world.pool[player].nation.eq_ignore_ascii_case(nation) {
+            return json!({"error": "player is not eligible for that nation"});
+        }
+        let pos = match body.get("position").and_then(|v| v.as_str()).unwrap_or("") {
+            "GK" => Position::GK, "DEF" => Position::DEF,
+            "MID" => Position::MID, "FWD" => Position::FWD,
+            _ => return json!({"error": "position must be GK, DEF, MID or FWD"}),
+        };
+        state.national_positions.insert(player, pos);
+        nation_team_json(state, nation)
+    }
+
+    fn apply_national_positions(world: &mut World, instructions: &std::collections::HashMap<usize, Position>) -> Vec<(usize, Position)> {
+        let mut restore = Vec::new();
+        for (&i, &pos) in instructions {
+            if let Some(p) = world.pool.get_mut(i) {
+                restore.push((i, p.pos));
+                p.pos = pos;
+            }
+        }
+        restore
+    }
+
+    fn restore_national_positions(world: &mut World, restore: Vec<(usize, Position)>) {
+        for (i, pos) in restore {
+            if let Some(p) = world.pool.get_mut(i) { p.pos = pos; }
+        }
+    }
+
     fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
         let w = &state.world;
         let intl = m.comp == Comp::Intl;
@@ -14473,8 +14993,11 @@ pub mod web_api {
             "total_matches": state.matches.len(),
             "international": state.last_intl.as_ref().map(|(y, k, w)| json!({"year": y, "kind": k, "winner": w})),
             "week": state.week,
+            "league_round": state.league_round,
             "next_week": state.week + 1,
             "total_rounds": total_rounds,
+            "calendar_total": 53,
+            "summer_active": !state.summer_pending.is_empty() || state.summer_result.is_some(),
             "remaining_rounds": state.remaining_rounds(),
             "matches_played": state.matches.len(),
             "database_players": state.database.players().len(),
@@ -14511,6 +15034,7 @@ pub mod web_api {
                 "seasons_done": state.seasons_done,
                 "international": state.last_intl.as_ref().map(|(y, k, w)| json!({"year": y, "kind": k, "winner": w})),
                 "week": state.week,
+                "league_round": state.league_round,
                 "next_week": state.week + 1,
                 "players": w.pool.len(),
                 "database_players": state.database.players().len(),
@@ -14518,6 +15042,8 @@ pub mod web_api {
                 "teams": w.teams.len(),
                 "leagues": w.league_teams.len(),
                 "total_rounds": state.total_rounds(),
+                "calendar_total": 53,
+                "summer_active": !state.summer_pending.is_empty() || state.summer_result.is_some(),
                 "remaining_rounds": state.remaining_rounds(),
                 "matches_played": played,
                 "seed": state.seed,
@@ -14549,7 +15075,7 @@ pub mod web_api {
                 "teams": w.league_teams[li].len(),
                 "leader": leader,
                 "rounds": state.schedules[li].rounds.len(),
-                "finished": state.schedules[li].rounds.len() > 0 && state.week as usize >= state.schedules[li].rounds.len(),
+                "finished": state.schedules[li].rounds.len() > 0 && state.league_round as usize >= state.schedules[li].rounds.len(),
             }));
         }
         out
@@ -14731,7 +15257,8 @@ pub mod web_api {
         })
     }
 
-    fn fixtures_json(state: &WebState, week_one_based: Option<usize>) -> Vec<Value> {        let week = week_one_based.unwrap_or(state.week.saturating_add(1) as usize);
+    fn fixtures_json(state: &WebState, week_one_based: Option<usize>) -> Vec<Value> {
+        let week = week_one_based.unwrap_or(state.league_round.saturating_add(1) as usize);
         let idx = week.saturating_sub(1);
         let mut out = Vec::new();
         for (li, sched) in state.schedules.iter().enumerate() {
@@ -15280,7 +15807,15 @@ pub mod web_api {
                 .unwrap_or(0);
             let s = state.lock().unwrap();
             if idx == UCL_LEAGUE_ID {
-                ucl_detail_json(&s)
+                let season = query_value(&query, "season").and_then(|v| v.parse::<u16>().ok());
+                match season.filter(|y| *y < s.year) {
+                    Some(y) => s.archives.iter()
+                        .find(|a| a.get("year").and_then(|v| v.as_u64()) == Some(y as u64))
+                        .and_then(|a| a.pointer("/ucl/detail"))
+                        .cloned()
+                        .unwrap_or_else(|| json!({"error": "UCL season not found"})),
+                    _ => ucl_detail_json(&s),
+                }
             } else if idx == INTL_LEAGUE_ID {
                 let season = query_value(&query, "season").and_then(|v| v.parse::<u16>().ok());
                 internationals_json(&s, season)
@@ -15295,7 +15830,7 @@ pub mod web_api {
         } else if path == "/api/fixtures" || path == "/api/fixtures/next" {
             let s = state.lock().unwrap();
             let target = query_value(&query, "week").and_then(|v| v.parse::<usize>().ok());
-            json!({"week": target.unwrap_or((s.week + 1) as usize), "fixtures": fixtures_json(&s, target)})
+            json!({"week": target.unwrap_or((s.league_round + 1) as usize), "fixtures": fixtures_json(&s, target)})
         } else if path == "/api/matches" {
             let s = state.lock().unwrap();
             let week_filter = query_value(&query, "week");
@@ -15420,6 +15955,19 @@ pub mod web_api {
             let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
             let mut s = state.lock().unwrap();
             manager_action_json(&mut s, &payload)
+        } else if path == "/api/awards/ballon" {
+            let s = state.lock().unwrap();
+            let season = query_value(&query, "season").and_then(|v| v.parse::<u16>().ok());
+            let y = season.unwrap_or_else(|| s.archives.last().and_then(|a| a.get("year")).and_then(|v| v.as_u64()).unwrap_or(s.year as u64) as u16);
+            s.archives.iter()
+                .find(|a| a.get("year").and_then(|v| v.as_u64()) == Some(y as u64))
+                .map(|a| json!({
+                    "year": y,
+                    "season": a.get("season"),
+                    "ranking": a.pointer("/awards/ballon_dor").cloned().unwrap_or(json!([])),
+                    "best_xi": a.pointer("/awards/best_xi").cloned().unwrap_or(json!([])),
+                }))
+                .unwrap_or_else(|| json!({"year": y, "ranking": [], "best_xi": [], "live": true}))
         } else if path == "/api/seasons" {
             let s = state.lock().unwrap();
             let mut seasons: Vec<Value> = s
@@ -15482,6 +16030,30 @@ pub mod web_api {
                 out["week"] = reports["week"].clone();
             }
             out
+        } else if path == "/api/transfers/market" {
+            let buyer = query_value(&query, "buyer").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+            let q = query_value(&query, "q").unwrap_or_default();
+            let s = state.lock().unwrap();
+            transfer_market_json(&s, buyer, &q)
+        } else if path == "/api/transfers/offer" && method.eq_ignore_ascii_case("POST") {
+            let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
+            let mut s = state.lock().unwrap();
+            transfer_offer_json(&mut s, &payload)
+        } else if path == "/api/transfers/respond" && method.eq_ignore_ascii_case("POST") {
+            let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
+            let mut s = state.lock().unwrap();
+            transfer_respond_json(&mut s, &payload)
+        } else if path == "/api/nations" {
+            let s = state.lock().unwrap();
+            nations_json(&s)
+        } else if path == "/api/nations/team" {
+            let nation = query_value(&query, "nation").unwrap_or_default();
+            let s = state.lock().unwrap();
+            nation_team_json(&s, &nation)
+        } else if path == "/api/nations/action" && method.eq_ignore_ascii_case("POST") {
+            let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
+            let mut s = state.lock().unwrap();
+            nation_action_json(&mut s, &payload)
         } else if path == "/api/careers" {
             match std::fs::read_to_string("sim_dump/careers.json") {
                 Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(json!({"raw": text})),
