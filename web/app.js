@@ -254,7 +254,8 @@
       body = `<div class="card">${(data.recent || []).length ? data.recent.map(matchRow).join('') : '<div class="empty">No Champions League matches played yet.</div>'}</div>`;
     }
     const opts = (seasons.seasons || []).slice().reverse().map((s) => `<option value="${s.year}" ${Number(s.year) === Number(year) ? 'selected' : ''}>${esc(s.season)}${s.current ? ' (live)' : ''}${s.ucl_winner ? ` · ${esc(s.ucl_winner)}` : ''}</option>`).join('');
-    $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">UEFA · Europe</div><h1 style="margin:8px 0 4px">UEFA Champions League</h1><p class="small" style="margin:0">${data.week || 0} weeks played · season ${year}</p></div><select id="ucl-season">${opts}</select></div>
+    const wlabel = data.week ? `${data.week} weeks played` : 'season archive';
+    $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">UEFA · Europe</div><h1 style="margin:8px 0 4px">UEFA Champions League</h1><p class="small" style="margin:0">${wlabel} · season ${year}</p></div><select id="ucl-season">${opts}</select></div>
     <div class="tabs">${tabs.map(([id, label]) => `<button data-cup-tab="${id}" class="${state.cupTab === id ? 'active' : ''}">${label}</button>`).join('')}</div>${body}`;
     $('ucl-season')?.addEventListener('change', (e) => navigate(`/ucl/${Number(e.target.value)}`));
   }

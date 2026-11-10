@@ -729,6 +729,10 @@ struct World {
     national_states: HashMap<String, NationalState>,
     /// Names already used, to keep regen identities distinct.
     used_names: std::collections::HashSet<String>,
+    /// Per-player per-season club contribution lines (team index, apps,
+    /// goals, assists), cleared at each rollover. Lets a transferred player
+    /// keep credit for what he did at his previous club this season.
+    club_history: Vec<Vec<(usize, u16, u16, u16)>>,
     /// Learned/hand simulation constants (see tune.rs). Loaded from
     /// tuned_params.json when present, defaults otherwise.
     params: Params,
@@ -4258,6 +4262,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         }
     }
 
+    let _pool_len = pool.len();
     let mut world = World {
         pool,
         minds: Vec::new(), // filled just below, one mind per player
@@ -4282,6 +4287,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
         free_agents: Vec::new(),
         national_states: HashMap::new(),
         used_names,
+        club_history: vec![Vec::new(); _pool_len],
     };
     for pi in 0..world.pool.len() {
         refresh_value_wage(&mut world, pi);
@@ -4312,6 +4318,12 @@ fn reset_season(w: &mut World) {
         t.gf = 0;
         t.ga = 0;
     }
+    // Keep the per-club history vector in lockstep with the pool (it can drift
+    // by one when a regen is appended late in the build); never panic on a
+    // short vector.
+    while w.club_history.len() < w.pool.len() {
+        w.club_history.push(Vec::new());
+    }
     for (i, p) in w.pool.iter_mut().enumerate() {
         // Bank this season into the career totals before wiping it (drives the
         // decade "biggest mark" and career top-10 boards). Every counter banks
@@ -4326,6 +4338,12 @@ fn reset_season(w: &mut World) {
         p.career_apps += p.overall_apps() as u32;
         p.career_rating_sum += p.rating_sum;
         p.career_rating_apps += p.rating_apps as u32;
+        for (club_idx, apps, goals, assists) in &w.club_history[i] {
+            p.career_apps += *apps as u32;
+            p.career_goals += *goals as u32;
+            p.career_assists += *assists as u32;
+            let _ = club_idx;
+        }
         p.apps = 0;
         p.goals = 0;
         p.assists = 0;
@@ -16390,6 +16408,7 @@ mod tests {
             mkteam(rng, "Big FC", 0, 90, big, 800),
             mkteam(rng, "Small Town", 1, 60, small, 120),
         ];
+        let _mp = pool.len();
         World {
             pool,
             minds,
@@ -16418,6 +16437,7 @@ mod tests {
             free_agents: Vec::new(),
             national_states: HashMap::new(),
             used_names: HashSet::new(),
+            club_history: vec![Vec::new(); _mp],
             params: Params::default(),
         }
     }
@@ -17115,5 +17135,6 @@ mod tests {
                 "registration overflow"
             );
         }
+
     }
 }
