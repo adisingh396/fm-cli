@@ -283,7 +283,7 @@
     </div>
     ${groups ? `<div class="card" style="margin-bottom:14px"><h3>Tournament field — group stage</h3><div class="grid cols-3" style="gap:10px">${groups}</div></div>` : ''}
     ${stages || '<div class="empty">No international fixtures recorded for this season yet.</div>'}`;
-    $('intl-season')?.addEventListener('change', (e) => renderInternationals(Number(e.target.value)));
+    $('intl-season')?.addEventListener('change', (e) => navigate(`/internationals/${Number(e.target.value)}`));
   }
 
   // Season review: champions, cups and the international tournament of a
@@ -519,7 +519,7 @@
       api(`/api/players?scope=all&q=${encodeURIComponent(query)}&sort=name&limit=50`).catch(() => ({ players: [] })),
     ]);
     state.search = { q: query, teams: clubs.slice(0, 20), players: players.players || [] };
-    setPage('search');
+    navigate('/search');
   }
 
   function playerCard(p) {
@@ -680,6 +680,7 @@
     }
     const teamId = state.managerTeam || 0;
     try { state.manager = await api(`/api/manager/team?team=${teamId}`); } catch { state.manager = null; }
+    try { state.scouting = await api('/api/scouting'); } catch { state.scouting = null; }
     const m = state.manager;
     if (!m || m.error) { $('app').innerHTML = `<div class="empty">Manager mode needs a backend with manager endpoints. ${esc(m?.error || '')}</div>`; return; }
     const t = m.team;
@@ -687,9 +688,15 @@
     const squadRows = (m.players || []).map((p) => {
       const mo = p.motives || {};
       const motive = (label, v) => `<div class="motive"><span>${label}</span><span class="attr-bar"><i style="width:${Math.round(Number(v || 0) * 100)}%"></i></span><strong>${Math.round(Number(v || 0) * 100)}</strong></div>`;
-      return `<tr><td><strong>${esc(p.name)}</strong><div class="small">${esc(p.position)} · age ${p.age} · ${esc(p.in_active_world === false ? 'source-only' : 'live')}</div></td><td class="numeric">${p.ovr} / ${p.pot}</td><td class="numeric">${p.apps} / ${p.goals} / ${p.assists}</td><td class="numeric">${number(p.rating)}</td><td><span class="status-dot ${mo.unhappy ? 'bad' : 'ok'}"></span>${p.morale}<div class="small">${mo.unhappy ? 'unhappy' : 'content'}${mo.requested ? ' · requested out' : ''}</div></td><td class="numeric">${p.fatigue}</td><td style="white-space:normal;min-width:190px">${motive('Ambition', mo.ambition)}${motive('Loyalty', mo.loyalty)}${motive('Greed', mo.greed)}${motive('Pro', mo.professionalism)}</td><td><div class="action-cell"><button data-manager-player-action="boost" data-player="${p.world_id}">Boost</button><button data-manager-player-action="promise" data-player="${p.world_id}">Promise</button><button data-manager-player-action="train" data-player="${p.world_id}">Train</button></div></td></tr>`;
+      const posSelect = `<select class="pos-select" data-manager-retrain data-player="${p.world_id}" aria-label="Retrain position">${['GK', 'DEF', 'MID', 'FWD'].map((x) => `<option value="${x}" ${x === p.position ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
+      const banTag = Number(p.ban_games || 0) > 0 ? ` · <strong style="color:var(--red)">banned ${p.ban_games}</strong>` : '';
+      return `<tr><td><strong>${esc(p.name)}</strong><div class="small">${esc(p.nation || '')} · age ${p.age}${banTag}</div></td><td>${posSelect}</td><td class="numeric">${p.ovr} / ${p.pot}</td><td class="numeric">${p.apps} / ${p.goals} / ${p.assists}</td><td class="numeric">${number(p.rating)}</td><td><span class="status-dot ${mo.unhappy ? 'bad' : 'ok'}"></span>${p.morale}<div class="small">${mo.unhappy ? 'unhappy' : 'content'}${mo.requested ? ' · requested out' : ''}</div></td><td class="numeric">${p.fatigue}</td><td style="white-space:normal;min-width:190px">${motive('Ambition', mo.ambition)}${motive('Loyalty', mo.loyalty)}${motive('Greed', mo.greed)}${motive('Pro', mo.professionalism)}</td><td><div class="action-cell"><button data-manager-player-action="boost" data-player="${p.world_id}">Boost</button><button data-manager-player-action="promise" data-player="${p.world_id}">Promise</button><button data-manager-player-action="warn" data-player="${p.world_id}" class="secondary">Warn</button><button data-manager-player-action="train" data-player="${p.world_id}" class="ghost">Train</button></div></td></tr>`;
     }).join('');
-    $('app').innerHTML = `<div class="page-head"><div><h1 style="margin:0">Manager mode</h1><p class="small" style="margin:4px 0 0">Pick a club, manage morale/fatigue, promise players, set shape, then simulate.</p></div><span class="pill">${esc(t.league)} · Rank ${m.rank ?? '—'}</span></div>
+    const scoutCards = ((state.scouting && state.scouting.assignments) || []).slice().reverse().map((a) => {
+      const list = (a.shortlist || []).map((h) => `<div class="row"><span><button class="linklike" data-player="${h.world_handle ? esc(h.world_handle) : `db:${h.db_id}`}">${esc(h.name)}</button><div class="small">${esc(h.position)} · age ${h.age} · ${esc(h.nation)} · ${esc(h.club)}</div></span><span class="badge">POT ${esc(h.potential_band)}</span></div>`).join('');
+      return `<div class="card"><h3>Brief #${a.id} · ${esc(a.brief.position)} · ${esc(a.brief.nation)}${a.brief.max_age ? ` · u${a.brief.max_age}` : ''}</h3><p class="small" style="margin:0 0 8px">${a.matured ? `Report matured (from week ${a.due_week})` : `Scouting… report matures in week ${a.due_week}`}</p><div class="row-list">${a.matured ? (list || '<div class="empty">No prospects matched this brief.</div>') : '<div class="empty">The scout is still travelling.</div>'}</div></div>`;
+    }).join('');
+    $('app').innerHTML = `<div class="page-head"><div><h1 style="margin:0">Manager mode</h1><p class="small" style="margin:4px 0 0">Pick a club, run the squad: retrain positions, manage men, scout the world, then simulate.</p></div><span class="pill">${esc(t.league)} · Rank ${m.rank ?? '—'}</span></div>
     <div class="card manager-head"><div><h2 style="margin:0 0 6px">${esc(t.name)}</h2><div class="small">${esc(t.nation)} · rep ${t.reputation} · strength ${number(t.strength)} · shape ${m.shape?.def}-${m.shape?.mid}-${m.shape?.fwd}</div><div class="small">Budget ${money(m.finance?.budget ?? 0)} · Cash ${money(m.finance?.cash ?? 0)} · Wealth ${m.finance?.wealth ?? '—'}</div></div><div class="toolbar" style="margin:0"><select id="manager-club" aria-label="Select club">${options}</select></div></div>
     <div class="toolbar">
       <button data-manager-action="team_talk">Team talk</button>
@@ -701,10 +708,30 @@
       <div class="card"><h3>Mini table</h3>${leagueTable((m.mini_table || []).map((r, i) => ({ ...r, position: (m.rank ? Math.max(1, m.rank - 3) + i : i + 1) })))}</div>
       <div class="card"><h3>Next fixtures</h3>${(m.next_fixtures || []).map((f) => `<div class="row"><span>${esc(f.home)} vs ${esc(f.away)}</span><span class="pill">Week ${f.week}</span></div>`).join('') || '<div class="empty">No fixtures remain.</div>'}</div>
     </div>
-    <div class="card" style="margin-top:14px"><h2>Squad & motives</h2><div class="squad-table-wrap"><table class="squad-table"><thead><tr><th>Player</th><th>OVR/POT</th><th>Apps/G/A</th><th>Rtg</th><th>Morale</th><th>Fatigue</th><th>Motives</th><th>Actions</th></tr></thead><tbody>${squadRows}</tbody></table></div></div>`;
+    <div class="card" style="margin-top:14px"><h2>Scouting network</h2><div class="toolbar"><select id="scout-pos"><option value="">Any position</option><option value="GK">GK</option><option value="DEF">DEF</option><option value="MID">MID</option><option value="FWD">FWD</option></select><input id="scout-nation" placeholder="Nation (blank = worldwide)"/><input id="scout-age" type="number" min="15" max="40" placeholder="Max age"/><input id="scout-pot" type="number" min="0" max="99" placeholder="Min potential"/><button id="scout-start">Send scout (2 weeks)</button></div><div class="grid cols-2" style="margin-top:12px">${scoutCards || '<div class="empty">No scouting briefs yet — send one above.</div>'}</div></div>
+    <div class="card" style="margin-top:14px"><h2>Squad & motives</h2><div class="squad-table-wrap"><table class="squad-table"><thead><tr><th>Player</th><th>Pos</th><th>OVR/POT</th><th>Apps/G/A</th><th>Rtg</th><th>Morale</th><th>Fatigue</th><th>Motives</th><th>Actions</th></tr></thead><tbody>${squadRows}</tbody></table></div></div>`;
     $('manager-club')?.addEventListener('change', async (e) => { state.managerTeam = Number(e.target.value); localStorage.setItem('fm-manager-team', String(state.managerTeam)); await renderManager(); });
     $('apply-shape')?.addEventListener('click', async () => { const v = $('manager-shape').value.split('-').map(Number); await managerAction('shape', null, { def: v[0], mid: v[1], fwd: v[2] }); });
     $('manager-sim')?.addEventListener('click', () => simulate(1));
+    $('scout-start')?.addEventListener('click', async () => {
+      try {
+        const body = {
+          position: $('scout-pos')?.value || '',
+          nation: $('scout-nation')?.value || '',
+          max_age: Number($('scout-age')?.value || 0),
+          min_potential: Number($('scout-pot')?.value || 0),
+        };
+        const res = await api('/api/scouting/start', { method: 'POST', body });
+        if (res.error) { toast(res.error, true); return; }
+        toast(`Scout dispatched — report matures in week ${res.due_week}.`);
+        await renderManager();
+      } catch (e) { toast(e.message, true); }
+    });
+    document.querySelectorAll('[data-manager-retrain]').forEach((sel) => {
+      sel.addEventListener('change', async () => {
+        await managerAction('retrain_position', Number(sel.dataset.player), { position: sel.value });
+      });
+    });
   }
 
   async function managerAction(action, playerId, extra = {}) {
@@ -722,30 +749,75 @@
     localStorage.setItem('fm-mode', mode);
     $('mode-sim')?.classList.toggle('active', mode === 'simulate');
     $('mode-manager')?.classList.toggle('active', mode === 'manager');
-    setPage(mode === 'manager' ? 'manager' : 'home');
+    navigate(mode === 'manager' ? '/manager' : '/');
   }
-  function setPage(page, opts = {}) {
-    state.page = page;
-    if (opts.skipHistory !== true) {
-      try { history.pushState({ page, leagueIndex: state.leagueIndex, matchId: state.matchId, playerHandle: state.playerHandle }, '', location.pathname); } catch {}
+
+  // ── URL routing: every view is an addressable path ────────────────────
+  // / · /matches · /fixtures · /calendar · /leagues · /players · /manager
+  // /league/<id> · /ucl · /internationals[/<year>] · /season/<year>
+  // /match/<id> · /team/<id> · /player/<wp|db>/<id>
+  function playerPath(handle) {
+    const h = String(handle || '');
+    const m = h.match(/^(wp|world|db):(.+)$/i);
+    if (m) return `/player/${m[1].toLowerCase()}/${encodeURIComponent(m[2])}`;
+    return `/player/wp/${encodeURIComponent(h)}`;
+  }
+  function leaguePath(id) {
+    if (Number(id) === UCL_ID) return '/ucl';
+    if (Number(id) === INTL_ID) return '/internationals';
+    return `/league/${id}`;
+  }
+  function navigate(path) {
+    try { history.pushState({ p: path }, '', path); } catch {}
+    renderRoute();
+  }
+  function routeFromUrl() {
+    const parts = decodeURIComponent(location.pathname).replace(/\/+$/, '').split('/').filter(Boolean);
+    if (!parts.length) return { page: 'home' };
+    const [a, b, c] = parts;
+    switch (a) {
+      case 'matches': case 'fixtures': case 'calendar': case 'leagues':
+      case 'players': case 'manager': case 'search':
+        return { page: a };
+      case 'league': return { page: 'league', id: Number(b) || 0 };
+      case 'ucl': return { page: 'cup' };
+      case 'internationals': return { page: 'internationals', year: b ? Number(b) : undefined };
+      case 'season': return { page: 'season', year: Number(b) || 0 };
+      case 'match': return { page: 'match', id: Number(b) || 0 };
+      case 'team': return { page: 'team', id: Number(b) || 0 };
+      case 'player': return { page: 'player', handle: `${b}:${c}` };
+      default: return { page: 'home' };
     }
-    document.querySelectorAll('[data-page]').forEach((b) => b.classList.toggle('active', b.dataset.page === page));
-    if (page === 'home') renderHome();
-    else if (page === 'leagues') renderLeagues();
-    else if (page === 'league') renderLeagueDetail(state.leagueIndex);
-    else if (page === 'cup') renderCupDetail();
-    else if (page === 'fixtures') renderFixtures();
-    else if (page === 'matches') renderMatches();
-    else if (page === 'match') renderMatch(state.matchId);
-    else if (page === 'team') renderTeam(state.teamIndex);
-    else if (page === 'search') renderSearchResults();
-    else if (page === 'players') renderPlayers();
-    else if (page === 'player') renderPlayer(state.playerHandle);
-    else if (page === 'calendar') renderCalendar();
-    else if (page === 'manager') renderManager();
-    else if (page === 'internationals') renderInternationals();
-    else if (page === 'season') renderSeasonReview(state.seasonReview);
   }
+  function renderRoute() {
+    const r = routeFromUrl();
+    state.page = r.page;
+    if (r.page === 'league') state.leagueIndex = r.id;
+    if (r.page === 'match') state.matchId = r.id;
+    if (r.page === 'team') state.teamIndex = r.id;
+    if (r.page === 'player') state.playerHandle = r.handle;
+    if (r.page === 'season') state.seasonReview = r.year;
+    document.querySelectorAll('[data-page]').forEach((btn) => btn.classList.toggle('active', btn.dataset.page === r.page));
+    switch (r.page) {
+      case 'home': renderHome(); break;
+      case 'leagues': renderLeagues(); break;
+      case 'league': renderLeagueDetail(r.id); break;
+      case 'cup': renderCupDetail(); break;
+      case 'internationals': renderInternationals(r.year); break;
+      case 'season': renderSeasonReview(r.year); break;
+      case 'fixtures': renderFixtures(); break;
+      case 'matches': renderMatches(); break;
+      case 'match': renderMatch(r.id); break;
+      case 'team': renderTeam(r.id); break;
+      case 'search': renderSearchResults(); break;
+      case 'players': renderPlayers(); break;
+      case 'player': renderPlayer(r.handle); break;
+      case 'calendar': renderCalendar(); break;
+      case 'manager': renderManager(); break;
+      default: renderHome();
+    }
+  }
+  window.addEventListener('popstate', renderRoute);
 
   async function refreshAll() {
     const [overview, leagues, fixtures] = await Promise.all([api('/api/overview'), api('/api/leagues'), api('/api/fixtures')]);
@@ -768,7 +840,7 @@
         sel.innerHTML = '<option value="">Season review…</option>' + (seasons.seasons || []).slice().reverse().map((s) => `<option value="${s.year}">${esc(s.season || String(s.year))}${s.ucl_winner ? ` · UCL ${esc(s.ucl_winner)}` : ''}${s.international?.winner ? ` · ${esc(s.international.kind)} ${esc(s.international.winner)}` : ''}${s.current ? ' (in play)' : ''}</option>`).join('');
       }
     } catch {}
-    setPage(state.page || 'home');
+    renderRoute();
   }
 
   async function simulate(weeks = 1, token) {
@@ -839,19 +911,19 @@
     const histBack = e.target.closest('[data-history-back]');
     if (histBack) {
       if (window.history.length > 1) history.back();
-      else setPage('matches');
+      else navigate('/matches');
       return;
     }
     const teamBtn = e.target.closest('[data-team]');
-    if (teamBtn) { setPage('team'); await renderTeam(Number(teamBtn.dataset.team)); return; }
+    if (teamBtn) { navigate(`/team/${Number(teamBtn.dataset.team)}`); return; }
     const pageBtn = e.target.closest('[data-page]');
-    if (pageBtn) { setPage(pageBtn.dataset.page); return; }
+    if (pageBtn) { navigate(`/${pageBtn.dataset.page}`); return; }
     const league = e.target.closest('[data-league]');
-    if (league) { state.leagueIndex = Number(league.dataset.league); setPage('league'); return; }
+    if (league) { navigate(leaguePath(Number(league.dataset.league))); return; }
     const match = e.target.closest('[data-match]');
-    if (match) { state.matchTab = 'facts'; state.matchLeagueData = null; setPage('match'); await renderMatch(Number(match.dataset.match)); return; }
+    if (match) { state.matchTab = 'facts'; state.matchLeagueData = null; navigate(`/match/${Number(match.dataset.match)}`); return; }
     const player = e.target.closest('[data-player]');
-    if (player) { setPage('player'); await renderPlayer(player.dataset.player); return; }
+    if (player) { navigate(playerPath(player.dataset.player)); return; }
     const mtab = e.target.closest('[data-match-tab]');
     if (mtab) { state.matchTab = mtab.dataset.matchTab; renderMatch(state.matchId); return; }
     const ltab = e.target.closest('[data-league-tab]');
@@ -870,7 +942,7 @@
     if (btn.id === 'simulate-week') simulate(1);
     if (btn.id === 'simulate-five') simulate(5);
     if (btn.id === 'reset-world') resetWorld();
-    if (btn.id === 'all-leagues') setPage('leagues');
+    if (btn.id === 'all-leagues') navigate('/leagues');
     if (btn.id === 'refresh') { try { await refreshAll(); if (state.page === 'players') await loadPlayers(); toast('Dashboard refreshed.'); } catch (err) { toast(err.message, true); } }
   });
   document.addEventListener('change', (e) => {
@@ -880,12 +952,12 @@
     if (e.target.id === 'season-select' && e.target.value) {
       const y = Number(e.target.value);
       e.target.value = '';
-      renderSeasonReview(y);
+      navigate(`/season/${y}`);
     }
   });
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('global-search')?.focus(); }
-    if (e.key === 'Enter' && e.target.id === 'global-search') { state.playerQuery = e.target.value; setMode('simulate'); setPage('players'); loadPlayers(); }
+    if (e.key === 'Enter' && e.target.id === 'global-search') { state.playerQuery = e.target.value; setMode('simulate'); navigate('/players'); loadPlayers(); }
     if (e.key === 'Enter' && e.target.id === 'player-q') loadPlayers();
   });
   $('save-api')?.addEventListener('click', () => {
@@ -893,23 +965,12 @@
     if (v) { API = v; localStorage.setItem('fm-web-api-base', v); toast(`API endpoint set to ${v}`); refreshAll().catch((e) => toast(e.message, true)); }
   });
 
-  window.addEventListener('popstate', (e) => {
-    const s = e.state || {};
-    state.leagueIndex = s.leagueIndex ?? state.leagueIndex;
-    state.matchId = s.matchId ?? state.matchId;
-    state.playerHandle = s.playerHandle ?? state.playerHandle;
-    const restored = s.page || 'home';
-    setPage(restored, { skipHistory: true });
-    // The player laboratory is the only page that needs an async fetch before
-    // it can render; every other page renders straight from cached state.
-    if (restored === 'players') loadPlayers();
-  });
-
   $('api-base').value = API;
   $('mode-sim')?.classList.toggle('active', state.mode !== 'manager');
   $('mode-manager')?.classList.toggle('active', state.mode === 'manager');
   updateClock();
   renderNewsRail();
+  renderRoute();
   api('/api/health').then(async () => {
     await refreshAll();
     // Only the player laboratory needs its own fetch; booting straight into

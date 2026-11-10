@@ -3,14 +3,105 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Page not found — FM Observatory</title>
+  <meta name="description" content="FM Observatory football manager: live simulated leagues, fixtures, match detail, player laboratory and manager mode." />
+  <meta name="theme-color" content="#0b0b0c" />
+  <title>FM Observatory — Football Manager simulation</title>
+  <link rel="icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/styles.css" />
+  <script src="/config.js"></script>
 </head>
 <body>
-  <main style="max-width:720px;margin:12vh auto;padding:28px;">
-    <h1>Page not found</h1>
-    <p style="color:var(--muted)">That route is not part of FM Observatory.</p>
-    <p><a href="/">Return to the dashboard</a></p>
-  </main>
+  <a class="skip-link" href="#app">Skip to dashboard</a>
+
+  <header class="topbar">
+    <div class="brand"><span class="logo">FM</span><span class="brand-name">OBSERVATORY</span></div>
+    <label class="global-search">
+      <span aria-hidden="true">⌕</span>
+      <input id="global-search" aria-label="Global player search" placeholder="Search" />
+      <kbd>Ctrl K</kbd>
+    </label>
+    <nav class="topnav" aria-label="Primary">
+      <button data-page="home" class="nav-link active">Home</button>
+      <button data-page="matches" class="nav-link">Matches</button>
+      <button data-page="fixtures" class="nav-link">Fixtures</button>
+      <button data-page="calendar" class="nav-link">Calendar</button>
+      <button data-page="leagues" class="nav-link">Leagues</button>
+      <button data-page="players" class="nav-link">Players</button>
+    </nav>
+    <div class="top-actions">
+      <div class="mode-toggle" role="group" aria-label="Mode">
+        <button id="mode-sim" class="active">Simulate</button>
+        <button id="mode-manager">Manager</button>
+      </div>
+      <button id="play-pause" aria-pressed="false">▶ Play</button>
+      <select id="auto-speed" aria-label="Auto simulation speed">
+        <option value="day">Per day</option>
+        <option value="week" selected>Per week</option>
+        <option value="month">Per month</option>
+      </select>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="rail left-rail" aria-label="Leagues and simulation controls">
+      <section class="rail-panel">
+        <h2>Top leagues</h2>
+        <div id="top-leagues" class="league-list"></div>
+        <button id="all-leagues" class="all-leagues">All leagues ▾</button>
+      </section>
+
+      <section class="rail-panel sim-panel">
+        <h2>Simulation</h2>
+        <div class="clock-grid">
+          <div><span class="kpi-label">Season</span><strong id="sim-year">2026</strong></div>
+          <div><span class="kpi-label">Round</span><strong id="sim-week">0 / 38</strong></div>
+          <div class="wide"><span class="kpi-label">Date</span><strong id="sim-date">Sat 01 Aug 2026</strong></div>
+          <div><span class="kpi-label">Clock</span><strong id="sim-clock">09:00</strong></div>
+          <div><span class="kpi-label">World</span><strong id="world-week">Week 0</strong></div>
+        </div>
+        <p id="world-meta" class="rail-note">Connecting…</p>
+        <div class="actions" style="margin-bottom:8px">
+          <select id="season-select" aria-label="Season review" style="width:100%">
+            <option value="">Season review…</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button id="simulate-week" class="secondary">Step week</button>
+          <button id="simulate-five" class="ghost">Step 5</button>
+          <button id="reset-world" class="ghost">New world</button>
+        </div>
+      </section>
+
+      <section class="rail-panel">
+        <h2>API endpoint</h2>
+        <input id="api-base" aria-label="API endpoint" spellcheck="false" placeholder="https://plasma-checks-league-trinity.trycloudflare.com" />
+        <button id="save-api" class="secondary wide-btn">Use endpoint</button>
+        <span id="api-status" class="rail-note">Not connected</span>
+      </section>
+    </aside>
+
+    <main id="app" class="content" aria-live="polite"></main>
+
+    <aside class="rail right-rail" aria-label="News">
+      <section class="rail-panel news-panel">
+        <div class="rail-head"><h2>News</h2><span id="news-date" class="rail-note"></span></div>
+        <div id="news-list" class="news-list"></div>
+        <button class="see-more" data-page="calendar">See more</button>
+      </section>
+      <section class="rail-panel">
+        <h2>What to open</h2>
+        <div class="hint-list">
+          <button data-page="leagues">League tables</button>
+          <button data-page="matches">Match centre</button>
+          <button data-page="players">Player laboratory</button>
+          <button data-page="manager">Manager mode</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <noscript><div style="padding:24px">This dashboard requires JavaScript to load the live simulation API.</div></noscript>
+  <div id="toast" role="status"></div>
+  <script src="/app.js"></script>
 </body>
 </html>

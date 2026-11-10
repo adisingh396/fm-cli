@@ -12341,6 +12341,19 @@ pub mod web_api {
         rounds: Vec<Vec<(usize, usize)>>,
     }
 
+    /// A scouting brief from the manager: what to look for.
+    #[derive(Clone)]
+    struct ScoutCriteria {
+        /// "GK" | "DEF" | "MID" | "FWD" | "" (any).
+        position: String,
+        /// Country focus, exact match; empty = worldwide.
+        nation: String,
+        /// Maximum age, 0 = any.
+        max_age: u8,
+        /// Minimum potential, 0 = any.
+        min_potential: u8,
+    }
+
     /// Pseudo-league id used by the browser for European cup matches. Every
     /// real domestic league has a small index, so a dedicated sentinel keeps
     /// `/api/league/<id>` and the match list grouping unambiguous.
@@ -12417,8 +12430,7 @@ pub mod web_api {
         /// youth players and dormant source profiles searchable through the
         /// player laboratory even when they were not promoted into the active
         /// domestic world at build time.
-        database: Database,
-        /// Database position for every source `Player.id`.
+        database: Database,        /// Database position for every source `Player.id`.
         database_index: std::collections::HashMap<PlayerId, usize>,
         /// Source club position for every database player, reverse-derived
         /// from `Club.squad` so CSV profiles always expose their club/league
@@ -12444,6 +12456,11 @@ pub mod web_api {
         /// Built at rollover before the season stats reset, so history
         /// survives the wipe.
         archives: Vec<Value>,
+        /// Active scouting assignments: (id, criteria, created week, due
+        /// week). Reports mature when the world passes the due week.
+        scout_assignments: Vec<(u64, ScoutCriteria, u32, u32)>,
+        /// Next scouting assignment id.
+        scout_next_id: u64,
         schedules: Vec<LeagueSchedule>,
         /// European cup state for the interactive season. `None` when the
         /// world has no European clubs.
@@ -12739,6 +12756,8 @@ pub mod web_api {
                 total_matches: 0,
                 last_intl: None,
                 archives: Vec::new(),
+                scout_assignments: Vec::new(),
+                scout_next_id: 1,
                 schedules,
                 ucl,
                 matches: Vec::new(),
@@ -13494,7 +13513,7 @@ pub mod web_api {
             "mini_table": table.iter().take(8).map(|&idx| team_json(w, idx)).collect::<Vec<_>>(),
             "next_fixtures": next_fixtures,
             "players": players,
-            "actions": ["team_talk", "rest", "boost", "promise", "train"],
+            "actions": ["team_talk", "rest", "boost", "promise", "train", "warn", "retrain_position", "shape"],
         })
     }
 
@@ -13544,6 +13563,67 @@ pub mod web_api {
                     return json!({"error": "formation must be 10 outfielders"});
                 }
                 state.world.teams[team_idx].shape = (def, mid, fwd);
+                affected = 1;
+            }
+            "retrain_position" => {
+                let Some(pi) = player_idx else {
+                    return json!({"error": "player required for this action"});
+                };
+                if !squad.contains(&pi) {
+                    return json!({"error": "player not in selected squad"});
+                }
+                let pos = body
+                    .get("position")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_uppercase();
+                let new_pos = match pos.as_str() {
+                    "GK" => Some(crate::model::Position::GK),
+                    "DEF" => Some(crate::model::Position::DEF),
+                    "MID" => Some(crate::model::Position::MID),
+                    "FWD" => Some(crate::model::Position::FWD),
+                    _ => None,
+                };
+                let Some(np) = new_pos else {
+                    return json!({"error": "position must be GK, DEF, MID or FWD"});
+                };
+                let old = state.world.pool[pi].pos;
+                if old == np {
+                    return json!({"error": "player is already registered there"});
+                }
+                state.world.pool[pi].pos = np;
+                // Retraining costs a little sharpness while the player adapts.
+                state.world.pool[pi].fatigue =
+                    (state.world.pool[pi].fatigue + 6).min(100);
+                state.world.pool[pi].morale =
+                    (state.world.pool[pi].morale as i16 - 2).clamp(30, 90) as u8;
+                // Selection maths follow the new shape immediately: recompute
+                // the club's tactical XI strength.
+                let sel = selectable(&state.world.teams, team_idx);
+                let shape = state.world.teams[team_idx].shape;
+                let s = match_strength(
+                    &sel,
+                    &state.world.pool,
+                    state.world.teams[team_idx].rep,
+                    shape,
+                    &state.world.params,
+                ) * state.world.teams[team_idx].manager.quality;
+                state.world.teams[team_idx].strength = s;
+                affected = 1;
+            }
+            "warn" => {
+                let Some(pi) = player_idx else {
+                    return json!({"error": "player required for this action"});
+                };
+                if !squad.contains(&pi) {
+                    return json!({"error": "player not in selected squad"});
+                }
+                let p = &mut state.world.pool[pi];
+                p.morale = (p.morale as i16 - 6).clamp(30, 90) as u8;
+                if let Some(mind) = state.world.minds.get_mut(pi) {
+                    mind.professionalism = (mind.professionalism + 0.05).min(1.0);
+                }
                 affected = 1;
             }
             "boost" | "promise" | "train" => {
@@ -14178,6 +14258,121 @@ pub mod web_api {
             "history": history,
             "archived": archived.is_some(),
         })
+    }
+
+    /// One scouting assignment's report: matured (or maturing) shortlist of
+    /// prospects matching the brief, drawn from the full database roster.
+    /// Reports mature two weeks in: until then only the summary line shows.
+    fn scouting_json(state: &WebState) -> Value {
+        let assignments: Vec<Value> = state
+            .scout_assignments
+            .iter()
+            .map(|(id, c, created, due)| {
+                let matured = state.week >= *due;
+                let report = if matured {
+                    // Shortlist: database players matching the brief, best
+                    // potential first. Potential is shown with a scout's
+                    // uncertainty band (±2) — the star rating, not a precise
+                    // number, is what a real report gives you.
+                    let mut hits: Vec<usize> = (0..state.database.players().len())
+                        .filter(|&i| {
+                            let p = &state.database.players()[i];
+                            if !c.position.is_empty()
+                                && p.position.short() != c.position
+                            {
+                                return false;
+                            }
+                            if !c.nation.is_empty() && !p.nation.eq_ignore_ascii_case(&c.nation) {
+                                return false;
+                            }
+                            if c.max_age > 0 && p.age > c.max_age {
+                                return false;
+                            }
+                            if c.min_potential > 0 && p.potential < c.min_potential {
+                                return false;
+                            }
+                            p.potential >= 62
+                        })
+                        .collect();
+                    hits.sort_by(|&a, &b| {
+                        let pa = &state.database.players()[a];
+                        let pb = &state.database.players()[b];
+                        pb.potential.cmp(&pa.potential).then(pa.age.cmp(&pb.age))
+                    });
+                    hits.into_iter().take(8).map(|i| {
+                        let p = &state.database.players()[i];
+                        let live = state.world_by_database.get(&p.id).copied();
+                        let pot_fuzz = ((p.potential as i32 - 2).max(1), p.potential.saturating_add(2));
+                        json!({
+                            "name": p.name,
+                            "db_id": p.id,
+                            "age": p.age,
+                            "position": p.position.short(),
+                            "nation": p.nation,
+                            "club": state.source_club_by_player.get(&p.id)
+                                .and_then(|&ci| state.database.clubs().get(ci))
+                                .map(|cl| cl.name.clone())
+                                .unwrap_or_else(|| "Unattached".to_string()),
+                            "current_ovr": p.seen_ovr,
+                            "potential_band": format!("{}-{}", pot_fuzz.0, pot_fuzz.1),
+                            "in_live_world": live.is_some(),
+                            "world_handle": live.map(|w| format!("wp:{w}")),
+                        })
+                    }).collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                json!({
+                    "id": id,
+                    "brief": {
+                        "position": if c.position.is_empty() { "Any" } else { &c.position },
+                        "nation": if c.nation.is_empty() { "Worldwide" } else { &c.nation },
+                        "max_age": if c.max_age == 0 { Value::Null } else { json!(c.max_age) },
+                        "min_potential": if c.min_potential == 0 { Value::Null } else { json!(c.min_potential) },
+                    },
+                    "created_week": created + 1,
+                    "due_week": due + 1,
+                    "matured": matured,
+                    "shortlist": report,
+                })
+            })
+            .collect();
+        json!({
+            "week": state.week,
+            "assignments": assignments,
+        })
+    }
+
+    fn scouting_start(state: &mut WebState, body: &Value) -> Value {
+        let criteria = ScoutCriteria {
+            position: body
+                .get("position")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_uppercase(),
+            nation: body
+                .get("nation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            max_age: body.get("max_age").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
+            min_potential: body
+                .get("min_potential")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u8,
+        };
+        if !criteria.position.is_empty()
+            && !["GK", "DEF", "MID", "FWD"].contains(&criteria.position.as_str())
+        {
+            return json!({"error": "position must be GK, DEF, MID or FWD"});
+        }
+        let id = state.scout_next_id;
+        state.scout_next_id += 1;
+        let due = state.week + 2;
+        state.scout_assignments.push((id, criteria, state.week, due));
+        json!({"started": id, "due_week": due + 1})
     }
 
     fn match_summary(state: &WebState, m: &WebMatchRecord) -> Value {
@@ -15274,6 +15469,19 @@ pub mod web_api {
                     .unwrap_or_else(|| json!({"error": "season not found"})),
                 _ => json!({"error": "season not found"}),
             }
+        } else if path == "/api/scouting" {
+            let s = state.lock().unwrap();
+            scouting_json(&s)
+        } else if path == "/api/scouting/start" && method.eq_ignore_ascii_case("POST") {
+            let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
+            let mut s = state.lock().unwrap();
+            let mut out = scouting_start(&mut s, &payload);
+            if out.get("error").is_none() {
+                let reports = scouting_json(&s);
+                out["assignments"] = reports["assignments"].clone();
+                out["week"] = reports["week"].clone();
+            }
+            out
         } else if path == "/api/careers" {
             match std::fs::read_to_string("sim_dump/careers.json") {
                 Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(json!({"raw": text})),
