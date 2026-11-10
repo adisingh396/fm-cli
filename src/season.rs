@@ -14035,6 +14035,104 @@ pub mod web_api {
                 }))
             })
             .collect();
+        // Group-stage field: recover the groups from who played whom (teams
+        // that met in the group stage form a 4-team clique), then table them
+        // by points/GD/GF. This is the tournament's 48-team field.
+        let mut groups_out: Vec<Value> = Vec::new();
+        {
+            let group_matches: Vec<&WebMatchRecord> = matches
+                .iter()
+                .filter(|m| m.stage.ends_with("Group Stage"))
+                .copied()
+                .collect();
+            if !group_matches.is_empty() {
+                // Union-find over nation names.
+                fn uf_find(
+                    p: &mut std::collections::HashMap<String, String>,
+                    x: &str,
+                ) -> String {
+                    let mut root = x.to_string();
+                    while let Some(up) = p.get(&root).cloned() {
+                        if up == root {
+                            break;
+                        }
+                        root = up;
+                    }
+                    p.insert(x.to_string(), root.clone());
+                    root
+                }
+                let mut parent: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
+                for m in &group_matches {
+                    for n in [&m.home_name, &m.away_name] {
+                        let name = n.clone().unwrap_or_default();
+                        parent.entry(name.clone()).or_insert_with(|| name.clone());
+                    }
+                    let (ra, rb) = (
+                        uf_find(&mut parent, &m.home_name.clone().unwrap_or_default()),
+                        uf_find(&mut parent, &m.away_name.clone().unwrap_or_default()),
+                    );
+                    if ra != rb {
+                        parent.insert(ra, rb);
+                    }
+                }
+                let mut by_group: std::collections::HashMap<String, Vec<String>> =
+                    std::collections::HashMap::new();
+                for name in parent.keys().cloned().collect::<Vec<_>>() {
+                    let root = uf_find(&mut parent, &name);
+                    by_group.entry(root).or_default().push(name.clone());
+                }
+                let mut grouped: Vec<Vec<String>> = by_group.into_values().collect();
+                grouped.sort_by(|a, b| {
+                    a.first()
+                        .cmp(&b.first())
+                });
+                for (gi, members) in grouped.iter().enumerate() {
+                    let letter = (b'A' + (gi as u8 % 26)) as char;
+                    let mut rows: Vec<(String, u16, u16, u16, u16, u16, u16, i32, u16)> = members
+                        .iter()
+                        .map(|n| (n.clone(), 0, 0, 0, 0, 0, 0, 0, 0))
+                        .collect();
+                    for m in &group_matches {
+                        let (h, a) = (
+                            m.home_name.clone().unwrap_or_default(),
+                            m.away_name.clone().unwrap_or_default(),
+                        );
+                        let (gh, ga) = (m.outcome.goals_a as u16, m.outcome.goals_b as u16);
+                        for (team, gf, gaa) in [(h.clone(), gh, ga), (a.clone(), ga, gh)] {
+                            if let Some(row) = rows.iter_mut().find(|r| r.0 == team) {
+                                row.1 += 1;
+                                row.5 += gf;
+                                row.6 += gaa;
+                                if gf > gaa {
+                                    row.2 += 1;
+                                    row.8 += 3;
+                                } else if gf == gaa {
+                                    row.3 += 1;
+                                    row.8 += 1;
+                                } else {
+                                    row.4 += 1;
+                                }
+                            }
+                        }
+                    }
+                    rows.sort_by(|a, b| {
+                        b.8.cmp(&a.8)
+                            .then((b.5 as i32 - b.6 as i32).cmp(&(a.5 as i32 - a.6 as i32)))
+                            .then(b.5.cmp(&a.5))
+                    });
+                    groups_out.push(json!({
+                        "name": format!("Group {}", letter),
+                        "teams": rows.into_iter().enumerate().map(|(pos, r)| json!({
+                            "position": pos + 1,
+                            "name": r.0,
+                            "played": r.1, "won": r.2, "drawn": r.3, "lost": r.4,
+                            "gf": r.5, "ga": r.6, "gd": r.5 as i32 - r.6 as i32, "pts": r.8,
+                        })).collect::<Vec<_>>(),
+                    }));
+                }
+            }
+        }
         json!({
             "competition": "Internationals",
             "year": year,
@@ -14042,6 +14140,7 @@ pub mod web_api {
             "kind": kind,
             "winner": if winner.is_empty() { Value::Null } else { json!(winner) },
             "top_scorers": top_scorers,
+            "groups": groups_out,
             "stages": stages.into_iter().map(|(name, rows)| json!({
                 "name": name,
                 "matches": rows,
@@ -14292,10 +14391,14 @@ pub mod web_api {
             return json!({"league": "UEFA Champions League", "confederation": "UEFA", "week": state.week, "groups": [], "knockout": [], "table": [], "scorers": [], "recent": []});
         };
         let phase_done = cup.standings.len() == cup.field.len();
-        let table = league_phase_rows(state, &cup.field)
-            .into_iter()
+        // League-phase table (current shape) + a legacy "groups" payload with
+        // the same rows so older deployed frontends (which render group
+        // tables) still show the single 36-team table instead of "not drawn".
+        let phase_rows = league_phase_rows(state, &cup.field);
+        let table = phase_rows
+            .iter()
             .enumerate()
-            .map(|(pos, (team, p, won, drawn, lost, gf, ga, pts))| {
+            .map(|(pos, &(team, p, won, drawn, lost, gf, ga, pts))| {
                 let status = if !phase_done {
                     "League phase in progress"
                 } else if pos < UCL_DIRECT.min(cup.field.len()) {
@@ -14321,6 +14424,10 @@ pub mod web_api {
                 })
             })
             .collect::<Vec<_>>();
+        let groups = vec![json!({
+            "name": "League Phase",
+            "teams": table,
+        })];
         let knockout = cup
             .knockout
             .iter()
@@ -14345,15 +14452,20 @@ pub mod web_api {
                         });
                         if let Some(tr) = res {
                             // Legs are stored from the tie's first-leg home
-                            // side (h) perspective.
+                            // side (h) perspective. The legacy score fields
+                            // carry the AGGREGATE for two-legged ties (and
+                            // the single-leg score for the final) so every
+                            // consumer shows the tie result, not leg one.
                             x["leg1"] = json!({"home_goals": tr.leg1.0, "away_goals": tr.leg1.1});
-                            x["home_goals"] = json!(tr.leg1.0);
-                            x["away_goals"] = json!(tr.leg1.1);
                             if let Some((l2h, l2a)) = tr.leg2 {
                                 x["leg2"] = json!({"home_goals": l2a, "away_goals": l2h});
+                                x["home_goals"] = json!(tr.leg1.0 + l2h);
+                                x["away_goals"] = json!(tr.leg1.1 + l2a);
                                 x["agg_home"] = json!(tr.leg1.0 + l2h);
                                 x["agg_away"] = json!(tr.leg1.1 + l2a);
                             } else {
+                                x["home_goals"] = json!(tr.leg1.0);
+                                x["away_goals"] = json!(tr.leg1.1);
                                 x["agg_home"] = json!(tr.leg1.0);
                                 x["agg_away"] = json!(tr.leg1.1);
                             }
@@ -14379,7 +14491,7 @@ pub mod web_api {
             "confederation": "UEFA",
             "week": state.week,
             "format": "36-club league phase (8 matchdays) · top 8 direct to the Round of 16 · 9th-24th two-legged play-off · two-legged knockouts · single-leg final",
-            "groups": [],
+            "groups": groups,
             "knockout": knockout,
             "table": table,
             "scorers": scorers.into_iter().take(20).map(|i| player_detail_json(state, i)).collect::<Vec<_>>(),

@@ -1,5 +1,7 @@
-// FM Observatory web configuration. This points the deployed frontend at the
-// running Rust backend through the Cloudflare tunnel. To use a different host,
-// override it from the dashboard's "API endpoint" field or with
-// `?api=https://your-api.example`.
-window.FM_API_BASE = 'https://plasma-checks-league-trinity.trycloudflare.com';
+// FM Observatory web configuration. When served by the Rust backend itself
+// (cargo run --release -- serve) the API is same-origin, so no base is
+// needed. For a deployed frontend (e.g. Vercel), point this at a public URL
+// of the backend (a Cloudflare tunnel, a box, any host running
+// `fm serve`), or set it per-browser with the dashboard's "API endpoint"
+// field or `?api=https://your-api.example`. Leave empty for same-origin.
+window.FM_API_BASE = '';
