@@ -129,6 +129,11 @@ pub enum EventKind {
     Injury,
     Penalty,
     RedCard,
+    YellowCard,
+    /// A player going off; `assist` carries his replacement.
+    SubOff,
+    /// A player coming on; `assist` carries the man he replaced.
+    SubOn,
 }
 
 #[derive(Clone, Debug)]
@@ -821,8 +826,8 @@ pub fn simulate(
         // scoreline (with any first-leg aggregate folded in).
         if d % 9 == 8 {
             let gd_sub = (ra.goals as i32 + agg.0 as i32) - (rb.goals as i32 + agg.1 as i32);
-            maybe_substitute(&mut ra, minute, ment_a, gd_sub, rng);
-            maybe_substitute(&mut rb, minute, ment_b, -gd_sub, rng);
+            maybe_substitute(&mut ra, minute, ment_a, gd_sub, &mut events, rng);
+            maybe_substitute(&mut rb, minute, ment_b, -gd_sub, &mut events, rng);
         }
     }
 
@@ -941,7 +946,14 @@ fn added_minutes(ra: &Rt, rb: &Rt, rng: &mut impl Rng) -> u8 {
 ///      a lead after 70' brings legs and defenders on;
 ///   6. cover: a man short (red card / first-half injury) raids the bench
 ///      immediately, regardless of the minute.
-fn maybe_substitute(rt: &mut Rt, minute: u8, _ment: i8, gd: i32, rng: &mut impl Rng) {
+fn maybe_substitute(
+    rt: &mut Rt,
+    minute: u8,
+    _ment: i8,
+    gd: i32,
+    events: &mut Vec<Event>,
+    rng: &mut impl Rng,
+) {
     if rt.subs_made >= 5 || rt.bench.is_empty() {
         return;
     }
@@ -976,7 +988,10 @@ fn maybe_substitute(rt: &mut Rt, minute: u8, _ment: i8, gd: i32, rng: &mut impl 
 
     // Outgoing: every trigger contributes to one take-off score per starter.
     let mut pick_out: Option<usize> = None;
-    let mut worst = 28.0f32; // threshold: below this, nobody is hooked
+    // Cover ignores the bar: a man short (red card / injury) is plugged at
+    // the very next window no matter the minute; the most spent player in
+    // the shorted area still makes way in the normal windows.
+    let mut worst = if covering { -1.0f32 } else { 28.0f32 }; // threshold: below this, nobody is hooked
     for &i in &on_pitch {
         let spent = rt.p[i].start_fatigue + rt.fat[i];
         let quality = rt.eff(i, &rt.passing) + rt.eff(i, &rt.dribble);
@@ -1006,9 +1021,15 @@ fn maybe_substitute(rt: &mut Rt, minute: u8, _ment: i8, gd: i32, rng: &mut impl 
             score += 42.0;
         }
         // 4. One booking already: after the hour he is a red card waiting
-        //    to happen (or to be baited).
-        if rt.st[i].yellows >= 1 && minute >= 60 && rng.gen::<f32>() < 0.5 {
-            score += 30.0;
+        //    to happen (or to be baited). Defenders are rarely hooked for a
+        //    card — a like-for-like replacement does not exist on most
+        //    benches — so this is mostly an attacker/midfielder move.
+        if rt.st[i].yellows >= 1
+            && minute >= 60
+            && line_of(rt.p[i].pos) >= 2
+            && rng.gen::<f32>() < 0.5
+        {
+            score += 14.0;
         }
         // 5. Comfortable lead: stars and tired legs come off, the points
         //    are safe and next week exists.
@@ -1086,6 +1107,15 @@ fn maybe_substitute(rt: &mut Rt, minute: u8, _ment: i8, gd: i32, rng: &mut impl 
     dep.minutes = (minute as u32 + 1).saturating_sub(rt.entry[out_i] as u32).max(1) as u8;
     rt.departed_pos.push(rt.p[out_i].pos);
     rt.departed.push(dep);
+    // Both halves of the swap land on the match sheet.
+    let departing_id = rt.departed.last().map(|d| d.id).unwrap_or(0);
+    events.push(Event {
+        minute,
+        side_a: rt.side_a,
+        kind: EventKind::SubOff,
+        actor: departing_id,
+        assist: Some(incoming_id),
+    });
     rt.p[out_i] = incoming;
     // Fresh stats line for the incoming player — attributed to HIS id so a
     // sub who scores keeps the goal (the departed man's line is banked above).
@@ -1105,6 +1135,13 @@ fn maybe_substitute(rt: &mut Rt, minute: u8, _ment: i8, gd: i32, rng: &mut impl 
     rt.entry[out_i] = minute;
     rt.subs_made += 1;
     rt.subs_pending_cover = false;
+    events.push(Event {
+        minute,
+        side_a: rt.side_a,
+        kind: EventKind::SubOn,
+        actor: incoming_id,
+        assist: Some(departing_id),
+    });
 }
 
 /// One attacking possession by `atk` against `def`. Progresses through three
@@ -1414,35 +1451,88 @@ fn drive(
         // intensity tackles (tackling × strength vs the fouler's composure)
         // risk a yellow; a cynical foul that denies a clear chance (the beaten
         // creator was through on goal, no one behind) is a straight red.
+        // Rates are calibrated to a real league: La Liga 2025-26 ran ~4.4
+        // yellows and ~0.1 reds per match, so most fouls stay unpunished but
+        // bookings are an every-match occurrence.
         let card_p =
             logistic((intensity - wv(def.p[cd].attrs.composure) - 24.0) / 12.0).clamp(0.03, 0.45);
+        let yell_p = (card_p * 5.5).min(0.85);
         let beaten_man_through = atk.p[ca].pos == Position::FWD
             || (atk.st[ca].big_chances_missed + atk.st[ca].big_chances_created) > 0;
         let last_man = def.p.iter().filter(|p| p.pos == Position::DEF).count() <= 2
             && def.p[cd].pos != Position::GK;
         let roll = rng.gen::<f32>();
-        if roll < card_p * 0.55 {
-            def.st[cd].yellows += 1;
-            if def.st[cd].yellows >= 2 {
-                // Second yellow: off he goes.
-                def.st[cd].sent_off = true;
-                def.out[cd] = true;
-                def.subs_pending_cover = true;
-                events.push(Event {
-                    minute,
-                    side_a: !atk_is_a,
-                    kind: EventKind::RedCard,
-                    actor: def.st[cd].id,
-                    assist: None,
-                });
-                // Covering a man down tires the ten remaining teammates.
-                for j in 0..def.p.len() {
-                    if !def.out[j] {
-                        def.add_fatigue(j, 0.02);
+        // Team discipline caps, the way real matches flow: a side that has
+        // already collected five bookings (or a red) is managed by the
+        // referee for the rest of the game — the whistle goes in the pocket,
+        // so a side being overrun does not quietly collect two or three reds
+        // and hand the match away.
+        let team_yellows: u16 = def.st.iter().map(|s| s.yellows as u16).sum();
+        let team_reds: u16 = def.st.iter().filter(|s| s.sent_off).count() as u16;
+        let card_capped = team_yellows >= 5 || team_reds >= 1;
+        if roll < yell_p && !card_capped {
+            // The booking usually goes to the fouler, but a real referee
+            // books different men across a match (persistent infringement,
+            // dissent, off-the-ball pulls): spread ~60% of cards to another
+            // outfielder. The spread never targets a man already booked —
+            // referees manage booked players, who also play carefully; a
+            // second yellow only comes from genuinely fouling again himself.
+            let recipient = if rng.gen::<f32>() < 0.6 {
+                let cands: Vec<usize> = (0..def.p.len())
+                    .filter(|&j| {
+                        !def.out[j] && j != cd && !def.is_gk(j) && def.st[j].yellows == 0
+                    })
+                    .collect();
+                if cands.is_empty() {
+                    cd
+                } else {
+                    cands[rng.gen_range(0..cands.len())]
+                }
+            } else {
+                cd
+            };
+            // Referee management: a booked player who offends again is almost
+            // always talked out of the second card rather than sent off —
+            // otherwise mismatched games (one side fouling all match, an
+            // elite stopper shadowing a super-star) turn into red-card
+            // parades and the disciplinarian's side quietly loses.
+            let managed =
+                def.st[recipient].yellows == 1 && rng.gen::<f32>() < 0.90;
+            if !managed {
+                def.st[recipient].yellows += 1;
+                if def.st[recipient].yellows >= 2 {
+                    // Second yellow: off he goes.
+                    def.st[recipient].sent_off = true;
+                    def.out[recipient] = true;
+                    def.subs_pending_cover = true;
+                    events.push(Event {
+                        minute,
+                        side_a: !atk_is_a,
+                        kind: EventKind::RedCard,
+                        actor: def.st[recipient].id,
+                        assist: None,
+                    });
+                    // Covering a man down tires the ten remaining teammates.
+                    for j in 0..def.p.len() {
+                        if !def.out[j] {
+                            def.add_fatigue(j, 0.02);
+                        }
                     }
+                } else {
+                    events.push(Event {
+                        minute,
+                        side_a: !atk_is_a,
+                        kind: EventKind::YellowCard,
+                        actor: def.st[recipient].id,
+                        assist: None,
+                    });
                 }
             }
-        } else if last_man && beaten_man_through && roll < card_p * 0.55 + 0.05 {
+        } else if last_man
+            && beaten_man_through
+            && team_reds == 0
+            && roll < yell_p + (1.0 - yell_p) * 0.05
+        {
             // Denying a clear goal-scoring opportunity: straight red.
             def.st[cd].sent_off = true;
             def.out[cd] = true;
@@ -1963,6 +2053,38 @@ mod tests {
             t.push(mp(base_id + 8 + k, Position::FWD, Role::Poacher, v));
         }
         t
+    }
+
+    /// Discipline must look like a real league: La Liga 2025-26 averaged
+    /// ~4.4 yellows and 0.1 reds per match (1676 yellows, 38 reds in 380
+    /// games), with the most-carded team around 109 and the cleanest around
+    /// 60 — i.e. ~1.6..2.9 yellows per team-match.
+    #[test]
+    fn discipline_rates_look_like_a_real_league() {
+        let mut rng = Pcg64Mcg::new(7);
+        let a = team(0, 72);
+        let b = team(20, 68);
+        let (mut ys, mut rs, mut n) = (0u32, 0u32, 0u32);
+        for _ in 0..400 {
+            let o = simulate(&side(&a), &side(&b), Venue::HomeA, (0, 0), &mut rng);
+            for s in &o.stats {
+                ys += s.yellows as u32;
+                if s.sent_off {
+                    rs += 1;
+                }
+            }
+            n += 1;
+        }
+        let ypm = ys as f32 / n as f32;
+        let rpm = rs as f32 / n as f32;
+        assert!(
+            (3.4..=5.6).contains(&ypm),
+            "yellows per match {ypm:.2} outside the real band (La Liga ~4.4)"
+        );
+        assert!(
+            (0.02..=0.22).contains(&rpm),
+            "reds per match {rpm:.3} outside the real band (La Liga ~0.1)"
+        );
     }
 
     fn side(players: &[MatchPlayer]) -> Side {
@@ -2541,7 +2663,13 @@ mod tests {
         }
         let mut rng = Pcg64Mcg::new(99);
         for (label, xi, max_goals, max_shots) in [
-            ("dominant", &dom, 55u32, 1050u32),
+            // Goal caps include the realistic red-card tax: at the calibrated
+        // ~0.1 reds/match (see discipline_rates_look_like_a_real_league),
+        // a maxed side faces ten men a couple of times a season and pockets
+        // 2-4 extra goals — the cap is 60, not 55, so the guard stays about
+        // VOLUME pathology (60+ goal freak seasons) rather than punishing
+        // the discipline mechanic for existing.
+        ("dominant", &dom, 60u32, 1050u32),
             ("sole-star", &solo, 50u32, 800u32),
         ] {
             let (mut g, mut sh) = (0u32, 0u32);

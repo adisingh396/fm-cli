@@ -168,6 +168,15 @@ fn selectable(teams: &[Team], ti: usize) -> Vec<usize> {
     }
 }
 
+/// Players available to actually take the pitch: bans are served. Used at
+/// matchday-squad build time so team-strength snapshots keep the full squad.
+fn available(teams: &[Team], ti: usize, pool: &[WP]) -> Vec<usize> {
+    selectable(teams, ti)
+        .into_iter()
+        .filter(|&i| pool.get(i).map(|p| p.ban_games == 0).unwrap_or(false))
+        .collect()
+}
+
 /// The XI a club would field from its registered list (falling back to the
 /// full squad before the first registration is ever computed).
 fn xi_of(w: &World, ti: usize) -> Vec<usize> {
@@ -224,6 +233,9 @@ struct WP {
     ucl_apps: u16,
     el_apps: u16,
     intl_apps: u16,
+    /// Matches the player is banned from (red card): 1 for a second yellow,
+    /// 2 for a straight red. Served on the team's next fixtures.
+    ban_games: u8,
     // detailed per-season stat lines (aggregated across all competitions),
     // fed by the possession engine so a spectator sees real match output.
     shots: u16,
@@ -1392,6 +1404,12 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
         pool[i].rating_sum += s.rating;
         pool[i].rating_apps += 1;
 
+        // Discipline: a sending-off costs the next fixtures — one match for
+        // a second yellow, two for a straight red.
+        if s.sent_off {
+            pool[i].ban_games = if s.yellows >= 2 { 1 } else { 2 };
+        }
+
         // Result-driven morale swing + fatigue; an injury spikes fatigue (the
         // sandbox has no separate sidelined list, so the cost is carried here).
         let (my, opp) = if s.side_a {
@@ -1437,10 +1455,8 @@ fn play_detailed(
     p: &Params,
     rng: &mut Pcg64Mcg,
 ) -> Option<matchsim::MatchOutcome> {
-    // Only registered players may play league/European football — the
-    // registration list is the team sheet's legal boundary.
-    let hsel = selectable(teams, home);
-    let asel = selectable(teams, away);
+    let hsel = available(teams, home, pool);
+    let asel = available(teams, away, pool);
     let hmd = matchday_squad(
         &hsel,
         pool,
@@ -1512,6 +1528,13 @@ fn play_detailed(
     side_a.threat = ta;
     let o = matchsim::simulate(&side_h, &side_a, venue, agg, rng);
     apply_match(&o, comp, pool, p);
+    // Bans tick down after every fixture: a banned player misses exactly his
+    // team's next 1-2 matches.
+    for &pi in teams[home].players.iter().chain(teams[away].players.iter()) {
+        if let Some(p) = pool.get_mut(pi) {
+            p.ban_games = p.ban_games.saturating_sub(1);
+        }
+    }
     Some(o)
 }
 
@@ -2004,6 +2027,7 @@ fn inject_aditya_prodigy(
         ucl_apps: 0,
         el_apps: 0,
         intl_apps: 0,
+        ban_games: 0,
         shots: 0,
         sot: 0,
         key_passes: 0,
@@ -3564,6 +3588,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         ucl_apps: 0,
                         el_apps: 0,
                         intl_apps: 0,
+                        ban_games: 0,
                         shots: 0,
                         sot: 0,
                         key_passes: 0,
@@ -3781,6 +3806,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                             ucl_apps: 0,
                             el_apps: 0,
                             intl_apps: 0,
+                            ban_games: 0,
                             shots: 0,
                             sot: 0,
                             key_passes: 0,
@@ -3967,6 +3993,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         ucl_apps: 0,
                         el_apps: 0,
                         intl_apps: 0,
+                        ban_games: 0,
                         shots: 0,
                         sot: 0,
                         key_passes: 0,
@@ -4260,6 +4287,7 @@ fn reset_season(w: &mut World) {
         p.ucl_result = 0;
         p.el_result = 0;
         p.intl_result = 0;
+        p.ban_games = 0;
         // New season bounce: fresh legs, reset mood. Transfer requests stand
         // until the market resolves them; unhappiness gets a clean slate.
         p.fatigue = 0;
@@ -6762,6 +6790,7 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         ucl_apps: 0,
         el_apps: 0,
         intl_apps: 0,
+        ban_games: 0,
         shots: 0,
         sot: 0,
         key_passes: 0,
@@ -13608,6 +13637,7 @@ pub mod web_api {
             "clean_sheets": p.clean_sheets,
             "fatigue": p.fatigue,
             "morale": p.morale,
+            "ban_games": p.ban_games,
             "intl_goals": p.intl_goals,
             "intl_assists": p.intl_assists,
             "intl_apps": p.intl_apps,
@@ -14193,6 +14223,9 @@ pub mod web_api {
             matchsim::EventKind::Injury => "injury",
             matchsim::EventKind::Penalty => "penalty",
             matchsim::EventKind::RedCard => "red card",
+            matchsim::EventKind::YellowCard => "yellow card",
+            matchsim::EventKind::SubOff => "substitution off",
+            matchsim::EventKind::SubOn => "substitution on",
         }
     }
 
@@ -14851,16 +14884,22 @@ pub mod web_api {
                 })
                 .collect::<Vec<_>>()
         };
-        // Substitutes: everyone who appeared without starting. `entry` is not
-        // carried on the line, so the minute shown is the minutes he played;
-        // the badge in the UI marks him as a sub.
+        // Substitutes: everyone who appeared without starting. `on_minute`
+        // is when he entered the pitch and `replaced` the man he took over
+        // from — both straight from the SubOn event.
         let subs = |side_a: bool| {
-            m.outcome
+            let mut rows: Vec<Value> = m
+                .outcome
                 .stats
                 .iter()
                 .filter(|s| s.side_a == side_a && !s.started)
                 .map(|s| {
                     let p = &w.pool[s.id];
+                    let sub_on = m
+                        .outcome
+                        .events
+                        .iter()
+                        .find(|e| e.kind == matchsim::EventKind::SubOn && e.actor == s.id);
                     json!({
                         "id": s.id,
                         "name": p.name,
@@ -14869,11 +14908,18 @@ pub mod web_api {
                         "ovr": p.ovr,
                         "rating": s.rating,
                         "minutes": s.minutes,
+                        "on_minute": sub_on.map(|e| e.minute),
+                        "replaced": sub_on
+                            .and_then(|e| e.assist)
+                            .and_then(|a| w.pool.get(a))
+                            .map(|rp| rp.name.clone()),
                         "goals": s.goals,
                         "assists": s.assists,
                     })
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            rows.sort_by_key(|r| r.get("on_minute").and_then(|v| v.as_u64()).unwrap_or(0));
+            rows
         };
         let events = m
             .outcome
@@ -15365,6 +15411,7 @@ mod tests {
             ucl_apps: 0,
             el_apps: 0,
             intl_apps: 0,
+        ban_games: 0,
             shots: 0,
             sot: 0,
             key_passes: 0,

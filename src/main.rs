@@ -1157,6 +1157,21 @@ fn simulate_match(state: &mut GameState, fixture: &Fixture) {
                 name_of(e.actor),
                 if home_side { &home_name } else { &away_name }
             ),
+            matchsim::EventKind::YellowCard => format!(
+                "Yellow card — {} ({})",
+                name_of(e.actor),
+                if home_side { &home_name } else { &away_name }
+            ),
+            matchsim::EventKind::SubOff => format!(
+                "Sub — {} off ({})",
+                name_of(e.actor),
+                if home_side { &home_name } else { &away_name }
+            ),
+            matchsim::EventKind::SubOn => format!(
+                "Sub — {} on ({})",
+                name_of(e.actor),
+                if home_side { &home_name } else { &away_name }
+            ),
         };
         events.push(MatchEvent {
             minute: e.minute,

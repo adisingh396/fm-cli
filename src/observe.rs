@@ -308,6 +308,27 @@ fn watch_match(db: &Database, rng: &mut Pcg64Mcg) {
                     clip(side, 14)
                 );
             }
+            EventKind::YellowCard => {
+                let side = if e.side_a { &home.name } else { &away.name };
+                println!(
+                    "  {:>2}'  \u{1f7e8} Yellow card — {} ({})",
+                    e.minute,
+                    clip(&name_of(e.actor), 18),
+                    clip(side, 14)
+                );
+            }
+            EventKind::SubOff => {
+                let side = if e.side_a { &home.name } else { &away.name };
+                let sub = e.assist.map(|i| clip(&name_of(i), 18)).unwrap_or_default();
+                println!(
+                    "  {:>2}'  \u{21c4} Sub — {} off, {} on ({})",
+                    e.minute,
+                    clip(&name_of(e.actor), 18),
+                    sub,
+                    clip(side, 14)
+                );
+            }
+            EventKind::SubOn => {}
             EventKind::Penalty => {}
         }
     }

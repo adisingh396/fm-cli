@@ -407,7 +407,21 @@
     return `<div class="stat-bar"><div class="nums"><span>${aLabel || number(a)}</span><span>${label}</span><span>${bLabel || number(b)}</span></div><div class="bar-track"><i style="width:${(a / total) * 100}%"></i><i style="width:${(b / total) * 100}%"></i></div></div>`;
   }
   function eventRows(m) {
-    const rows = (m.events || []).map((e) => `<div class="event"><span class="minute">${e.minute}'</span><span><strong>${esc(e.player)}${e.assist ? ` <span class="small">assist ${esc(e.assist)}</span>` : ''}</strong><span>${esc(e.type)} · ${e.side === 'home' ? esc(m.match.home) : esc(m.match.away)}</span></span></div>`);
+    const rows = (m.events || []).map((e) => {
+      let icon = '';
+      let detail = `${esc(e.type)} · ${e.side === 'home' ? esc(m.match.home) : esc(m.match.away)}`;
+      if (e.type === 'goal' || e.type === 'set piece' || e.type === 'penalty') icon = '⚽';
+      else if (e.type === 'yellow card') icon = '🟨';
+      else if (e.type === 'red card') icon = '🟥';
+      else if (e.type === 'injury') icon = '🚑';
+      else if (e.type === 'substitution off') { icon = '↔'; detail = `off for ${esc(e.assist || '')} · ${e.side === 'home' ? esc(m.match.home) : esc(m.match.away)}`; }
+      else if (e.type === 'substitution on') { icon = '↔'; detail = `on for ${esc(e.assist || '')} · ${e.side === 'home' ? esc(m.match.home) : esc(m.match.away)}`; }
+      const isGoal = e.type === 'goal' || e.type === 'set piece' || e.type === 'penalty';
+      const playerLine = isGoal && e.assist
+        ? `<strong>${esc(e.player)} <span class="small">assist ${esc(e.assist)}</span></strong>`
+        : `<strong>${esc(e.player)}</strong>`;
+      return `<div class="event"><span class="minute">${icon} ${e.minute}'</span><span>${playerLine}<span>${detail}</span></span></div>`;
+    });
     return rows.join('') || '<div class="empty">No goal/event notes recorded.</div>';
   }
   function pitchSide(stats, homeSide) {
@@ -451,7 +465,7 @@
       </div>`;
     } else if (state.matchTab === 'events') body = `<div class="card"><h2>Events</h2><div class="events">${eventRows(m)}</div></div>`;
     else if (state.matchTab === 'lineup') {
-      const subs = (list) => (list || []).map((s) => `<div class="row"><span>${esc(s.name)}</span><span class="small">${s.minutes}' · rating ${number(s.rating)}${s.goals ? ` · ${s.goals} goal(s)` : ''}${s.assists ? ` · ${s.assists} assist(s)` : ''}</span></div>`).join('') || '<div class="empty">No substitutions used.</div>';
+      const subs = (list) => (list || []).map((s) => `<div class="row"><span>${esc(s.name)}<div class="small">on ${s.on_minute ?? '?'}' · replaced ${esc(s.replaced || '—')}</div></span><span class="small">${s.minutes}' played · rating ${number(s.rating)}${s.goals ? ` · ${s.goals} goal(s)` : ''}${s.assists ? ` · ${s.assists} assist(s)` : ''}</span></div>`).join('') || '<div class="empty">No substitutions used.</div>';
       body = `<div class="grid cols-2"><div class="card"><h3>${esc(mm.home)}</h3>${pitchSide(m.home_lineup || [], true)}</div><div class="card"><h3>${esc(mm.away)}</h3>${pitchSide(m.away_lineup || [], false)}</div></div>
       <div class="grid cols-2" style="margin-top:14px"><div class="card"><h3>${esc(mm.home)} substitutions</h3>${subs(m.home_subs)}</div><div class="card"><h3>${esc(mm.away)} substitutions</h3>${subs(m.away_subs)}</div></div>`;
     }
@@ -599,7 +613,9 @@
     const recent8 = playerMatches.slice(-8);
     const recentApps = recent8.length;
     const availability = recentApps >= 6 ? 'Regular starter / used heavily' : recentApps >= 3 ? 'Rotation option' : 'Limited recent involvement';
-    const playerStatus = `<div class="card"><h3>Status & recent matches</h3><div class="row-list"><div class="row"><span>Availability</span><strong>${availability}</strong></div><div class="row"><span>Last 8 match records</span><strong>${recentApps}</strong></div><div class="row"><span>Current week</span><strong>${state.overview?.world?.week ?? 0}</strong></div></div>${recent8.length ? recent8.map((m) => `<div class="row"><span>${esc(m.home)} ${m.home_goals}–${m.away_goals} ${esc(m.away)}</span><span class="small">${m.player_stats?.minutes ?? ''}' · ${m.player_stats?.goals ?? 0}G · ${m.player_stats?.assists ?? 0}A · ${number(m.player_stats?.rating ?? 0)}</span></div>`).join('') : '<div class="empty">No recent match records yet.</div>'}</div>`;
+    const ban = Number(live.ban_games || 0);
+    const banLine = ban > 0 ? `<div class="row"><span>Suspension</span><strong style="color:var(--red)">Banned — misses the next ${ban} match${ban > 1 ? 'es' : ''}</strong></div>` : '';
+    const playerStatus = `<div class="card"><h3>Status & recent matches</h3><div class="row-list">${banLine}<div class="row"><span>Availability</span><strong>${availability}</strong></div><div class="row"><span>Last 8 match records</span><strong>${recentApps}</strong></div><div class="row"><span>Current week</span><strong>${state.overview?.world?.week ?? 0}</strong></div></div>${recent8.length ? recent8.map((m) => `<div class="row"><span>${esc(m.home)} ${m.home_goals}–${m.away_goals} ${esc(m.away)}</span><span class="small">${m.player_stats?.minutes ?? ''}' · ${m.player_stats?.goals ?? 0}G · ${m.player_stats?.assists ?? 0}A · ${number(m.player_stats?.rating ?? 0)}</span></div>`).join('') : '<div class="empty">No recent match records yet.</div>'}</div>`;
     const source = p.profile ? `<div class="card"><h3>Source database dossier</h3><div class="row-list">
       <div class="row"><span>Database ID</span><strong>${profile.database_id ?? p.database_id ?? '—'}</strong></div>
       <div class="row"><span>Source club / league</span><strong style="text-align:right">${esc(profile.source_club || 'Unattached')}<br><span class="small">${esc(profile.source_league || 'No league listed')}</span></strong></div>
