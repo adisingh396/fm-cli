@@ -14744,11 +14744,17 @@ pub mod web_api {
         if !prestige_destination_allowed(&state.world, player, buyer) {
             return Err("player rejected the sporting project".into());
         }
+        if !crate::deals::window_open(state.week as u8) {
+            return Err("transfer window is closed (open weeks 1-6 and 20-23)".into());
+        }
         let exchange_credit = exchange
             .filter(|&x| x < state.world.pool.len() && state.world.pool[x].team == buyer)
             .map(|x| (state.world.pool[x].value as f32 * 0.80) as i64)
             .unwrap_or(0);
         let cash = (fee - exchange_credit).max(0);
+        if state.world.teams[buyer].budget == 0 {
+            state.world.teams[buyer].budget = state.world.teams[buyer].cash;
+        }
         if state.world.teams[buyer].budget < cash {
             return Err("buyer cannot afford the cash component".into());
         }
@@ -14784,6 +14790,8 @@ pub mod web_api {
         let kind = body.get("kind").and_then(|v| v.as_str()).unwrap_or("transfer");
         if kind == "loan" {
             let fee = body.get("fee_m").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+            if !crate::deals::window_open(state.week as u8) { return json!({"error": "transfer window is closed (open weeks 1-6 and 20-23)"}); }
+            if state.world.teams[buyer].budget == 0 { state.world.teams[buyer].budget = state.world.teams[buyer].cash; }
             if state.world.teams[buyer].budget < fee { return json!({"error": "loan fee is unaffordable"}); }
             state.world.teams[seller].players.retain(|&x| x != player);
             state.world.teams[buyer].players.push(player);
