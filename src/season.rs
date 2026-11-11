@@ -173,7 +173,11 @@ fn selectable(teams: &[Team], ti: usize) -> Vec<usize> {
 fn available(teams: &[Team], ti: usize, pool: &[WP]) -> Vec<usize> {
     selectable(teams, ti)
         .into_iter()
-        .filter(|&i| pool.get(i).map(|p| p.ban_games == 0).unwrap_or(false))
+        .filter(|&i| {
+            pool.get(i)
+                .map(|p| p.ban_games == 0 && p.injury_weeks == 0)
+                .unwrap_or(false)
+        })
         .collect()
 }
 
@@ -236,6 +240,12 @@ struct WP {
     /// Matches the player is banned from (red card): 1 for a second yellow,
     /// 2 for a straight red. Served on the team's next fixtures.
     ban_games: u8,
+    /// Weeks the player is sidelined with a match injury. While > 0 the
+    /// player cannot be selected (see `available`), and each weekly recovery
+    /// tick decrements it. Set from the engine's `injury_days`, shortened by
+    /// stamina (durable bodies heal faster) — so even a talisman can miss a
+    /// month, and his deputy gets a real run in the side.
+    injury_weeks: u8,
     // detailed per-season stat lines (aggregated across all competitions),
     // fed by the possession engine so a spectator sees real match output.
     shots: u16,
@@ -1296,8 +1306,9 @@ fn matchday_squad(
     rng: &mut impl Rng,
 ) -> Vec<(usize, Role)> {
     let xi = select_xi(idxs, pool, shape);
-    // The talisman (best attacking output) is never rested — he plays every
-    // game, so a genuine star sustains a big season tally year after year.
+    // The talisman (best attacking output) is nearly ever-present: he carries
+    // the heaviest minutes load on the team, but even he takes the odd league
+    // breather (priced in below) — 36-37 of 38, not a literal ever-present.
     let talisman = xi
         .iter()
         .copied()
@@ -1335,31 +1346,43 @@ fn matchday_squad(
         _ => 0.35,
     };
     for &(s, _role, line) in &xi {
-        if Some(s) != talisman {
+        // Rest policy: squad players follow the manager's rotation trait, but
+        // even the talisman gets the occasional league breather — no real star
+        // plays 38 from 38, a break hands a squad player minutes, and it takes
+        // the goal-weight king out of the injury-fatigue spiral for a week.
+        let is_talisman = Some(s) == talisman;
+        // Stamina shapes the rest urge: a low-stamina engine overheats faster
+        // (up to +35% rest chance), an iron man (-15%) talks his way back in.
+        let stam_factor = 1.35 - (pool[s].attrs.stamina as f32 / 100.0) * 0.50;
+        let p_rest = if pool[s].fatigue > 60 {
             // Exhausted players are rested almost regardless of rotation trait.
-            let p_rest = if pool[s].fatigue > 60 {
-                ((rot + 0.45) * comp_factor).min(0.95)
-            } else {
-                rot * comp_factor
-            };
-            if rng.gen::<f32>() < p_rest {
-                // Best same-line alternative by selection score.
-                let mut cands: Vec<usize> = bench
-                    .iter()
-                    .copied()
-                    .filter(|&b| line_of(pool[b].pos) == line && !squad_has(&squad, b))
-                    .collect();
-                cands.sort_by(|&a, &b| {
-                    score(b)
-                        .partial_cmp(&score(a))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                if let Some(&alt) = cands.first() {
-                    let (arole, _) = best_role_for(&pool[alt].attrs, pool[alt].pos, line);
-                    squad.push((alt, arole));
-                    bench.retain(|&b| b != alt);
-                    continue;
-                }
+            (((rot + 0.45) * comp_factor) * stam_factor).min(0.95)
+        } else if is_talisman {
+            // A light but real rest chance in low-stakes league games only:
+            // (0.03 + 0.05·rotation)·stamina per game ≈ 1-3 missed league
+            // matches a season for an untired star, more for a heavy rotator
+            // or a low-stamina one.
+            ((0.03 + 0.05 * rot) * comp_factor) * stam_factor
+        } else {
+            (rot * comp_factor) * stam_factor
+        };
+        if rng.gen::<f32>() < p_rest {
+            // Best same-line alternative by selection score.
+            let mut cands: Vec<usize> = bench
+                .iter()
+                .copied()
+                .filter(|&b| line_of(pool[b].pos) == line && !squad_has(&squad, b))
+                .collect();
+            cands.sort_by(|&a, &b| {
+                score(b)
+                    .partial_cmp(&score(a))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if let Some(&alt) = cands.first() {
+                let (arole, _) = best_role_for(&pool[alt].attrs, pool[alt].pos, line);
+                squad.push((alt, arole));
+                bench.retain(|&b| b != alt);
+                continue;
             }
         }
         // Starter keeps the role from the tactical XI.
@@ -1500,6 +1523,14 @@ fn apply_match(o: &matchsim::MatchOutcome, comp: Comp, pool: &mut [WP], p: &Para
         let mut fat = (base_fatigue as f32 * stamina_factor).round() as u8;
         if s.injury_days > 0 {
             fat = fat.saturating_add(30);
+            // A real layoff, not just fatigue: the engine's injury severity
+            // (days) becomes weeks on the sideline, shortened by stamina —
+            // iron men (90+) shake off in ~2/3 the time, slight bodies (<55)
+            // heal no faster than the calendar. 7-80 days → 1-8 weeks.
+            let weeks = (s.injury_days as f32 / 7.0).ceil().max(1.0);
+            let heal_factor = 1.15 - (pool[i].attrs.stamina as f32 / 200.0);
+            let laid_off = (weeks * heal_factor).ceil().max(1.0) as u8;
+            pool[i].injury_weeks = pool[i].injury_weeks.saturating_add(laid_off).min(10);
         }
         pool[i].fatigue = pool[i].fatigue.saturating_add(fat).min(100);
     }
@@ -1675,6 +1706,12 @@ fn weekly_recovery(
                 * (0.85 + minds[i].professionalism * 0.30))
                 .round() as u8;
             pool[i].fatigue = pool[i].fatigue.saturating_sub(recover);
+            // The injury clock ticks down weekly; healing legs still rest, so
+            // fatigue also drains a little faster than normal while sidelined.
+            if pool[i].injury_weeks > 0 {
+                pool[i].injury_weeks -= 1;
+                pool[i].fatigue = pool[i].fatigue.saturating_sub(4);
+            }
             let target = minds[i].morale_target();
             if pool[i].morale < target {
                 pool[i].morale += 1;
@@ -2098,6 +2135,7 @@ fn inject_aditya_prodigy(
         el_apps: 0,
         intl_apps: 0,
         ban_games: 0,
+        injury_weeks: 0,
         shots: 0,
         sot: 0,
         key_passes: 0,
@@ -3659,6 +3697,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         el_apps: 0,
                         intl_apps: 0,
                         ban_games: 0,
+        injury_weeks: 0,
                         shots: 0,
                         sot: 0,
                         key_passes: 0,
@@ -3877,6 +3916,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                             el_apps: 0,
                             intl_apps: 0,
                             ban_games: 0,
+        injury_weeks: 0,
                             shots: 0,
                             sot: 0,
                             key_passes: 0,
@@ -4064,6 +4104,7 @@ fn build_world(db: &Database, params: Params, rng: &mut Pcg64Mcg) -> World {
                         el_apps: 0,
                         intl_apps: 0,
                         ban_games: 0,
+        injury_weeks: 0,
                         shots: 0,
                         sot: 0,
                         key_passes: 0,
@@ -6904,6 +6945,7 @@ fn spawn_regen(w: &mut World, team: usize, rep: u8, rng: &mut Pcg64Mcg) -> usize
         el_apps: 0,
         intl_apps: 0,
         ban_games: 0,
+        injury_weeks: 0,
         shots: 0,
         sot: 0,
         key_passes: 0,
@@ -14009,6 +14051,7 @@ pub mod web_api {
             "contract_years": p.locked,
             "on_loan": p.on_loan,
             "loaned_to": loaned_to,
+            "injury_weeks": p.injury_weeks,
             "intl_goals": p.intl_goals,
             "intl_assists": p.intl_assists,
             "intl_apps": p.intl_apps,
@@ -16257,10 +16300,21 @@ pub mod web_api {
         // league tables and the Champions League draw are auditable. Pin a
         // different world with FM_API_SEED; the dashboard's "New world" button
         // still generates a fresh random one.
+        // Pin a world for reproducibility with FM_API_SEED; otherwise every
+        // launch rolls a fresh random world, so restarts never replay the
+        // same season outcomes. The chosen seed is printed at startup so a
+        // world you like can be recreated by pinning it.
         let seed = std::env::var("FM_API_SEED")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(20_260_101);
+            .unwrap_or_else(|| {
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(20_260_101);
+                nanos ^ ((std::process::id() as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15
+            });
+        println!("FM Observatory world seed: {seed} (pin with FM_API_SEED={seed})");
         let port = std::env::var("PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
@@ -16343,6 +16397,7 @@ mod tests {
             el_apps: 0,
             intl_apps: 0,
         ban_games: 0,
+        injury_weeks: 0,
             shots: 0,
             sot: 0,
             key_passes: 0,
