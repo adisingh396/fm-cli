@@ -4,4 +4,4 @@
 // of the backend (a Cloudflare tunnel, a box, any host running
 // `fm serve`), or set it per-browser with the dashboard's "API endpoint"
 // field or `?api=https://your-api.example`. Leave empty for same-origin.
-window.FM_API_BASE = 'https://were-cdt-cattle-magic.trycloudflare.com';
+window.FM_API_BASE = 'https://accuracy-data-probability-asus.trycloudflare.com';
