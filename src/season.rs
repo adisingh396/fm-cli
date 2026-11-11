@@ -12644,6 +12644,10 @@ pub mod web_api {
         /// world has no European clubs.
         ucl: Option<UclCup>,
         matches: Vec<WebMatchRecord>,
+        /// Rolling log of AI-vs-AI transfer-window lines, newest season's
+        /// window last: (season year the window precedes, headline line).
+        /// Capped so long sessions cannot grow it unbounded.
+        transfer_log: Vec<(u16, String)>,
         seed: u64,
         began: String,
     }
@@ -12945,6 +12949,7 @@ pub mod web_api {
                 schedules,
                 ucl,
                 matches: Vec::new(),
+                transfer_log: Vec::new(),
                 seed,
                 began: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -13219,7 +13224,16 @@ pub mod web_api {
             }
             self.archives.push(archive);
             age_and_regen(&mut self.world, &mut self.rng);
-            let _ = transfer_window(&mut self.world, &mut self.rng);
+            let (window_lines, _, _, _) = transfer_window(&mut self.world, &mut self.rng);
+            let window_year = self.year + 1;
+            for line in window_lines {
+                self.transfer_log.push((window_year, line));
+            }
+            // Keep the most recent 300 headlines (several seasons of windows).
+            let overflow = self.transfer_log.len().saturating_sub(300);
+            if overflow > 0 {
+                self.transfer_log.drain(0..overflow);
+            }
             reset_season(&mut self.world);
             self.week = 0;
             self.league_round = 0;
@@ -13929,6 +13943,14 @@ pub mod web_api {
     fn player_json(w: &World, i: usize) -> Value {
         let p = &w.pool[i];
         let is_database_player = p.db_id.is_some();
+        // Active loan destination (if any): the player's owning club stays
+        // `p.team`'s parent, but SeasonLoan records where he actually plays.
+        let loaned_to = w
+            .loans
+            .iter()
+            .find(|l| l.player == i)
+            .and_then(|l| w.teams.get(l.away))
+            .map(|t| t.name.as_str());
         let club = w
             .teams
             .get(p.team)
@@ -13985,6 +14007,8 @@ pub mod web_api {
             "market_value": p.value * 1_000_000,
             "wage_weekly": p.wage * 1_000,
             "contract_years": p.locked,
+            "on_loan": p.on_loan,
+            "loaned_to": loaned_to,
             "intl_goals": p.intl_goals,
             "intl_assists": p.intl_assists,
             "intl_apps": p.intl_apps,
@@ -16069,6 +16093,15 @@ pub mod web_api {
             let payload = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
             let mut s = state.lock().unwrap();
             transfer_respond_json(&mut s, &payload)
+        } else if path == "/api/transfers/log" {
+            let s = state.lock().unwrap();
+            let log: Vec<Value> = s
+                .transfer_log
+                .iter()
+                .rev()
+                .map(|(year, line)| json!({"year": year, "text": line}))
+                .collect();
+            json!({"log": log, "count": log.len()})
         } else if path == "/api/nations" {
             let s = state.lock().unwrap();
             nations_json(&s)

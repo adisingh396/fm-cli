@@ -1,0 +1,49 @@
+== World Cup 2054 ==
+hosts: United States
+ 1. England                  str= 81.3 depth=17  edge=0.985
+ 2. France                   str= 79.3 depth=14  edge=0.970
+ 3. Italy                    str= 79.3 depth=20  edge=0.970
+ 4. Spain                    str= 78.5 depth=21  edge=0.990
+ 5. Germany                  str= 77.4 depth=30  edge=0.970
+ 6. India                    str= 76.5 depth=12  edge=0.950
+ 7. China PR                 str= 75.5 depth=12  edge=0.950
+ 8. Argentina                str= 75.0 depth=15  edge=0.950
+ 9. Australia                str= 74.7 depth=13  edge=0.950
+10. Korea Republic           str= 74.2 depth=17  edge=0.950
+11. Turkey                   str= 74.0 depth=20  edge=0.950
+12. Mexico                   str= 73.9 depth=21  edge=0.950
+13. Portugal                 str= 73.6 depth=25  edge=0.950
+14. United States            str= 73.4 depth=23  edge=0.950
+15. Saudi Arabia             str= 73.1 depth=20  edge=0.950
+16. Colombia                 str= 71.7 depth=15  edge=0.920
+17. South America            str= 71.0 depth=13  edge=0.920
+18. Paraguay                 str= 69.2 depth=10  edge=0.920
+19. Greece                   str= 68.7 depth=15  edge=0.920
+20. Holland                  str= 67.8 depth=11  edge=0.920
+21. Ecuador                  str= 67.3 depth=11  edge=0.920
+22. Uruguay                  str= 66.9 depth=11  edge=0.920
+23. Venezuela                str= 66.0 depth=8   edge=0.920
+24. Ghana                    str= 65.7 depth=9   edge=0.920
+KO France 1-1 Serbia -> France
+KO Spain 2-0 Denmark -> Spain
+KO Germany 4-0 Japan -> Germany
+KO China PR 1-0 New Zealand -> China PR
+KO Australia 3-0 Belgium -> Australia
+KO Korea Republic 1-2 Sweden -> Sweden
+KO Turkey 1-1 Côte d'Ivoire -> Turkey
+KO Portugal 1-1 Ghana -> Ghana
+KO Saudi Arabia 0-2 Venezuela -> Venezuela
+KO Colombia 2-3 Uruguay -> Uruguay
+KO Paraguay 3-0 Ecuador -> Paraguay
+KO Greece 3-3 Holland -> Greece
+KO France 1-1 Spain -> France
+KO Germany 3-2 China PR -> Germany
+KO Australia 2-0 Sweden -> Australia
+KO Turkey 2-2 Ghana -> Turkey
+KO Venezuela 4-3 Uruguay -> Venezuela
+KO Paraguay 1-0 Greece -> Paraguay
+KO France 0-0 Germany -> Germany
+KO Australia 1-1 Turkey -> Australia
+KO Venezuela 1-2 Paraguay -> Paraguay
+KO Germany 2-0 Australia -> Germany
+CHAMPION: Germany

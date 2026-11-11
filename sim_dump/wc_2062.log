@@ -1,0 +1,49 @@
+== World Cup 2062 ==
+hosts: Turkey, England, France
+ 1. Spain                    str= 81.5 depth=11  edge=0.985
+ 2. England                  str= 81.4 depth=15  edge=0.985
+ 3. France                   str= 80.5 depth=17  edge=0.970
+ 4. Italy                    str= 79.5 depth=25  edge=0.985
+ 5. Germany                  str= 79.1 depth=22  edge=0.985
+ 6. India                    str= 77.7 depth=13  edge=0.950
+ 7. United States            str= 77.3 depth=11  edge=0.950
+ 8. Argentina                str= 76.0 depth=14  edge=0.950
+ 9. China PR                 str= 75.5 depth=13  edge=0.950
+10. Mexico                   str= 75.5 depth=13  edge=0.950
+11. Turkey                   str= 74.5 depth=19  edge=0.950
+12. Korea Republic           str= 74.4 depth=16  edge=0.990
+13. Saudi Arabia             str= 74.4 depth=14  edge=0.950
+14. Australia                str= 74.1 depth=9   edge=0.920
+15. Portugal                 str= 72.3 depth=21  edge=0.950
+16. Colombia                 str= 72.2 depth=9   edge=0.920
+17. South America            str= 71.5 depth=27  edge=0.950
+18. Uruguay                  str= 71.4 depth=12  edge=0.920
+19. Brazil                   str= 69.5 depth=10  edge=0.920
+20. Greece                   str= 69.3 depth=12  edge=0.920
+21. Ecuador                  str= 69.1 depth=14  edge=0.920
+22. Holland                  str= 68.6 depth=9   edge=0.920
+23. Paraguay                 str= 68.6 depth=13  edge=0.920
+24. Côte d'Ivoire            str= 67.4 depth=9   edge=0.920
+KO Spain 1-0 Austria -> Spain
+KO England 2-0 Serbia -> England
+KO Germany 0-1 Canada -> Canada
+KO India 5-2 Sweden -> India
+KO Argentina 1-2 Japan -> Japan
+KO China PR 1-2 Senegal -> Senegal
+KO Mexico 0-0 Poland -> Poland
+KO Turkey 2-1 Denmark -> Turkey
+KO Korea Republic 3-1 Paraguay -> Korea Republic
+KO Saudi Arabia 2-1 Greece -> Saudi Arabia
+KO Australia 1-1 Uruguay -> Australia
+KO Colombia 0-1 South America -> South America
+KO Spain 2-4 England -> England
+KO Canada 1-1 India -> India
+KO Japan 0-0 Senegal -> Senegal
+KO Poland 0-1 Turkey -> Turkey
+KO Korea Republic 1-1 Saudi Arabia -> Saudi Arabia
+KO Australia 0-1 South America -> South America
+KO England 2-0 India -> England
+KO Senegal 0-0 Turkey -> Senegal
+KO Saudi Arabia 1-0 South America -> Saudi Arabia
+KO England 2-1 Senegal -> England
+CHAMPION: England

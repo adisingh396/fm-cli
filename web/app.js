@@ -30,6 +30,7 @@
     homeWeek: 0, homeMatches: [], homeFixtures: [],
     managerTeam: Number(localStorage.getItem('fm-manager-team') || 0), manager: null, managerClubs: [],
     clockDays: 0, lastNewsWeek: -1, news: [], newsIndex: 0,
+    transferLog: [], lastTransferHeadline: '',
     auto: { running: false, inFlight: false, timer: null, speed: 'week', dayOffset: 0, token: 0 } 
   };
 
@@ -133,6 +134,17 @@
       }
     } catch {}
     (state.leagues || []).slice(0, 3).forEach((l) => { if (l.leader && l.leader !== '—') addNews(`${l.name}: ${l.leader} lead the table.`); });
+    // World transfer wire: any AI-vs-AI window lines that arrived since the
+    // last tick become headlines (newest first; addNews dedupes by text).
+    try {
+      const data = await api('/api/transfers/log');
+      const entries = data.log || [];
+      if (entries.length && entries[0].text !== state.lastTransferHeadline) {
+        state.lastTransferHeadline = entries[0].text;
+        const fresh = entries.slice(0, 8);
+        for (const e of fresh) addNews(`Transfer window ${e.year}: ${e.text}`);
+      }
+    } catch {}
   }
   setInterval(() => { if (state.news.length) { state.newsIndex = (state.newsIndex + 1) % state.news.length; renderNewsRail(); } }, 4200);
 
@@ -646,7 +658,8 @@
     const availability = recentApps >= 6 ? 'Regular starter / used heavily' : recentApps >= 3 ? 'Rotation option' : 'Limited recent involvement';
     const ban = Number(live.ban_games || 0);
     const banLine = ban > 0 ? `<div class="row"><span>Suspension</span><strong style="color:var(--red)">Banned — misses the next ${ban} match${ban > 1 ? 'es' : ''}</strong></div>` : '';
-    const playerStatus = `<div class="card"><h3>Status & recent matches</h3><div class="row-list">${banLine}<div class="row"><span>Availability</span><strong>${availability}</strong></div><div class="row"><span>Last 8 match records</span><strong>${recentApps}</strong></div><div class="row"><span>Current week</span><strong>${state.overview?.world?.week ?? 0}</strong></div></div>${recent8.length ? recent8.map((m) => `<div class="row"><span>${esc(m.home)} ${m.home_goals}–${m.away_goals} ${esc(m.away)}</span><span class="small">${m.player_stats?.minutes ?? ''}' · ${m.player_stats?.goals ?? 0}G · ${m.player_stats?.assists ?? 0}A · ${number(m.player_stats?.rating ?? 0)}</span></div>`).join('') : '<div class="empty">No recent match records yet.</div>'}</div>`;
+    const loanLine = live.on_loan ? `<div class="row"><span>Loan status</span><strong style="color:var(--red)">Out on loan${live.loaned_to ? ` at ${esc(live.loaned_to)}` : ''} — returns after the season</strong></div>` : '';
+    const playerStatus = `<div class="card"><h3>Status & recent matches</h3><div class="row-list">${banLine}${loanLine}<div class="row"><span>Availability</span><strong>${availability}</strong></div><div class="row"><span>Last 8 match records</span><strong>${recentApps}</strong></div><div class="row"><span>Current week</span><strong>${state.overview?.world?.week ?? 0}</strong></div></div>${recent8.length ? recent8.map((m) => `<div class="row"><span>${esc(m.home)} ${m.home_goals}–${m.away_goals} ${esc(m.away)}</span><span class="small">${m.player_stats?.minutes ?? ''}' · ${m.player_stats?.goals ?? 0}G · ${m.player_stats?.assists ?? 0}A · ${number(m.player_stats?.rating ?? 0)}</span></div>`).join('') : '<div class="empty">No recent match records yet.</div>'}</div>`;
     const source = p.profile ? `<div class="card"><h3>Source database dossier</h3><div class="row-list">
       <div class="row"><span>Database ID</span><strong>${profile.database_id ?? p.database_id ?? '—'}</strong></div>
       <div class="row"><span>Source club / league</span><strong style="text-align:right">${esc(profile.source_club || 'Unattached')}<br><span class="small">${esc(profile.source_league || 'No league listed')}</span></strong></div>
@@ -658,7 +671,7 @@
       <div class="row"><span>Height / traits</span><strong style="text-align:right">${profile.height_cm ? `${profile.height_cm} cm` : 'Unknown'}<br><span class="small">${esc(Array.isArray(profile.traits) ? profile.traits.join(', ') : 'None listed')}</span></strong></div>
     </div></div>` : '<div class="card"><h3>Source database dossier</h3><p>No original CSV dossier — this profile was generated inside the simulation world.</p></div>';
     $('app').innerHTML = `<div class="page-head"><div><button class="back-btn" data-history-back>‹ Back</button><div class="pill" style="margin-top:10px">${esc(live.nation)} · ${esc(live.club)} · ${p.in_active_world === false ? 'Source-only' : 'Live world'}</div></div><button id="follow-player" class="secondary">Follow</button></div>
-    <div class="card player-hero"><div class="player-head"><div class="avatar">${esc(initials(live.name))}</div><div><h2>${esc(live.name)}</h2><div class="small">${esc(live.club)} · ${esc(live.league || '')}</div><div style="margin-top:8px"><span class="badge green">OVR ${live.ovr}</span> <span class="badge">POT ${live.pot}</span> <span class="badge">${esc(live.position)}</span></div></div></div>
+    <div class="card player-hero"><div class="player-head"><div class="avatar">${esc(initials(live.name))}</div><div><h2>${esc(live.name)}</h2><div class="small">${esc(live.club)} · ${esc(live.league || '')}</div><div style="margin-top:8px"><span class="badge green">OVR ${live.ovr}</span> <span class="badge">POT ${live.pot}</span> <span class="badge">${esc(live.position)}</span>${live.on_loan ? ` <span class="badge" style="background:var(--red);color:#fff">ON LOAN${live.loaned_to ? ` · ${esc(live.loaned_to)}` : ''}</span>` : ''}</div></div></div>
       <div class="hero-stats">
         <div class="stat"><span class="kpi-label">Age</span><strong>${live.age}</strong><span class="small">${esc(live.position)} · ${esc(live.nation)}</span></div>
         <div class="stat"><span class="kpi-label">Season · all competitions</span><strong>${allApps} apps · ${allGoals} G</strong><span class="small">${allAssists} assists · rating ${number(live.rating)}</span></div>
@@ -690,6 +703,29 @@
       ${source}
     </div>`;
     $('follow-player')?.addEventListener('click', () => toast('Player added to your followed list.'));
+  }
+
+  async function renderTransfers() {
+    state.page = 'transfers';
+    $('app').innerHTML = SPINNER;
+    let entries = [];
+    try {
+      const data = await api('/api/transfers/log');
+      entries = data.log || [];
+      state.transferLog = entries;
+      state.lastTransferHeadline = entries[0]?.text || state.lastTransferHeadline;
+    } catch {}
+    const w = state.overview?.world || {};
+    const byYear = new Map();
+    for (const e of entries) {
+      if (!byYear.has(e.year)) byYear.set(e.year, []);
+      byYear.get(e.year).push(e.text);
+    }
+    const years = [...byYear.keys()].sort((a, b) => b - a);
+    const body = years.length
+      ? years.map((y) => `<div class="card" style="margin-top:14px"><h3>Summer ${y} window</h3><div class="row-list">${byYear.get(y).slice().reverse().map((t) => `<div class="row"><span style="max-width:80%">${esc(t)}</span></div>`).join('')}</div></div>`).join('')
+      : `<div class="card" style="margin-top:14px"><h3>Transfer wire</h3><div class="empty">No AI transfer windows recorded yet — complete a season and the summer window's deals will appear here.</div></div>`;
+    $('app').innerHTML = `<div class="page-head"><div><h1 style="margin:0">Transfer centre</h1><p class="small" style="margin:4px 0 0">Every AI-vs-AI deal from the world's transfer windows: star moves, breakout clauses, wonderkid climbs and loans.</p></div><span class="pill">Week ${w.week ?? 0} · ${entries.length} deals logged</span></div>${body}`;
   }
 
   function renderCalendar() {
@@ -865,7 +901,7 @@
     const [a, b, c] = parts;
     switch (a) {
       case 'matches': case 'fixtures': case 'calendar': case 'leagues':
-      case 'players': case 'manager': case 'search':
+      case 'players': case 'manager': case 'search': case 'transfers':
         return { page: a };
       case 'league': return { page: 'league', id: Number(b) || 0 };
       case 'ucl': return { page: 'cup', year: b ? Number(b) : undefined };
@@ -900,6 +936,7 @@
       case 'team': renderTeam(r.id); break;
       case 'search': renderSearchResults(); break;
       case 'players': renderPlayers(); break;
+      case 'transfers': renderTransfers(); break;
       case 'player': renderPlayer(r.handle); break;
       case 'ballon': renderBallon(r.year); break;
       case 'calendar': renderCalendar(); break;

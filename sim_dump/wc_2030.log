@@ -1,0 +1,289 @@
+== World Cup 2030 ==
+hosts: Spain
+ 1. France                   str= 83.3 depth=21  edge=1.000
+    XI: William Saliba(DF 84), Dayot Upamecano(DF 81), Ibrahima Konaté(DF 81), Mohamed Simakan(DF 80), Michael Olise(MF 84), Enzo Le Fée(MF 82), Warren Zaïre-Emery(MF 82), Kylian Mbappé(FW 88), Ousmane Dembélé(FW 86), Hugo Ekitiké(FW 83), Eli Junior Kroupi(FW 82)
+    SUBS: Jules Koundé(DF 80), Pierre Kalulu(DF 79), Castello Lukeba(DF 79), Mattéo Guendouzi(MF 82), Aurélien Tchouaméni(MF 81), Boubacar Kamara(MF 80), Eduardo Camavinga(MF 80), Khéphren Thuram(MF 80)
+ 2. England                  str= 82.9 depth=24  edge=0.985
+    XI: Reece James(DF 82), Nico O'Reilly(DF 82), Marc Guéhi(DF 81), Ezri Konsa(DF 79), Jude Bellingham(MF 87), Declan Rice(MF 85), Elliot Anderson(MF 84), Bukayo Saka(FW 82), Anthony Gordon(FW 80), Morgan Rogers(MF 82), Kobbie Mainoo(MF 82)
+    SUBS: Cole Palmer(MF 82), Adam Wharton(MF 82), Alex Scott(MF 82), Morgan Gibbs-White(MF 82), James Garner(MF 81), Phil Foden(MF 80), Tyler Morton(MF 80), Eberechi Eze(MF 79)
+ 3. Spain                    str= 82.0 depth=16  edge=0.985
+    XI: Pau Cubarsí(DF 86), Eric García(DF 83), Dean Huijsen(DF 81), Mario Gila(DF 79), Aleix García(MF 83), Pablo Barrios(MF 81), Marc Bernal(MF 80), Lamine Yamal(FW 84), Ferran Torres(FW 84), Nico Williams(FW 81), Álex Baena(MF 80)
+    SUBS: Álvaro Carreras(DF 78), Marcos Llorente(DF 78), Jon Martín(DF 78), Gerard Martín(DF 77), Nico González(MF 79), Ruiz de Galarreta(MF 79), Aleix Febas(MF 79), Gabri Veiga(MF 78)
+ 4. Germany                  str= 81.1 depth=15  edge=0.985
+    XI: Nico Schlotterbeck(DF 84), Malick Thiaw(DF 79), Waldemar Anton(DF 77), Yann Aurel Bisseck(DF 77), Angelo Stiller(MF 84), Florian Wirtz(MF 83), Felix Nmecha(MF 82), Jonathan Burkardt(FW 80), Nick Woltemade(FW 78), Deniz Undav(FW 78), Aleksandar Pavlović(MF 82)
+    SUBS: David Raum(DF 76), Finn Jeltsch(DF 76), Jamal Musiala(MF 81), Tom Bischof(MF 80), Maximilian Beier(MF 79), Anton Stach(MF 78), Rocco Reitz(MF 78), Lennart Karl(MF 77)
+ 5. Argentina                str= 80.5 depth=14  edge=0.985
+    XI: Facundo Medina(DF 77), Lisandro Martínez(DF 77), Leonardo Balerdi(DF 76), Julián Alvarez(FW 85), Enzo Fernández(MF 84), Valentín Barco(MF 82), Alexis Mac Allister(MF 82), Lautaro Martínez(FW 83), Joaquín Panichelli(FW 76), Santiago Castro(FW 76), Rodrigo De Paul(MF 80)
+    SUBS: Franco Mastantuono(MF 79), Exequiel Palacios(MF 79), Alan Varela(MF 78), Nico Paz(MF 77), Alan Lescano(MF 77), Giovani Lo Celso(MF 76), Matías Soulé(MF 76), Máximo Perrone(MF 76)
+ 6. Portugal                 str= 80.5 depth=16  edge=0.985
+    XI: Nuno Mendes(DF 83), Rúben Dias(DF 79), Gonçalo Inácio(DF 79), Tomás Araújo(DF 77), João Neves(MF 87), Rúben Neves(MF 84), Mateus Fernandes(MF 82), Rafael Leão(FW 81), Gonçalo Ramos(FW 78), Fábio Silva(FW 77), Pedro Gonçalves(MF 79)
+    SUBS: António Silva(DF 77), Renato Veiga(DF 77), Eduardo Quaresma(DF 77), Matheus Nunes(DF 76), Alberto Costa(DF 76), Diogo Dalot(DF 75), Francisco Conceição(MF 77), João Félix(MF 77)
+ 7. Brazil                   str= 80.4 depth=16  edge=0.985
+    XI: Matheus Silva(GK 76), Éder Militão(DF 80), Breno Moraes(DF 77), Vitor Reis(DF 76), Carlos Augusto(DF 76), Bruno Guimarães(MF 84), Gabriel Sara(MF 80), Andrey Santos(MF 80), Vini Jr.(FW 84), João Pedro(FW 81), Gabriel Martinelli(FW 80)
+    SUBS: Jair Cunha(DF 75), Breno Carvalho(MF 79), Douglas Luiz(MF 78), Marcos Teixeira(MF 78), Matheus Cunha(MF 76), João Gomes(MF 76), Igor Thiago(FW 79), Matheus Lacerda(FW 79)
+ 8. Italy                    str= 80.2 depth=19  edge=0.985
+    XI: Alessandro Bastoni(DF 82), Alessandro Buongiorno(DF 79), Riccardo Calafiori(DF 79), Michael Kayode(DF 78), Nicolò Barella(MF 85), Sandro Tonali(MF 82), Manuel Locatelli(MF 81), Moise Kean(FW 80), Giacomo Raspadori(FW 79), Mattia Zaccagni(FW 78), Davide Frattesi(MF 79)
+    SUBS: Marco Palestra(DF 78), Destiny Udogie(DF 77), Gianluca Mancini(DF 77), Giorgio Scalvini(DF 77), Raoul Bellanova(DF 76), Honest Ahanor(DF 76), Lorenzo Amatucci(MF 78), Nicolò Rovella(MF 77)
+ 9. Holland                  str= 79.8 depth=26  edge=0.975
+    XI: Micky van de Ven(DF 81), Jurriën Timber(DF 81), Matthijs de Ligt(DF 79), Denzel Dumfries(DF 79), Ryan Gravenberch(MF 83), Sean Steur(MF 79), Xavi Simons(MF 79), Donyell Malen(FW 82), Emanuel Emegha(FW 76), Brian Brobbey(FW 76), Jorrel Hato(DF 79)
+    SUBS: Jan Paul van Hecke(DF 77), Sven Botman(DF 76), Sepp van den Berg(DF 76), Danilho Doekhi(DF 76), Jordan Teze(DF 76), Lutsharel Geertruida(DF 76), Teun Koopmeiners(MF 78), Joey Veerman(MF 78)
+10. Japan                    str= 78.5 depth=15  edge=0.970
+    XI: Hayato Kobayashi(GK 78), Hiroki Ito(DF 78), Takehiro Tomiyasu(DF 74), Ko Itakura(DF 73), Ayumu Seko(DF 73), Kodai Sano(MF 81), Kaishū Sano(MF 81), Daizen Maeda(MF 79), Shuto Machino(FW 75), Itsuki Yamada(FW 74), Kyogo Furuhashi(FW 73)
+    SUBS: Daichi Kamada(MF 78), Ao Tanaka(MF 78), Hidemasa Morita(MF 78), Ritsu Doan(MF 78), Takefusa Kubo(MF 77), Yuito Suzuki(MF 77), Kaoru Mitoma(MF 76), Shuto Takahashi(MF 74)
+11. Belgium                  str= 78.4 depth=18  edge=0.970
+    XI: Senne Lammens(GK 73), Nathan Ngoy(DF 76), Arthur Theate(DF 76), Zeno Debast(DF 76), Maxim De Cuyper(DF 75), Youri Tielemans(MF 81), Arthur Vermeeren(MF 78), Charles De Ketelaere(MF 77), Loïs Openda(FW 81), Jérémy Doku(FW 81), Matias Fernandez-Pardo(FW 81)
+    SUBS: Koni De Winter(DF 73), Roméo Lavia(MF 77), Diego Moreira(MF 77), Amadou Onana(MF 76), Senne Lynen(MF 75), Albert Sambi Lokonga(MF 75), Nathan De Cat(MF 74), Mika Godts(FW 77)
+12. Côte d'Ivoire            str= 77.9 depth=15  edge=0.943
+    XI: Andres Boateng(GK 77), Evan Ndicka(DF 80), Ousmane Diomande(DF 79), Wilfried Singo(DF 78), Odilon Kossounou(DF 77), Christ Ravynel Inao Oulaï(MF 77), Malick Yalcouyé(MF 74), Patrick Zabi(MF 73), Yan Diomande(FW 82), Bazoumana Touré(FW 79), Elye Wahi(FW 76)
+    SUBS: Kwame Haddad(GK 73), Musa Vermeulen(GK 72), Emmanuel Agbadou(DF 76), Guéla Doué(DF 75), Clément Akpa(DF 72), Junior Diaz(DF 72), Jérémie Boga(MF 72), Simon Adingra(MF 71)
+13. Uruguay                  str= 77.6 depth=24  edge=0.958
+    XI: Joel Rodriguez(GK 77), Ronald Araujo(DF 77), Santiago Mouriño(DF 76), Alejandro Gomez(DF 74), Federico Pereira(DF 74), Federico Valverde(MF 84), Maximiliano Araújo(MF 79), Rodrigo Zalazar(MF 79), Darwin Núñez(FW 76), Thiago Rodriguez(FW 75), Martín Satriano(FW 75)
+    SUBS: Pablo Perez(GK 76), Thiago Herrera(GK 76), Enzo Iglesias(GK 76), Pablo Santiago Ruiz(GK 75), Sebastián Boselli(DF 73), Lucas Torreira(MF 78), Dario Gonzalez(MF 76), Tiago Palacios(MF 74)
+14. Senegal                  str= 77.5 depth=14  edge=0.950
+    XI: Nobel Mendy(DF 75), Moustapha Mbow(DF 73), Arouna Sangante(DF 72), Abdoulaye Ndiaye(DF 72), Lamine Camara(MF 81), Pape Gueye(MF 79), Pape Matar Sarr(MF 78), Ismaïla Sarr(FW 80), Ibrahim Mbaye(FW 79), Nicolas Jackson(FW 77), Habib Diarra(MF 77)
+    SUBS: Adama Boiro(DF 71), Antoine Mendy(DF 71), Abdoulaye Faye(DF 70), Iliman Ndiaye(MF 76), Rassoul Ndiaye(MF 74), Dion Lopy(MF 73), Sadio Mané(MF 71), Pape Demba Diop(MF 70)
+15. Sweden                   str= 77.4 depth=10  edge=0.923
+    XI: Daniel Svensson(DF 75), Isak Hien(DF 74), Emil Holm(DF 73), Elliot Stroud(DF 72), Lucas Bergvall(MF 80), Dejan Kulusevski(MF 79), Yasin Ayari(MF 79), Alexander Isak(FW 82), Viktor Gyökeres(FW 80), Anthony Elanga(FW 77), Hugo Larsson(MF 77)
+    SUBS: Gabriel Gudmundsson(DF 72), Carl Starfelt(DF 71), Samuel Dahl(DF 71), Pavle Vagić(DF 69), Sebastian Nanasi(MF 73), Jens-Lys Cajuste(MF 72), Love Arrhov(MF 68), Williot Swedberg(FW 75)
+16. Denmark                  str= 76.8 depth=21  edge=0.970
+    XI: Alexander Bah(DF 75), Lucas Høgsberg(DF 74), Thomas Kristensen(DF 72), Victor Froholdt(MF 84), Morten Hjulmand(MF 81), Mikkel Damsgaard(MF 80), Matt O'Riley(MF 76), Rasmus Højlund(FW 76), Conrad Harder(FW 76), Gustav Isaksen(FW 74), Patrick Dorgu(MF 75)
+    SUBS: Morten Frendrup(MF 74), Nikolas Nartey(MF 74), Oscar Højlund(MF 74), Pierre-Emile Højbjerg(MF 74), Victor Torp(MF 73), Mads Bidstrup(MF 73), Oliver Sørensen(MF 72), Albert Grønbæk(MF 72)
+17. Croatia                  str= 76.6 depth=13  edge=0.950
+    XI: Joško Gvardiol(DF 82), Luka Vušković(DF 80), Josip Stanišić(DF 78), Josip Šutalo(DF 76), Petar Sučić(MF 79), Martin Baturina(MF 76), Nikola Vlašić(MF 76), Igor Matanović(FW 73), Franjo Ivanović(FW 73), Matija Frigan(FW 71), Luka Sučić(MF 75)
+    SUBS: Ivan Smolčić(DF 73), Dominik Prpić(DF 72), Bartol Franjić(DF 70), Duje Ćaleta-Car(DF 69), Branimir Mlačić(DF 68), Marin Šverko(DF 67), Mario Pašalić(MF 75), Mateo Kovačić(MF 72)
+18. Morocco                  str= 76.6 depth=21  edge=0.970
+    XI: Omar Haddadi(GK 74), Achraf Hakimi(DF 80), Nayef Aguerd(DF 76), Abdelhamid Aït Boudlal(DF 75), Noussair Mazraoui(DF 74), Ayyoub Bouaddi(MF 82), Ismael Saibari(MF 79), Bilal El Khannouss(MF 76), Hamza Igamane(FW 75), Ilias Akhomach(FW 74), Youssef En-Nesyri(FW 73)
+    SUBS: Omar Kaddour(GK 73), Chadi Riad(DF 72), Omar El Hilali(DF 72), Chemsdine Talbi(MF 75), Neil El Aynaoui(MF 75), Samir El Mourabet(MF 75), Yassin Belkhdim(MF 75), Osame Sahraoui(MF 73)
+19. Ecuador                  str= 76.5 depth=9   edge=0.939
+    XI: Pau Joel Vega(GK 76), Willian Pacho(DF 84), Piero Hincapié(DF 82), Pervis Estupiñán(DF 71), Moisés Caicedo(MF 83), Pedro Vite(MF 77), Kendry Páez(MF 73), Patrik Mercado(MF 72), Diego Gomez-Gonzalez(FW 75), John Yeboah(FW 74), Sergi Perez(FW 70)
+    SUBS: Pau Lopez(GK 75), Lucas Pol Diaz(GK 71), Pau Alvarez(GK 71), Diego Torres-Perez(GK 69), Jhoanner Chávez(DF 68), Gustavo Vallecilla(DF 68), Óscar Zambrano(MF 71), Justin Lerma(MF 69)
+20. Turkey                   str= 76.5 depth=13  edge=0.939
+    XI: Merih Demiral(DF 76), Ozan Kabak(DF 75), Evren Eren Elmalı(DF 73), Zeki Çelik(DF 73), Orkun Kökçü(MF 83), Arda Güler(MF 81), Kenan Yıldız(MF 80), Semih Kılıçsoy(FW 73), Deniz Gül(FW 71), Enes Ünal(FW 69), Barış Alper Yılmaz(MF 78)
+    SUBS: Ferdi Kadıoğlu(DF 72), Mert Müldür(DF 72), Emirhan Topçu(DF 72), Mertcan Ayhan(DF 71), Yasin Özcan(DF 71), Levent Mercan(DF 70), Yunus Akgün(MF 76), Kerem Aktürkoğlu(MF 73)
+21. United States            str= 76.5 depth=19  edge=0.970
+    XI: Chris Richards(DF 76), Sergiño Dest(DF 75), Noahkai Banks(DF 73), Antonee Robinson(DF 73), Weston McKennie(MF 78), Malik Tillman(MF 77), Johnny Cardoso(MF 77), Folarin Balogun(FW 78), Ricardo Pepi(FW 76), Alejandro Zendejas(FW 76), Gianluca Busio(MF 77)
+    SUBS: Alex Freeman(DF 73), Mark McKenzie(DF 73), Joe Scally(DF 72), Tyler Adams(MF 76), Christian Pulisic(MF 75), Timothy Weah(MF 74), Tanner Tessmann(MF 73), Jack McGlynn(MF 73)
+22. Algeria                  str= 76.3 depth=13  edge=0.923
+    XI: Hamza Mohamed Rahimi(GK 76), Rayan Aït-Nouri(DF 77), Ramy Bensebaini(DF 76), Ibrahim Maza(MF 80), Farès Chaïbi(MF 78), Hicham Boudaoui(MF 76), Himad Abdelli(MF 74), Yacine Titraoui(MF 74), Amine Gouiri(FW 78), Rayan Ghezali(FW 73), Farès Ghedjemis(FW 70)
+    SUBS: Adam Bouzid-Haddadi(GK 76), Rayan Larbi(GK 72), Houssem Aouar(MF 74), Ilan Kebbal(MF 73), Badredine Bouanani(MF 71), Adil Aouchiche(MF 70), Mohamed Belloumi(MF 69), Kaïl Boudache(MF 69)
+23. Austria                  str= 76.1 depth=16  edge=0.939
+    XI: Samson Baidoo(DF 77), Konrad Laimer(DF 76), Leopold Querfeld(DF 75), Kevin Danso(DF 75), Nicolas Seiwald(MF 79), Romano Schmid(MF 78), Christoph Baumgartner(MF 77), Junior Adamu(FW 71), Elias Havel(FW 70), Carney Chukwuemeka(MF 76), Patrick Wimmer(MF 75)
+    SUBS: David Affengruber(DF 74), Alexander Prass(DF 74), Stefan Posch(DF 74), Marco Friedl(DF 74), Michael Svoboda(DF 69), Felix Bacher(DF 69), Jannik Schuster(DF 68), Ifeanyi Ndukwe(DF 68)
+24. Nigeria                  str= 76.1 depth=16  edge=0.923
+    XI: Ousseynou Sylla(GK 75), Calvin Bassey(DF 76), Jordan Torunarigha(DF 75), Ola Aina(DF 74), Ademola Lookman(FW 81), Alex Iwobi(MF 77), Raphael Onyedika(MF 76), Habib Mensah-Sylla(MF 74), Victor Osimhen(FW 81), George Ilenikhena(FW 74), Chidera Ejuke(FW 74)
+    SUBS: Youssouf Cisse-Traore(GK 70), Alhassan Yusuf(MF 74), Nathan Tella(MF 72), Wilfred Ndidi(MF 71), Fisayo Dele-Bashiru(MF 69), Christantus Uche(FW 73), Akor Jerome Adams(FW 73), Victor Boniface(FW 73)
+25. Norway                   str= 76.1 depth=11  edge=0.923
+    XI: Julian Ryerson(DF 75), Kristoffer Ajer(DF 74), Torbjørn Heggem(DF 73), Sebastian Sebulonsen(DF 72), Martin Ødegaard(MF 82), Kristian Thorstvedt(MF 75), Sander Berge(MF 73), Erling Haaland(FW 85), Antonio Nusa(FW 78), Alexander Sørloth(FW 75), Andreas Schjelderup(FW 75)
+    SUBS: Andreas Hanche-Olsen(DF 71), Leo Østigård(DF 69), Eivind Helland(DF 68), Marcus Pedersen(DF 66), Fredrik Oppegård(DF 66), Aron Dønnum(MF 72), Oscar Bobb(MF 70), Edvard Tagseth(MF 70)
+26. Serbia                   str= 76.1 depth=14  edge=0.939
+    XI: Dusan Nikolic(GK 79), Strahinja Pavlović(DF 76), Veljko Milosavljević(DF 73), Marko Stankovic(DF 72), Toni Zivkovic(FW 81), Sergej Milinković-Savić(MF 78), Aleksandar Stanković(MF 75), Lazar Samardžić(MF 73), Dušan Vlahović(FW 77), Toni Vukovic(FW 74), Andrija Maksimović(FW 73)
+    SUBS: Dominik Djukic(GK 78), Andrej Stefan Petrov(GK 71), Đorđe Petrović(GK 70), Zoran Savic(GK 69), Ivan Ilić(MF 72), Josip Savic(MF 72), Zoran Babic(MF 71), Zoran Horvat(MF 70)
+27. Colombia                 str= 75.7 depth=15  edge=0.939
+    XI: Davinson Sánchez(DF 76), Jhon Lucumí(DF 75), Juan David Cabal(DF 72), Willer Ditta(DF 70), Richard Ríos(MF 79), Luis Díaz(MF 78), Gustavo Puerta(MF 73), Cucho Hernández(FW 79), Jhon Durán(FW 77), Sebastián Villa(FW 75), Rafael Santos Borré(FW 74)
+    SUBS: Jefferson Díaz(DF 68), Enzo Herrera-Moreno(DF 68), Nelson Deossa(MF 73), Eduard Atuesta(MF 73), Jaminton Campaz(MF 70), Jesús David Rivas(MF 69), Nelson Palacio(MF 69), Léider Berrío(MF 68)
+28. Switzerland              str= 75.7 depth=15  edge=0.950
+    XI: Bruno Ogbus(DF 73), Aurèle Amenda(DF 72), Bryan Okoh(DF 71), Luca Jaquez(DF 70), Johan Manzambi(MF 79), Liam Vincent(MF 78), Filip Ugrinić(MF 76), Noah Okafor(FW 77), Rubén Vargas(FW 77), Félix Mambimbi(FW 70), Djibril Sow(MF 76)
+    SUBS: Silvan Widmer(DF 70), Leonidas Stergiou(DF 69), Miro Muheim(DF 68), Fabian Rieder(MF 76), Ardon Jashari(MF 75), Denis Zakaria(MF 74), Dan Ndoye(MF 72), Simon Sohm(MF 72)
+29. Greece                   str= 75.5 depth=11  edge=0.894
+    XI: Konstantinos Tzolakis(GK 68), Panagiotis Retsos(DF 74), Konstantinos Koulierakis(DF 73), Georgios Vagiannidis(DF 70), Noah Allen(DF 67), Christos Mouzakitis(MF 76), Konstantinos Karetsas(MF 74), Giannis Konstantelias(MF 74), Christos Tzolis(FW 80), Vangelis Pavlidis(FW 78), Charalampos Kostoulas(FW 77)
+    SUBS: Aleksandar Toni Babic(GK 64), Christos Mandas(GK 59), Marko Aleksandar Djukic(DF 60), Nectarios Triantis(MF 69), Ilias Koutsoupias(MF 68), Panos Katseris(MF 68), Mateo Savic-Kovacevic(MF 63), Stefan Jovanovic II(MF 56)
+30. Mexico                   str= 75.4 depth=21  edge=0.970
+    XI: Israel Reyes(DF 74), Diego Campillo(DF 72), Julián Araujo(DF 72), Everardo López(DF 71), Roberto Alvarado(MF 76), Marcel Ruiz(MF 76), Carlos Rodríguez(MF 76), Julián Quiñones(FW 79), Santiago Giménez(FW 76), Alexis Vega(FW 75), Germán Berterame(FW 75)
+    SUBS: Obed Vargas(MF 74), Erick Sánchez(MF 74), Gilberto Mora(MF 74), Elías Montiel(MF 73), Jeremy Márquez(MF 72), Alexis Gutiérrez(MF 72), Iker Fimbres(MF 72), Brian Gutiérrez(MF 72)
+31. Cameroon                 str= 74.5 depth=10  edge=0.894
+    XI: Bakary Toure(GK 57), Enzo Boyomo(DF 77), Carlos Baleba(MF 79), Mahamadou Nagida(DF 64), Christian Kofane(FW 78), Bryan Mbeumo(MF 77), André-Franck Zambo Anguissa(MF 77), Arthur Avom Ebong(MF 76), Karl Edouard Etta Eyong(FW 73), Faris Pemi Moumbagna(FW 71), Bil Nsongo(FW 69)
+    SUBS: Enzo Ebosse(DF 62), Stephane Keller(DF 59), Yvan Neyou(MF 72), Junior Dina Ebimbe(MF 71), Jean Onana(MF 68), J.C. Ngando(MF 68), Georges-Kévin Nkoudou(MF 68), Harouna Djibirin(MF 64)
+32. Iran                     str= 73.6 depth=15  edge=0.920
+    XI: Mehdi Miri(GK 78), Farzad Amir Mousavi(DF 66), Kaveh Ahmadi(MF 76), Hossein Zare-Heydari(GK 76), Kaveh Hosseini(GK 75), Ehsan Heydari(MF 72), Daryoush Bardia Karimi(MF 67), Hossein Sheikhsaei-Jafari(GK 75), Mehdi Azizi(FW 71), Amir Saman Kaabemeh(FW 70), Shahram Tabrizi-Parhami(FW 70)
+    SUBS: Arash Fallah(GK 73), Arash Miri(GK 72), Vahid Fallah(GK 71), Reza Sadegheyan(GK 71), Mohammad Ahmadi(GK 70), Ehsan Jafari-Azizi(GK 69), Hamed Nourian(GK 67), Kaveh Heydari-Mousavi(GK 67)
+33. Poland                   str= 73.5 depth=13  edge=0.909
+    XI: Marcin Bułka(GK 64), Jakub Kiwior(DF 79), Matty Cash(DF 73), Kacper Potulski(DF 72), Sebastian Walukiewicz(DF 72), Sebastian Szymański(MF 77), Nicola Zalewski(MF 76), Jakub Kamiński(MF 75), Mateusz Bogusz(FW 73), Michał Skóraś(FW 68), Dawid Kownacki(FW 68)
+    SUBS: Bright Ede(DF 70), Jan Ziółkowski(DF 68), Przemysław Frankowski(DF 68), Maik Nawrocki(DF 68), Dusan Dejan Ristic(DF 68), Oskar Wójcik(DF 67), Oskar Pietuszewski(MF 72), Maxi Oyedele(MF 70)
+34. Ghana                    str= 73.5 depth=13  edge=0.923
+    XI: Mamadou Alassane Doumbia(GK 72), Kojo Peprah Oppong(DF 73), Alidu Seidu(DF 72), Mohammed Salisu(DF 71), Maxwell Woledzi(DF 70), Mohammed Kudus(MF 77), Caleb Yirenkyi(MF 75), Christopher Bonsu Baah(MF 71), Antoine Semenyo(FW 81), Brandon Thomas-Asante(FW 73), Ransford-Yeboah Königsdörffer(FW 72)
+    SUBS: Habib Doumbia(GK 67), Derrick Köhn(DF 69), Nathaniel Adjei(DF 68), Marvin Senaya(DF 68), Gideon Mensah(DF 66), Abdul Fatawu(MF 71), Ibrahim Sulemana(MF 71), Salis Abdul Samed(MF 69)
+35. Uzbekistan               str= 73.5 depth=11  edge=0.872
+    XI: Olimjon Azimov(GK 77), Abdukodir Khusanov(DF 81), Ulugbek Olimov-Bekmamatov(DF 68), Sanjar Khodjaev(DF 67), Bekhruz Aziz Ergashev(MF 75), Otabek Azimbayev(MF 71), Jasur Yusupov(MF 70), Akbar Sardor Toshev(MF 68), Akmal Azimbayev(FW 72), Bobur Qosimov(FW 72), Otabek Mamajonov(FW 66)
+    SUBS: Kamol Mirzayev(GK 73), Doniyor Khodjaev(GK 73), Bobur Rahimov(GK 72), Ulugbek Ergashev(GK 72), Nodir Qosimov(GK 68), Nodir Yuldoshev(GK 66), Akbar Qodirov(GK 66), Akbar Otabek Yusupov(GK 64)
+36. Canada                   str= 73.2 depth=9   edge=0.894
+    XI: Alphonso Davies(DF 80), Moïse Bombito(DF 75), Derek Cornelius(DF 71), Freddie Nolan(DF 64), Ismaël Koné(MF 74), Stephen Eustáquio(MF 72), Tajon Buchanan(MF 71), Jonathan David(FW 79), Promise David(FW 74), Tani Oluwaseyi(FW 71), Marcelo Flores(FW 69)
+    SUBS: Luc De Fougerolles(DF 62), Sam Adekugbe(DF 62), Mathieu Choinière(MF 68), Liam Millar(MF 67), Jeevan Badwal(MF 67), Ralph Priso(MF 65), Theo Corbeanu(MF 64), Jayden Nelson(FW 69)
+37. Egypt                    str= 73.2 depth=9   edge=0.894
+    XI: Lotfi Kamel El Amrani(GK 78), Mohamed Abdelmonem(DF 70), Omar Marmoush(FW 82), Mehdi Zerhouni(DF 66), Romain Abdelhamid II(MF 75), Tarek Cherif(MF 69), Bilal Ghezali(MF 68), Jalal Larbi(MF 66), Mohamed Khelifi(FW 71), Walid Zerhouni(FW 69), Aissa Meziane(FW 69)
+    SUBS: Yacine Cherif(GK 75), Adam El Amrani III(GK 74), Tarek Khelifi(GK 73), Karim Meziane II(GK 69), Mehdi Hassan-Meziane(GK 68), Jalal Abdelhamid(GK 66), Youssef Othmani(GK 65), Rayan Taleb(MF 65)
+38. Mali                     str= 72.8 depth=13  edge=0.894
+    XI: Pape Sekou Sarr(GK 66), Ousmane Camara(DF 73), Mamadou Fofana(DF 67), Mamadou Sangaré(MF 80), Souleymane Sagnan(DF 65), Mahamadou Doumbia(MF 74), Amadou Haidara(MF 74), Kamory Doumbia(MF 73), Lassine Sinayoko(FW 73), Moussa Sylla(FW 72), Mamadou Diarra-Diallo(FW 71)
+    SUBS: Cheick Doucouré(MF 73), Lassana Coulibaly(MF 69), Fodé Doucouré(MF 69), Dorgeles Nene(MF 69), Aboubacar Konté(MF 69), Hamidou Makalou(MF 66), Aliou Dieng(MF 65), Diadié Samassékou(MF 65)
+39. Korea Republic           str= 72.7 depth=14  edge=0.909
+    XI: Kim Min Jae(DF 76), Lee Gi Hyuk(DF 72), Cho Wi Je(DF 71), Cho Hyun Taek(DF 68), Hwang In Beom(MF 75), Jens Castrop(MF 73), Kang Sang Yoon(MF 72), Lee Kang In(FW 78), Oh Hyeon Gyu(FW 72), Park Seung Soo(FW 69), Lee Dong Gyeong(MF 71)
+    SUBS: Byeon Jun Soo(DF 68), Cho Sung Gwon(DF 67), Shin Min Ha(DF 66), Hong Hyun Seok(MF 70), Kim Bong Soo(MF 70), Seo Jae Min(MF 69), Jeong Woo Yeong(MF 68), Song Min Kyu(MF 68)
+40. Ukraine                  str= 71.9 depth=7   edge=0.909
+    XI: Anatoliy Trubin(GK 67), Illia Zabarnyi(DF 78), Vitaliy Mykolenko(DF 73), Yukhym Konoplia(DF 70), Yevgen Cheberko(DF 66), Yehor Yarmoliuk(MF 78), Georgiy Sudakov(MF 76), Artem Bondarenko(MF 75), Artem Dovbyk(FW 75), Roman Yaremchuk(FW 67), Timur Tutierov(FW 66)
+    SUBS: Andriy Lunin(GK 66), Dusan Kovacevic-Kovac(GK 56), Mateo Stefan Horvat(GK 54), Andrej Vukovic-Petrov(GK 53), Stefan Aleksandar Horvat(DF 55), Petar Babic-Pavlovic(MF 63), Goran Toni Simic(MF 57), Nemanja Ivanov-Kovac(MF 49)
+41. United Arab Emirates     str= 71.4 depth=9   edge=0.872
+    XI: Youssef Taleb-Othmani(GK 78), Walid Mehdi Chaib(DF 69), Jalal Fares-Belkacem(DF 65), Yacine Taleb(GK 75), Adam Fouad Meziane(FW 74), Nabil Messaoud(MF 70), Rayan Taleb Jr.(MF 67), Kamel Meziane Jr.(MF 67), Mohamed Selim Saidi(FW 73), Adam Yacine Chaib(FW 70), Walid Hassan-Haddad(FW 65)
+    SUBS: Aissa El Amrani-Haddad(GK 72), Karim Walid Rahimi(GK 70), Omar El Amrani(GK 67), Karim Chaib-Bouzid(GK 67), Bilal Larbi-Abdelhamid(GK 66), Bilal Saidi-Belhadj(GK 64), Kamel Haddad-El Amrani(MF 66), Kamel Karim Zerhouni(MF 64)
+42. Peru                     str= 70.8 depth=19  edge=0.894
+    XI: Sergi Gomez(GK 73), César Inga(DF 65), Nil Pau Romero(FW 74), Jairo Concha(MF 73), Adria Herrera(GK 71), Thiago Gomez-Martin(MF 70), Jesús Pretell(MF 70), Martín Távara(MF 70), Maxloren Castro(FW 69), Luis Iberico(FW 68), Pablo Iker Gonzalez(FW 68)
+    SUBS: Santiago Mateo Martin(GK 71), Thiago Perez(GK 69), Ivan Santiago Martin(GK 66), Rafa Dominguez Jr.(MF 69), Catriel Cabellos(MF 68), Iker Romero-Lopez(MF 68), Diego Soto(MF 67), Kenji Cabrera(MF 67)
+43. Saudi Arabia             str= 69.9 depth=23  edge=0.894
+    XI: Walid Taleb-Chaib(GK 65), Hassan Tombakti(DF 74), Saud Abdulhamid(DF 70), Mohammed Abu Al Shamat(DF 67), Ayman Yahya(DF 67), Musab Al Juwair(MF 79), Nasser Al Dawsari(MF 69), Said Ilias Rahimi(MF 68), Feras Al Brikan(FW 71), Marwan Al Sahafi(FW 68), Walid Belkacem-Haddadi(FW 67)
+    SUBS: Jehad Thekri(DF 67), Ali Majrashi(DF 66), Muhannad Al Shanqeeti(DF 66), Kamel Jalal Benali(DF 65), Sultan Al Ghannam(DF 64), Mohammed Kanno(MF 68), Kamel Selim Messaoud(MF 68), Ziyad Al Johani(MF 66)
+44. Burkina Faso             str= 69.5 depth=7   edge=0.894
+    XI: Sory Camara(GK 65), Edmond Tapsoba(DF 80), Arsène Kouassi(DF 75), Issa Kaboré(DF 70), Adamo Nagalo(DF 69), Dango Ouattara(MF 75), Cyriaque Irié(MF 63), Abdoulaye Keita III(MF 62), Youssouf Aguibou Camara(FW 73), Bakary Mohamed Diakhate(FW 68), Mamadou Lassana Ndiaye(FW 63)
+    SUBS: Habib Lassana Sylla(GK 62), Youssouf Aguibou Conde(GK 62), Sory Alassane Sarr(GK 61), Youssouf Sow-Diallo(GK 61), Mohamed Ouédraogo(DF 63), Moussa Habib Doumbia(DF 57), Youssouf Owusu-Keita(MF 59), Modou Oumar Keita(MF 58)
+45. Jordan                   str= 68.3 depth=11  edge=0.872
+    XI: Amine Fares(GK 75), Selim Messaoud(DF 65), Aissa Messaoud(DF 65), Rayan Chaib-Belhadj(GK 75), Mousa Al Tamari(MF 71), Lotfi Othmani(MF 67), Yacine Haddadi-Belhadj(MF 66), Mohannad Abu Taha(MF 64), Hakim Fares-Chaib(FW 66), Mohamed Rahimi-Fares(FW 65), Bilal Fares-Khelifi(FW 63)
+    SUBS: Adam Haddad(GK 70), Hakim Othmani(GK 66), Hamza Abdelhamid(GK 62), Nabil Hassan(GK 62), Mohamed El Amrani-Ghezali(MF 63), Adam Hassan(MF 63), Omar Lotfi Hassan(MF 63), Ilias Haddad(MF 62)
+46. Australia                str= 68.2 depth=16  edge=0.909
+    XI: Alessandro Circati(DF 71), Kai Trewin(DF 67), Nathaniel Atkinson(DF 65), Nathan Paull(DF 65), Angus Thurgate(MF 71), Calem Nieuwenhof(MF 70), Patrick Yazbek(MF 67), Cristian Volpato(FW 70), Luka Jovanović(FW 67), Archie Goodwin(FW 66), Ethan Alagich(MF 67)
+    SUBS: Jordan Courtney-Perkins(DF 64), Keegan Jelacic(MF 67), Kosta Grozos(MF 67), Nestory Irankunda(MF 66), Thomas Aquilina(MF 66), Haine Eames(MF 66), Ryan White(MF 64), Jake Hollman(MF 64)
+47. Qatar                    str= 66.6 depth=14  edge=0.894
+    XI: Yacine Larbi(GK 70), Lotfi Bouzid(DF 67), Ilias Benali-Hassan(DF 66), Romain Othmani(GK 68), Nabil Belkacem(MF 67), Walid Taleb-Abdelhamid(MF 66), Romain Larbi(MF 65), Walid Othmani(MF 64), Lotfi Rahimi-Othmani(FW 67), Jalal El Amrani(FW 65), Rayan Fares(FW 65)
+    SUBS: Yacine Adam Rahimi(GK 66), Jalal Meziane-Haddad(GK 66), Adam Cherif(GK 63), Selim Kaddour(GK 62), Nabil Ghezali Jr.(GK 62), Selim Fares(GK 61), Said Hamza Larbi(MF 62), Mehdi Aissa Khelifi(MF 61)
+48. New Zealand              str= 62.0 depth=11  edge=0.845
+    XI: Henry Gray(GK 55), Tyler Bindon(DF 70), Finn Surman(DF 69), Sam Sutton(DF 62), Lukas Kelly-Heald(DF 62), Lachlan Bayliss(MF 62), Fin Roa Conchie(MF 59), Oliver Middleton(MF 56), Corban Piper(FW 59), Jonty Bidois(FW 56), Isaac Hughes(DF 62)
+    SUBS: Alby Kelly-Heald(GK 52), Michael Woud(GK 51), Oliver Sail(GK 49), Mikkel Laurent(GK 49), James McGarry(DF 61), Matt Sheridan(DF 60), Jayden Smith(DF 56), Xuan Loke(DF 55)
+GS Japan 0-2 United States
+GS Japan 0-1 Ghana
+GS Japan 0-3 Ukraine
+GS United States 1-1 Ghana
+GS United States 1-3 Ukraine
+GS Ghana 3-0 Ukraine
+GROUP: Ghana 7pts +4gd | Ukraine 6pts +2gd | United States 4pts +0gd | Japan 0pts -6gd
+GS Italy 2-2 Ecuador
+GS Italy 0-0 Switzerland
+GS Italy 2-1 Saudi Arabia
+GS Ecuador 0-1 Switzerland
+GS Ecuador 1-0 Saudi Arabia
+GS Switzerland 1-0 Saudi Arabia
+GROUP: Switzerland 7pts +2gd | Italy 5pts +1gd | Ecuador 4pts +0gd | Saudi Arabia 0pts -3gd
+GS Brazil 1-2 Nigeria
+GS Brazil 0-2 Uzbekistan
+GS Brazil 0-0 New Zealand
+GS Nigeria 2-0 Uzbekistan
+GS Nigeria 1-0 New Zealand
+GS Uzbekistan 2-0 New Zealand
+GROUP: Nigeria 9pts +4gd | Uzbekistan 6pts +2gd | Brazil 1pts -3gd | New Zealand 1pts -3gd
+GS Argentina 1-0 Turkey
+GS Argentina 3-0 Canada
+GS Argentina 0-0 Korea Republic
+GS Turkey 1-0 Canada
+GS Turkey 1-4 Korea Republic
+GS Canada 0-0 Korea Republic
+GROUP: Argentina 7pts +4gd | Korea Republic 5pts +3gd | Turkey 3pts -3gd | Canada 1pts -4gd
+GS Germany 4-0 Denmark
+GS Germany 2-0 Iran
+GS Germany 0-0 Mali
+GS Denmark 6-0 Iran
+GS Denmark 1-2 Mali
+GS Iran 0-1 Mali
+GROUP: Germany 7pts +6gd | Mali 7pts +2gd | Denmark 3pts +1gd | Iran 0pts -9gd
+GS Holland 0-1 Senegal
+GS Holland 3-1 Norway
+GS Holland 1-1 Qatar
+GS Senegal 3-1 Norway
+GS Senegal 3-0 Qatar
+GS Norway 2-2 Qatar
+GROUP: Senegal 9pts +6gd | Holland 4pts +1gd | Qatar 2pts -3gd | Norway 1pts -4gd
+GS Spain 1-0 Sweden
+GS Spain 0-0 Mexico
+GS Spain 0-0 Jordan
+GS Sweden 3-1 Mexico
+GS Sweden 2-0 Jordan
+GS Mexico 2-0 Jordan
+GROUP: Sweden 6pts +3gd | Spain 5pts +1gd | Mexico 4pts +0gd | Jordan 1pts -4gd
+GS England 0-0 Algeria
+GS England 1-2 Greece
+GS England 1-0 United Arab Emirates
+GS Algeria 2-3 Greece
+GS Algeria 1-0 United Arab Emirates
+GS Greece 3-0 United Arab Emirates
+GROUP: Greece 9pts +5gd | Algeria 4pts +0gd | England 4pts +0gd | United Arab Emirates 0pts -5gd
+GS Belgium 1-0 Croatia
+GS Belgium 0-1 Cameroon
+GS Belgium 0-0 Australia
+GS Croatia 2-2 Cameroon
+GS Croatia 0-1 Australia
+GS Cameroon 2-1 Australia
+GROUP: Cameroon 7pts +2gd | Australia 4pts +0gd | Belgium 4pts +0gd | Croatia 1pts -2gd
+GS Portugal 3-2 Uruguay
+GS Portugal 3-2 Poland
+GS Portugal 7-1 Egypt
+GS Uruguay 0-0 Poland
+GS Uruguay 3-0 Egypt
+GS Poland 3-2 Egypt
+GROUP: Portugal 9pts +8gd | Uruguay 4pts +2gd | Poland 4pts +0gd | Egypt 0pts -10gd
+GS Côte d'Ivoire 1-0 Austria
+GS Côte d'Ivoire 0-1 Serbia
+GS Côte d'Ivoire 0-1 Peru
+GS Austria 2-1 Serbia
+GS Austria 0-0 Peru
+GS Serbia 1-0 Peru
+GROUP: Serbia 6pts +1gd | Austria 4pts +0gd | Peru 4pts +0gd | Côte d'Ivoire 3pts -1gd
+GS France 1-0 Morocco
+GS France 5-3 Colombia
+GS France 3-1 Burkina Faso
+GS Morocco 1-0 Colombia
+GS Morocco 2-1 Burkina Faso
+GS Colombia 1-0 Burkina Faso
+GROUP: France 9pts +5gd | Morocco 6pts +1gd | Colombia 3pts -2gd | Burkina Faso 0pts -4gd
+R32 France 2-1 Poland -> France
+R32 England 2-0 Peru -> England
+R32 Spain 1-0 Algeria -> Spain
+R32 Germany 1-1 Switzerland -> Germany
+R32 Argentina 1-0 Australia -> Argentina
+R32 Portugal 2-0 Ukraine -> Portugal
+R32 Italy 0-1 Austria -> Austria
+R32 Holland 3-2 Cameroon -> Holland
+R32 Belgium 1-0 Uzbekistan -> Belgium
+R32 Uruguay 0-1 Mexico -> Mexico
+R32 Senegal 1-1 Serbia -> Serbia
+R32 Sweden 1-1 Korea Republic -> Sweden
+R32 Denmark 2-2 Mali -> Mali
+R32 Morocco 2-1 Nigeria -> Morocco
+R32 Ecuador 1-1 Ghana -> Ghana
+R32 United States 2-2 Greece -> Greece
+R16 France 1-3 England -> England
+R16 Spain 2-0 Germany -> Spain
+R16 Argentina 1-0 Portugal -> Argentina
+R16 Austria 2-0 Holland -> Austria
+R16 Belgium 3-0 Mexico -> Belgium
+R16 Serbia 0-1 Sweden -> Sweden
+R16 Mali 0-0 Morocco -> Mali
+R16 Ghana 0-1 Greece -> Greece
+QF England 0-2 Spain -> Spain
+QF Argentina 1-0 Austria -> Argentina
+QF Belgium 1-0 Sweden -> Belgium
+QF Mali 1-1 Greece -> Mali
+SF Spain 1-1 Argentina -> Spain
+SF Belgium 1-2 Mali -> Mali
+F Spain 1-0 Mali -> Spain
+3rd Argentina 0-2 Belgium
+--- Argentina WC squad (tournament-only) ---
+  Lautaro Martínez (ovr 83 age 33 peak 0): apps=8 G=3 A=0 KP=2 BCC=0 avg=6.91
+  Santiago Castro (ovr 76 age 26 peak 0): apps=8 G=2 A=1 KP=10 BCC=1 avg=6.84
+  Alexis Mac Allister (ovr 82 age 32 peak 0): apps=8 G=1 A=1 KP=10 BCC=2 avg=6.82
+  Enzo Fernández (ovr 84 age 29 peak 0): apps=8 G=1 A=0 KP=9 BCC=0 avg=6.54
+  Julián Alvarez (ovr 85 age 30 peak 0): apps=8 G=1 A=3 KP=10 BCC=4 avg=7.09
+  Lisandro Martínez (ovr 77 age 32 peak 0): apps=8 G=0 A=0 KP=7 BCC=0 avg=6.79
+  Valentín Barco (ovr 82 age 26 peak 0): apps=8 G=0 A=0 KP=8 BCC=0 avg=6.44
+  Facundo Medina (ovr 77 age 31 peak 0): apps=8 G=0 A=0 KP=3 BCC=1 avg=7.00
+  Leonardo Balerdi (ovr 76 age 31 peak 0): apps=8 G=0 A=0 KP=2 BCC=0 avg=6.70
+  Joaquín Panichelli (ovr 76 age 28 peak 0): apps=8 G=0 A=0 KP=1 BCC=0 avg=6.53
+  Rodrigo De Paul (ovr 80 age 36 peak 0): apps=8 G=0 A=0 KP=20 BCC=4 avg=6.64
+  Nico Paz (ovr 77 age 26 peak 0): apps=5 G=0 A=1 KP=2 BCC=1 avg=6.56
+  Franco Mastantuono (ovr 79 age 23 peak 0): apps=5 G=0 A=0 KP=4 BCC=1 avg=6.34
+  Alan Varela (ovr 78 age 29 peak 0): apps=5 G=0 A=0 KP=8 BCC=2 avg=6.48
+  Alan Lescano (ovr 77 age 29 peak 0): apps=5 G=0 A=0 KP=5 BCC=2 avg=6.27
+  Giovani Lo Celso (ovr 76 age 34 peak 0): apps=4 G=0 A=0 KP=0 BCC=0 avg=6.19
+  Matías Soulé (ovr 76 age 27 peak 0): apps=4 G=0 A=1 KP=2 BCC=1 avg=6.40
+  Máximo Perrone (ovr 76 age 27 peak 0): apps=4 G=0 A=0 KP=3 BCC=1 avg=6.31
+  Exequiel Palacios (ovr 79 age 32 peak 0): apps=4 G=0 A=0 KP=2 BCC=0 avg=6.32
+--- WC scoring leaders (tournament-only) ---
+  João Félix (Portugal): apps=4 G=4 A=0
+  Gonçalo Ramos (Portugal): apps=5 G=3 A=1
+  Mamadou Diarra-Diallo (Mali): apps=8 G=3 A=0
+  Lautaro Martínez (Argentina): apps=8 G=3 A=0
+  Yasin Ayari (Sweden): apps=6 G=3 A=0
+CHAMPION: Spain

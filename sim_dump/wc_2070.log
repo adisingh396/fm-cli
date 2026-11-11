@@ -1,0 +1,45 @@
+== World Cup 2070 ==
+hosts: Portugal
+ 1. England                  str= 80.9 depth=30  edge=0.985
+ 2. Spain                    str= 80.5 depth=29  edge=0.985
+ 3. Germany                  str= 80.0 depth=24  edge=0.985
+ 4. Italy                    str= 79.5 depth=26  edge=0.985
+ 5. France                   str= 78.9 depth=17  edge=0.970
+ 6. Turkey                   str= 77.3 depth=11  edge=0.950
+ 7. United States            str= 77.3 depth=12  edge=0.950
+ 8. Argentina                str= 76.9 depth=19  edge=0.970
+ 9. China PR                 str= 74.7 depth=17  edge=0.950
+10. India                    str= 74.1 depth=19  edge=0.950
+11. Korea Republic           str= 73.6 depth=16  edge=0.950
+12. Mexico                   str= 73.5 depth=33  edge=0.950
+13. Australia                str= 73.4 depth=14  edge=0.950
+14. Saudi Arabia             str= 73.0 depth=19  edge=0.990
+15. Colombia                 str= 72.3 depth=13  edge=0.920
+16. Uruguay                  str= 71.8 depth=14  edge=0.920
+17. Brazil                   str= 71.7 depth=12  edge=0.920
+18. Portugal                 str= 71.5 depth=17  edge=0.920
+19. South America            str= 71.0 depth=19  edge=0.920
+20. Poland                   str= 69.5 depth=9   edge=0.920
+21. Denmark                  str= 69.0 depth=10  edge=0.920
+22. Greece                   str= 68.9 depth=9   edge=0.920
+23. Ecuador                  str= 68.5 depth=15  edge=0.920
+24. Holland                  str= 68.4 depth=10  edge=0.920
+KO England 1-1 Netherlands -> England
+KO Spain 1-0 Sweden -> Spain
+KO France 0-0 Paraguay -> Paraguay
+KO United States 0-1 Morocco -> Morocco
+KO Turkey 2-0 Nigeria -> Turkey
+KO Argentina 1-1 Belgium -> Belgium
+KO India 0-0 Holland -> India
+KO Saudi Arabia 1-0 Ecuador -> Saudi Arabia
+KO Colombia 2-0 Greece -> Colombia
+KO Brazil 1-0 Denmark -> Brazil
+KO England 1-0 Spain -> England
+KO Paraguay 0-1 Morocco -> Morocco
+KO Turkey 3-0 Belgium -> Turkey
+KO India 2-0 Saudi Arabia -> India
+KO Colombia 2-3 Brazil -> Brazil
+KO England 3-1 Morocco -> England
+KO Turkey 1-1 India -> India
+F England 0-2 India -> India
+CHAMPION: India

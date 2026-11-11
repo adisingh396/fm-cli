@@ -1,0 +1,49 @@
+== World Cup 2050 ==
+hosts: China PR
+ 1. England                  str= 80.7 depth=31  edge=0.990
+ 2. Italy                    str= 79.3 depth=22  edge=0.970
+ 3. France                   str= 78.7 depth=14  edge=0.970
+ 4. Spain                    str= 78.5 depth=21  edge=0.985
+ 5. Germany                  str= 77.0 depth=21  edge=0.970
+ 6. Portugal                 str= 75.4 depth=14  edge=0.950
+ 7. China PR                 str= 75.3 depth=9   edge=0.950
+ 8. Turkey                   str= 75.2 depth=13  edge=0.950
+ 9. India                    str= 75.1 depth=10  edge=0.920
+10. Australia                str= 74.7 depth=15  edge=0.920
+11. Argentina                str= 74.7 depth=42  edge=0.970
+12. Korea Republic           str= 73.9 depth=16  edge=0.950
+13. United States            str= 73.8 depth=19  edge=0.950
+14. Mexico                   str= 73.1 depth=18  edge=0.950
+15. Saudi Arabia             str= 72.5 depth=27  edge=0.950
+16. Chile                    str= 72.0 depth=10  edge=0.920
+17. Greece                   str= 71.0 depth=10  edge=0.920
+18. Colombia                 str= 71.0 depth=11  edge=0.920
+19. Uruguay                  str= 70.4 depth=7   edge=0.920
+20. Paraguay                 str= 69.3 depth=9   edge=0.920
+21. Ecuador                  str= 69.2 depth=10  edge=0.920
+22. Côte d'Ivoire            str= 68.8 depth=10  edge=0.920
+23. South America            str= 67.9 depth=25  edge=0.920
+24. Holland                  str= 66.6 depth=11  edge=0.920
+KO England 1-0 Senegal -> England
+KO Italy 0-0 Morocco -> Morocco
+KO France 4-0 Belgium -> France
+KO Spain 4-1 Nigeria -> Spain
+KO Germany 2-0 Japan -> Germany
+KO Portugal 3-1 Holland -> Portugal
+KO Argentina 2-1 South America -> Argentina
+KO Australia 1-0 Côte d'Ivoire -> Australia
+KO Korea Republic 0-1 Paraguay -> Paraguay
+KO United States 3-0 Colombia -> United States
+KO Mexico 3-3 Greece -> Mexico
+KO Saudi Arabia 4-3 Chile -> Saudi Arabia
+KO England 3-1 Morocco -> England
+KO France 2-3 Spain -> Spain
+KO Germany 3-0 Portugal -> Germany
+KO Argentina 2-3 Australia -> Australia
+KO Paraguay 2-2 United States -> United States
+KO Mexico 4-2 Saudi Arabia -> Mexico
+KO England 1-2 Spain -> Spain
+KO Germany 0-1 Australia -> Australia
+KO United States 0-0 Mexico -> United States
+KO Spain 0-0 Australia -> Spain
+CHAMPION: Spain

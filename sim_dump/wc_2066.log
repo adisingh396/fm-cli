@@ -1,0 +1,49 @@
+== World Cup 2066 ==
+hosts: Germany
+ 1. England                  str= 81.0 depth=14  edge=0.955
+ 2. Spain                    str= 80.5 depth=28  edge=0.985
+ 3. Germany                  str= 80.2 depth=23  edge=0.985
+ 4. France                   str= 80.0 depth=19  edge=0.970
+ 5. Italy                    str= 79.6 depth=23  edge=0.985
+ 6. Turkey                   str= 77.5 depth=11  edge=0.950
+ 7. United States            str= 77.5 depth=10  edge=0.950
+ 8. Argentina                str= 76.5 depth=15  edge=0.970
+ 9. India                    str= 76.4 depth=13  edge=0.950
+10. China PR                 str= 75.5 depth=13  edge=0.950
+11. Saudi Arabia             str= 75.3 depth=11  edge=0.950
+12. Mexico                   str= 75.1 depth=13  edge=0.950
+13. Korea Republic           str= 74.2 depth=17  edge=0.950
+14. Australia                str= 73.9 depth=13  edge=0.920
+15. Portugal                 str= 72.4 depth=18  edge=0.920
+16. Uruguay                  str= 72.0 depth=13  edge=0.920
+17. Colombia                 str= 71.0 depth=14  edge=0.920
+18. Brazil                   str= 70.9 depth=10  edge=0.920
+19. South America            str= 70.5 depth=26  edge=0.950
+20. Paraguay                 str= 69.0 depth=10  edge=0.920
+21. Poland                   str= 68.7 depth=9   edge=0.920
+22. Ecuador                  str= 68.6 depth=12  edge=0.920
+23. Holland                  str= 67.6 depth=12  edge=0.920
+24. Japan                    str= 67.5 depth=9   edge=0.920
+KO England 1-0 Croatia -> England
+KO France 4-0 Sweden -> France
+KO Italy 1-0 Austria -> Italy
+KO United States 2-0 Senegal -> United States
+KO India 0-2 Côte d'Ivoire -> Côte d'Ivoire
+KO Saudi Arabia 3-1 Belgium -> Saudi Arabia
+KO Mexico 0-0 Denmark -> Mexico
+KO Korea Republic 2-1 Greece -> Korea Republic
+KO Portugal 2-1 Japan -> Portugal
+KO Uruguay 2-2 Ecuador -> Uruguay
+KO Colombia 0-1 Poland -> Poland
+KO Brazil 3-0 South America -> Brazil
+KO England 1-1 France -> France
+KO Italy 0-0 United States -> United States
+KO Côte d'Ivoire 1-1 Saudi Arabia -> Saudi Arabia
+KO Mexico 0-2 Korea Republic -> Korea Republic
+KO Portugal 1-2 Uruguay -> Uruguay
+KO Poland 0-0 Brazil -> Brazil
+KO France 2-2 United States -> United States
+KO Saudi Arabia 2-1 Korea Republic -> Saudi Arabia
+KO Uruguay 3-0 Brazil -> Uruguay
+KO United States 1-1 Saudi Arabia -> Saudi Arabia
+CHAMPION: Saudi Arabia

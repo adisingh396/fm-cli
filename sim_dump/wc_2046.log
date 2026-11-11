@@ -1,0 +1,45 @@
+== World Cup 2046 ==
+hosts: Italy
+ 1. England                  str= 81.1 depth=13  edge=0.985
+ 2. Italy                    str= 79.7 depth=28  edge=0.985
+ 3. Spain                    str= 78.4 depth=12  edge=0.970
+ 4. France                   str= 77.6 depth=20  edge=0.970
+ 5. Germany                  str= 77.0 depth=19  edge=0.970
+ 6. Turkey                   str= 75.7 depth=14  edge=0.950
+ 7. Australia                str= 75.5 depth=12  edge=0.950
+ 8. Portugal                 str= 75.3 depth=12  edge=0.950
+ 9. Argentina                str= 74.7 depth=40  edge=0.950
+10. China PR                 str= 73.9 depth=16  edge=0.950
+11. India                    str= 73.7 depth=10  edge=0.920
+12. Korea Republic           str= 73.5 depth=15  edge=0.950
+13. United States            str= 73.5 depth=18  edge=0.990
+14. Mexico                   str= 73.5 depth=19  edge=0.950
+15. Chile                    str= 71.7 depth=10  edge=0.920
+16. Saudi Arabia             str= 71.4 depth=33  edge=0.950
+17. Greece                   str= 70.5 depth=11  edge=0.920
+18. Uruguay                  str= 69.7 depth=9   edge=0.920
+19. Côte d'Ivoire            str= 69.2 depth=7   edge=0.920
+20. Colombia                 str= 68.9 depth=12  edge=0.920
+21. Paraguay                 str= 68.9 depth=9   edge=0.920
+22. Ecuador                  str= 68.3 depth=10  edge=0.920
+23. South America            str= 67.5 depth=25  edge=0.920
+24. Japan                    str= 66.9 depth=9   edge=0.920
+KO England 3-1 Norway -> England
+KO Italy 3-1 Poland -> Italy
+KO France 2-1 Belgium -> France
+KO Australia 1-0 Japan -> Australia
+KO Portugal 0-0 Ecuador -> Portugal
+KO Argentina 0-2 Colombia -> Colombia
+KO China PR 0-1 Paraguay -> Paraguay
+KO Korea Republic 2-1 Côte d'Ivoire -> Korea Republic
+KO Mexico 3-0 Uruguay -> Mexico
+KO Chile 1-2 Greece -> Greece
+KO England 0-0 Italy -> England
+KO France 2-2 Australia -> France
+KO Portugal 0-3 Colombia -> Colombia
+KO Paraguay 1-0 Korea Republic -> Paraguay
+KO Mexico 1-0 Greece -> Mexico
+KO England 3-0 France -> England
+KO Colombia 0-2 Paraguay -> Paraguay
+F England 1-0 Paraguay -> England
+CHAMPION: England
