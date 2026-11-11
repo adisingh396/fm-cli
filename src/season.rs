@@ -14130,6 +14130,7 @@ pub mod web_api {
     fn player_season_history_json(state: &WebState, world_idx: usize) -> Value {
         // [apps, goals, assists, minutes, rating_apps] + rating sum per
         // competition for every season retained by the web world.
+        let season_clubs = player_season_clubs(state, world_idx);
         let mut years: std::collections::BTreeMap<
             u16,
             std::collections::BTreeMap<&'static str, (u32, u32, u32, u32, u32, f32)>,
@@ -14162,19 +14163,110 @@ pub mod web_api {
             let total = comps.values().fold((0u32, 0u32, 0u32, 0u32), |a, v| {
                 (a.0 + v.0, a.1 + v.1, a.2 + v.2, a.3 + v.3)
             });
+            // Club side(s) that season: inferred from his club appearances,
+            // falling back to his current club for a season with none yet.
+            let club_names: Vec<String> = match season_clubs.get(&year) {
+                Some(ids) if !ids.is_empty() => ids
+                    .iter()
+                    .filter_map(|&t| state.world.teams.get(t).map(|tm| tm.name.clone()))
+                    .collect(),
+                _ => state
+                    .world
+                    .teams
+                    .get(state.world.pool[world_idx].team)
+                    .map(|tm| vec![tm.name.clone()])
+                    .unwrap_or_default(),
+            };
             json!({
                 "year": year,
                 "season": format!("{}-{}", year, (year + 1) % 100),
+                "club": club_names.join(" / "),
                 "total": {"apps": total.0, "goals": total.1, "assists": total.2, "minutes": total.3},
                 "competitions": competition,
             })
         }).collect::<Vec<_>>())
     }
 
+    /// Club(s) a player represented in each retained season, inferred from
+    /// his match records: every club appearance narrows the candidate set to
+    /// the two sides of that match, so the intersection across a season is
+    /// exactly the club he played for (mid-season moves can leave two).
+    fn player_season_clubs(state: &WebState, world_idx: usize) -> std::collections::BTreeMap<u16, Vec<usize>> {
+        let mut out: std::collections::BTreeMap<u16, Vec<usize>> = std::collections::BTreeMap::new();
+        for m in &state.matches {
+            // National-team fixtures name their sides instead of indexing
+            // clubs; they say nothing about the player's club side.
+            if m.home_name.is_some() || m.away_name.is_some() {
+                continue;
+            }
+            if !m.outcome.stats.iter().any(|s| s.id == world_idx) {
+                continue;
+            }
+            match out.entry(m.season) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(vec![m.home, m.away]);
+                }
+                std::collections::btree_map::Entry::Occupied(mut o) => {
+                    o.get_mut().retain(|&t| t == m.home || t == m.away);
+                }
+            }
+        }
+        out
+    }
+
+    /// Career trophy cabinet from the season archives: league titles,
+    /// Champions League wins and major international tournaments won by a
+    /// side this player represented that season.
+    fn player_trophies_json(state: &WebState, world_idx: usize) -> Value {
+        let clubs = player_season_clubs(state, world_idx);
+        let nation = state.world.pool.get(world_idx).map(|p| p.nation.as_str()).unwrap_or("");
+        let mut trophies: Vec<Value> = Vec::new();
+        for archive in &state.archives {
+            let Some(year) = archive.get("year").and_then(|v| v.as_u64()) else { continue };
+            let Some(season_clubs) = clubs.get(&(year as u16)) else { continue };
+            let season = archive.get("season").and_then(|v| v.as_str()).unwrap_or("");
+            let won = |id: &Value| id.as_u64().map(|t| season_clubs.contains(&(t as usize))).unwrap_or(false);
+            for league in archive.get("leagues").and_then(|v| v.as_array()).unwrap_or(&Vec::new()) {
+                if let Some(champ) = league.get("champion") {
+                    if won(&champ["id"]) {
+                        trophies.push(json!({
+                            "year": year, "season": season,
+                            "trophy": format!("{} title", league.get("name").and_then(|v| v.as_str()).unwrap_or("League")),
+                            "club": champ.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                            "kind": "league",
+                        }));
+                    }
+                }
+            }
+            if let Some(w) = archive.pointer("/ucl/final/winner") {
+                if won(&w["id"]) {
+                    trophies.push(json!({
+                        "year": year, "season": season, "trophy": "Champions League",
+                        "club": w.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                        "kind": "ucl",
+                    }));
+                }
+            }
+            if let Some(intl) = archive.get("international") {
+                let winner = intl.get("winner").and_then(|v| v.as_str()).unwrap_or("");
+                let kind = intl.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                if !winner.is_empty() && winner != "-" && winner == nation {
+                    trophies.push(json!({
+                        "year": year, "season": season,
+                        "trophy": if kind.is_empty() { "International trophy".to_string() } else { kind.to_string() },
+                        "club": winner, "kind": "international",
+                    }));
+                }
+            }
+        }
+        json!(trophies.into_iter().rev().collect::<Vec<_>>())
+    }
+
     fn player_detail_json(state: &WebState, world_idx: usize) -> Value {
         let mut out = player_json(&state.world, world_idx);
         out["honours"] = player_honours_json(state, world_idx);
         out["season_history"] = player_season_history_json(state, world_idx);
+        out["trophy_history"] = player_trophies_json(state, world_idx);
         if let Some(db_id) = state.world.pool[world_idx].db_id {
             if let Some(&db_idx) = state.database_index.get(&db_id) {
                 out["profile"] = source_profile_json(state, db_idx);

@@ -636,6 +636,8 @@
     if (h.season_trophies?.europa_league) trophies.push('Europa League');
     if (h.season_trophies?.international) trophies.push('International trophy');
     const raceRow = (label, rank, goals, leader) => `<div class="row"><span>${label}</span><strong>${rank ? `#${rank} · ${goals} G (leader ${leader})` : 'Not on the board'}</strong></div>`;
+    const trophiesWon = p.trophy_history || [];
+    const trophyCabinet = `<div class="card"><h3>Trophy cabinet</h3><div class="row-list">${trophiesWon.length ? trophiesWon.map((t) => `<div class="row"><span>${t.season || t.year} · ${esc(t.trophy)}</span><strong>${esc(t.club || '')}</strong></div>`).join('') : '<div class="empty">No major honours won yet.</div>'}</div></div>`;
     const honoursCard = `<div class="card"><h3>Individual accolades & honours</h3><div class="row-list">
       <div class="row"><span>Ballon d'Or</span><strong>${h.ballons || 0}${h.ballons === 1 ? ' win' : ' wins'}</strong></div>
       ${raceRow(`${esc(h.league || 'League')} Golden Boot`, h.league_top_scorer_rank, h.league_top_scorer_goals, h.league_leader_goals)}
@@ -645,7 +647,8 @@
       <div class="row"><span>Europa League run</span><strong>${esc(h.europa_stage || 'Not involved')}</strong></div>
       <div class="row"><span>International run</span><strong>${esc(h.international_stage || 'Not involved')}</strong></div>
       <div class="row"><span>Season trophies</span><strong style="text-align:right">${trophies.length ? esc(trophies.join(' · ')) : 'None yet'}</strong></div>
-    </div></div>`;
+    </div></div>
+    ${trophyCabinet}`;
     const allApps = live.overall_apps ?? (Number(live.apps || 0) + Number(live.ucl_apps || 0) + Number(live.el_apps || 0) + Number(live.intl_apps || 0));
     const allGoals = live.overall_goals ?? (Number(live.goals || 0) + Number(live.ucl_goals || 0) + Number(live.el_goals || 0) + Number(live.intl_goals || 0));
     const allAssists = live.overall_assists ?? (Number(live.assists || 0) + Number(live.ucl_assists || 0) + Number(live.el_assists || 0) + Number(live.intl_assists || 0));
@@ -694,7 +697,7 @@
       <div class="card"><h3>Attributes</h3>${Object.entries(live.attrs || {}).map(([k, v]) => `<div class="attr-row"><span style="text-transform:capitalize">${esc(k.replaceAll('_',' '))}</span><span class="attr-bar"><i style="width:${Math.min(100, Number(v) * 1.01)}%"></i></span><strong>${v}</strong></div>`).join('')}</div>
     </div>
     ${playerStatus}
-    <div class="card" style="margin-top:14px"><h3>Season-by-season career · all competitions</h3><div class="table-wrap"><table><thead><tr><th>Season</th><th>Total</th><th>League</th><th>UCL</th><th>Europa</th><th>International</th></tr></thead><tbody>${(live.season_history || []).map((s) => { const c = s.competitions || {}; const cell = (x) => x ? `${x.apps} apps · ${x.goals}G · ${x.assists}A` : '—'; return `<tr><td><strong>${esc(s.season)}</strong></td><td>${s.total.apps} apps · ${s.total.goals}G · ${s.total.assists}A</td><td>${cell(c.league)}</td><td>${cell(c.ucl)}</td><td>${cell(c.europa)}</td><td>${cell(c.international)}</td></tr>`; }).join('') || '<tr><td colspan="6">No completed match history yet.</td></tr>'}</tbody></table></div></div>
+    <div class="card" style="margin-top:14px"><h3>Season-by-season career · all competitions</h3><div class="table-wrap"><table><thead><tr><th>Season</th><th>Club</th><th>Total</th><th>League</th><th>UCL</th><th>Europa</th><th>International</th></tr></thead><tbody>${(live.season_history || []).map((s) => { const c = s.competitions || {}; const cell = (x) => x ? `${x.apps} apps · ${x.goals}G · ${x.assists}A` : '—'; return `<tr><td><strong>${esc(s.season)}</strong></td><td>${esc(s.club || '—')}</td><td>${s.total.apps} apps · ${s.total.goals}G · ${s.total.assists}A</td><td>${cell(c.league)}</td><td>${cell(c.ucl)}</td><td>${cell(c.europa)}</td><td>${cell(c.international)}</td></tr>`; }).join('') || '<tr><td colspan="7">No completed match history yet.</td></tr>'}</tbody></table></div></div>
     <div class="grid cols-2" style="margin-top:14px">
       <div class="card"><h3>Competitions</h3><div class="row-list"><div class="row"><span><strong>All competitions</strong></span><strong>${allApps} apps · ${allGoals} G · ${allAssists} A</strong></div><div class="row"><span>Domestic league</span><strong>${live.apps} apps · ${live.goals} G · ${live.assists} A</strong></div><div class="row"><span>International</span><strong>${live.intl_apps ?? 0} apps · ${live.intl_goals ?? 0} G · ${live.intl_assists ?? 0} A</strong></div><div class="row"><span>Champions League</span><strong>${live.ucl_apps ?? 0} apps · ${live.ucl_goals ?? 0} G · ${live.ucl_assists ?? 0} A</strong></div><div class="row"><span>Europa League</span><strong>${live.el_apps ?? 0} apps · ${live.el_goals ?? 0} G · ${live.el_assists ?? 0} A</strong></div></div></div>
       ${honoursCard}
